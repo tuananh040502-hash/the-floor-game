@@ -48,16 +48,17 @@ export function saveDrive(cfg) {
 
 // ---------- Link ảnh ----------
 export function driveThumb(id) {
-  return `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+  return `https://lh3.googleusercontent.com/d/${id}`;
 }
 
-/** Chuyển link chia sẻ Google Drive về link ảnh trực tiếp; link thường giữ nguyên. Trả về null nếu không hợp lệ. */
+/** Chuyển link chia sẻ Google Drive về link ảnh CDN lh3; link thường giữ nguyên. Trả về null nếu không hợp lệ. */
 export function normalizeImageUrl(input) {
   const raw = (input || '').trim();
   if (!/^https?:\/\//i.test(raw)) return null;
   const m =
     raw.match(/drive\.google\.com\/file\/d\/([\w-]+)/) ||
-    raw.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:[^#]*&)?id=([\w-]+)/);
+    raw.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:[^#]*&)?id=([\w-]+)/) ||
+    raw.match(/lh3\.googleusercontent\.com\/d\/([\w-]+)/);
   if (m) return driveThumb(m[1]);
   return raw;
 }

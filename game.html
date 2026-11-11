@@ -76,6 +76,13 @@
             <label class="field-label"><span class="eyebrow">Chủ đề</span>
               <select id="selCat" class="input"></select>
             </label>
+            <div id="setupPreload" class="hidden surface-sub rounded-2xl px-3.5 py-2.5 space-y-1.5">
+              <div class="flex items-center justify-between text-xs">
+                <span id="setupPreloadText" class="t-2 font-semibold">Đang tải ngầm ảnh…</span>
+                <span id="setupPreloadCount" class="font-num t-1 font-bold">0/0</span>
+              </div>
+              <div class="progress"><div id="setupPreloadBar" class="progress-fill"></div></div>
+            </div>
             <button id="btnStartDuel" class="btn btn-ok btn-lg w-full">Vào đấu trường</button>
             <details class="text-sm">
               <summary class="cursor-pointer t-2 font-semibold">Thí sinh &amp; sàn</summary>
@@ -161,9 +168,13 @@
   <div id="dock" class="hidden">
     <div id="dockInner" class="island">
       <div id="ctrlBar" class="ctrl-bar">
+        <div id="cdSelect" class="seg hidden" title="Thời gian đếm ngược chuẩn bị">
+          <button type="button" data-cd="5000">5s</button>
+          <button type="button" data-cd="10000" class="active">10s</button>
+        </div>
         <button id="cBegin" class="btn btn-gold btn-lg hidden">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
-          Bắt đầu <kbd>␣ Space</kbd>
+          Bắt đầu trận <kbd>␣ Space</kbd>
         </button>
         <button id="cOk" class="btn btn-ok btn-lg">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>

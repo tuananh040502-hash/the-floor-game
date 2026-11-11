@@ -3,14 +3,17 @@ import { openFirebaseSettings } from './settings.js';
 import { createTransport } from './transport.js';
 import { allCategories, TOPICS_KEY } from './topics.js';
 import {
-  createInitialState, reduce, remainingOf, playerById, cellCount, currentQuestion, DUEL_MS, CELLS,
+  createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
+  playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, CELLS,
 } from './engine.js';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
+import { preloadImages, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
 
 const $ = (id) => document.getElementById(id);
 const SIDE_COLOR = { A: '#0a84ff', B: '#ff7a59' };
 const RING_LEN = 552.92;
+const GRACE_WAIT_MS = 2000; // giữ thêm tối đa 2s nếu ảnh câu đầu chưa tải xong
 const ICONS = {
   pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
@@ -30,6 +33,10 @@ let firstSnapshot = true;
 let lastEventId = null;
 let prevPhase = null;
 let tickPending = false;
+let goPending = false;
+let lastCdSec = -1;
+let cdDurationMs = Number(localStorage.getItem('thefloor:cdMs')) || COUNTDOWN_MS;
+let lastPreloadSig = '';
 let floorBuilt = false;
 let artKey = '';
 let fx = null;
@@ -110,12 +117,74 @@ function normalize(s) {
   s.players = s.players || [];
   s.floor = Array.from({ length: CELLS }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
   s.setup = s.setup || {};
+  s.setup.preloadUrls = s.setup.preloadUrls || [];
   if (s.duel) {
     s.duel.queue = s.duel.queue || [];
     s.duel.items = s.duel.items || [];
     s.duel.changed = s.duel.changed || [];
+    s.duel.cdTotal = s.duel.cdTotal || COUNTDOWN_MS;
+    s.duel.cdEnd = s.duel.cdEnd || 0;
   }
   return s;
+}
+
+/** Danh sách URL ảnh cần tải ngầm của trạng thái hiện tại (ưu tiên ảnh theo thứ tự ra câu hỏi). */
+function activeUrls(s) {
+  if (!s) return [];
+  if (s.duel && s.duel.items && s.duel.items.length) {
+    return extractImageUrls(s.duel.items, s.duel.queue);
+  }
+  if (s.setup && s.setup.preloadUrls && s.setup.preloadUrls.length) {
+    return s.setup.preloadUrls;
+  }
+  if (s.setup && s.setup.catId) {
+    const cat = allCategories().find((c) => c.id === s.setup.catId);
+    if (cat) return extractImageUrls(cat.items);
+  }
+  return [];
+}
+
+/** Giai đoạn 1 & 2: tự động kích hoạt preload ngầm trên cả máy Host và máy Xem. */
+function syncPreload(s) {
+  const urls = activeUrls(s);
+  if (!urls.length) return;
+  const inArena = s.phase !== 'floor';
+  const sig = `${inArena ? 'P' : 'S'}:${urls.join('|')}`;
+  if (sig !== lastPreloadSig) {
+    lastPreloadSig = sig;
+    preloadImages(urls, { priority: inArena });
+  }
+}
+
+function updatePreloadBadges() {
+  if (!state) return;
+  const urls = activeUrls(state);
+  const { loaded, total, first } = getProgress(urls);
+  const pct = total ? Math.round((loaded / total) * 100) : 100;
+
+  const setupBox = $('setupPreload');
+  if (setupBox) {
+    const show = role === 'host' && state.phase === 'floor' && total > 0;
+    setupBox.classList.toggle('hidden', !show);
+    if (show) {
+      $('setupPreloadText').textContent = loaded >= total ? 'Đã nạp sẵn toàn bộ ảnh' : 'Đang nạp ngầm ảnh câu hỏi…';
+      $('setupPreloadCount').textContent = `${loaded}/${total} ảnh`;
+      $('setupPreloadBar').style.width = `${pct}%`;
+    }
+  }
+
+  const cdText = $('cdLoadText');
+  if (cdText) {
+    cdText.textContent = total
+      ? loaded >= total
+        ? `Đã sẵn sàng (${loaded}/${total} ảnh)`
+        : `Đang nạp dữ liệu câu hỏi... (${loaded}/${total} ảnh)`
+      : 'Bộ câu hỏi đã sẵn sàng';
+  }
+  const cdDot = $('cdLoadDot');
+  if (cdDot) cdDot.classList.toggle('ready', !total || (loaded >= total && first));
+  const cdBar = $('cdLoadBar');
+  if (cdBar) cdBar.style.width = `${pct}%`;
 }
 
 // ---------- Dispatch ----------
@@ -173,7 +242,13 @@ function applyState(s, allowEvents = true) {
   }
 
   tickPending = false;
+  if (s.phase !== 'countdown') {
+    goPending = false;
+    lastCdSec = -1;
+  }
+  syncPreload(s);
   render(s);
+  updatePreloadBadges();
   prevPhase = s.phase;
 }
 
@@ -182,7 +257,8 @@ function playEvent(type) {
     case 'ding': Sfx.ding(); break;
     case 'buzz': Sfx.buzz(); break;
     case 'start': Sfx.start(); break;
-    case 'ready': Sfx.ready(); break;
+    case 'ready':
+    case 'countdown': Sfx.ready(); break;
     case 'pause':
     case 'click': Sfx.click(); break;
     case 'finish': Sfx.finishSequence(); break;
@@ -364,7 +440,10 @@ function renderArena(s) {
   // Viền LED & banner lượt
   let led = '#64d2ff';
   let banner = 'SẴN SÀNG';
-  if (s.phase === 'playing' || s.phase === 'paused') {
+  if (s.phase === 'countdown') {
+    led = '#ffd60a';
+    banner = 'CHUẨN BỊ VÀO TRẬN';
+  } else if (s.phase === 'playing' || s.phase === 'paused') {
     led = SIDE_COLOR[d.turn];
     banner = `LƯỢT: ${(d.turn === 'A' ? A : B).name.toUpperCase()}`;
   } else if (s.phase === 'finished') {
@@ -377,21 +456,40 @@ function renderArena(s) {
   $('turnBanner').textContent = banner;
   $('catBadge').textContent = `${d.catIcon || '🖼️'} ${d.catName || ''}`;
 
-  // Nội dung câu đố
-  const key = `${s.phase === 'ready' ? 'r' : 'q'}-${d.categoryId}-${d.qPos}-${s.phase === 'finished'}`;
+  // Nội dung câu đố / màn chuẩn bị / màn đếm ngược
+  const key = `${s.phase}-${d.categoryId}-${d.qPos}`;
   if (key !== artKey) {
     artKey = key;
     const content = $('qContent');
     content.innerHTML = '';
     if (s.phase === 'ready') {
-      content.innerHTML = '<div class="font-display text-5xl md:text-7xl t-accent text-center px-4">SẴN SÀNG?<div class="text-2xl md:text-3xl t-2 mt-2">Chờ Host bấm BẮT ĐẦU</div></div>';
-    } else if (s.phase !== 'finished') {
+      content.innerHTML = `
+        <div class="cd-stage">
+          <div class="eyebrow">${esc(d.catIcon || '🖼️')} ${esc(d.catName || '')}</div>
+          <div class="font-display text-5xl md:text-7xl t-1">SẴN SÀNG?</div>
+          <div class="t-2 text-base md:text-lg">Chờ Host bấm <b>Bắt đầu trận</b></div>
+          <div class="cd-status"><span id="cdLoadDot" class="cd-dot"></span><span id="cdLoadText">Đang nạp dữ liệu câu hỏi...</span></div>
+          <div class="cd-bar"><div id="cdLoadBar" class="cd-bar-fill"></div></div>
+        </div>`;
+      updatePreloadBadges();
+    } else if (s.phase === 'countdown') {
+      content.innerHTML = `
+        <div class="cd-stage">
+          <div class="eyebrow">Trận đấu bắt đầu sau</div>
+          <div class="cd-ring-wrap">
+            <svg viewBox="0 0 200 200"><circle class="cd-ring-track" cx="100" cy="100" r="88"/><circle id="cdRing" class="cd-ring-fill" cx="100" cy="100" r="88"/></svg>
+            <div id="cdNum" class="cd-num">10</div>
+          </div>
+          <div class="cd-status"><span id="cdLoadDot" class="cd-dot"></span><span id="cdLoadText">Đang nạp dữ liệu câu hỏi...</span></div>
+          <div class="cd-bar"><div id="cdLoadBar" class="cd-bar-fill"></div></div>
+        </div>`;
+      updatePreloadBadges();
+    } else if (s.phase === 'playing' || s.phase === 'paused') {
       const q = currentQuestion(d);
       if (q) content.appendChild(buildArt(q));
-      const nq = currentQuestion(d, 1);
-      if (nq && nq.type === 'img') { const pre = new Image(); pre.referrerPolicy = 'no-referrer'; pre.src = nq.src; } // preload ảnh kế tiếp
-    } else {
-      content.innerHTML = '';
+      // Ưu tiên nạp trước 3 ảnh kế tiếp
+      const upcoming = [1, 2, 3].map((off) => currentQuestion(d, off)).filter((x) => x && x.type === 'img').map((x) => x.src);
+      if (upcoming.length) preloadImages(upcoming, { priority: true });
     }
   }
   $('qInner').classList.toggle('blurred', s.phase === 'paused');
@@ -408,17 +506,25 @@ function renderArena(s) {
 
 function buildArt(q) {
   if (q.type === 'img') {
-    const img = document.createElement('img');
+    const cached = getCached(q.src);
+    let img;
+    if (cached && cached.img && cached.status === 'ok') {
+      // Dùng lại trực tiếp bitmap đã decode trong cache → hiển thị tức thì 0ms
+      img = cached.img.cloneNode(false);
+    } else {
+      img = document.createElement('img');
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.src = cached ? cached.cdn : toCdnUrl(q.src);
+    }
     img.className = 'q-img';
     img.alt = 'Câu đố';
-    img.referrerPolicy = 'no-referrer';
     img.addEventListener('error', () => {
       img.replaceWith(Object.assign(document.createElement('div'), {
         className: 'font-display text-4xl t-danger text-center px-4',
         textContent: '⚠️ Ảnh không tải được',
       }));
     });
-    img.src = q.src;
     return img;
   }
   const div = document.createElement('div');
@@ -447,6 +553,7 @@ function renderControls(s) {
     if (bar.parentElement.id !== 'dockInner') $('dockInner').appendChild(bar);
   }
 
+  $('cdSelect').classList.toggle('hidden', phase !== 'ready');
   $('cBegin').classList.toggle('hidden', phase !== 'ready');
   $('cOk').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
   $('cPass').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
@@ -458,8 +565,8 @@ function renderControls(s) {
   $('cAbort').classList.toggle('hidden', phase === 'finished' || phase === 'floor');
   if (isHostScreen) $('dockInner').classList.toggle('hidden', !inDuel);
 
-  // Đáp án nhắc bài
-  const q = s.duel && phase !== 'finished' && phase !== 'ready' ? currentQuestion(s.duel) : null;
+  // Đáp án nhắc bài (chỉ hiện khi đã vào câu hỏi)
+  const q = s.duel && (phase === 'playing' || phase === 'paused') ? currentQuestion(s.duel) : null;
   $('answerWrap').classList.toggle('hidden', !(isHostScreen && q));
   $('answerText').textContent = q ? q.answer : '';
   $('answerAlias').textContent = q && q.aliases && q.aliases.length ? `(${q.aliases.join(' / ')})` : '';
@@ -499,7 +606,7 @@ function frame() {
     const bar = $(`bar${side}`);
     const text = (ms / 1000).toFixed(1).padStart(4, '0');
     if (clock.textContent !== text) clock.textContent = text;
-    const danger = ms > 0 && ms <= 10000 && state.phase !== 'ready';
+    const danger = ms > 0 && ms <= 10000 && (state.phase === 'playing' || state.phase === 'paused');
     clock.classList.toggle('danger', danger && d.turn === side && state.phase === 'playing');
     clock.classList.toggle('zero', ms <= 0);
     bar.classList.toggle('danger', danger);
@@ -508,6 +615,52 @@ function frame() {
     ring.style.strokeDashoffset = String(RING_LEN * (1 - ms / DUEL_MS));
     ring.classList.toggle('danger', danger);
   });
+
+  if (state.phase === 'countdown') {
+    const total = d.cdTotal || COUNTDOWN_MS;
+    const cdRem = countdownRemainingOf(d, now);
+    const overdue = now - (d.cdEnd || now);
+    const sec = Math.ceil(cdRem / 1000);
+    const numEl = $('cdNum');
+    const ringEl = $('cdRing');
+
+    if (ringEl) {
+      ringEl.style.strokeDashoffset = String(RING_LEN * (1 - cdRem / total));
+      ringEl.classList.toggle('final', sec <= 3);
+    }
+
+    if (sec >= 1 && sec !== lastCdSec) {
+      lastCdSec = sec;
+      Sfx.countdownBeat(sec);
+      if (numEl) {
+        numEl.textContent = String(sec);
+        numEl.classList.toggle('final', sec <= 3);
+        numEl.classList.remove('beat');
+        void numEl.offsetWidth;
+        numEl.classList.add('beat');
+      }
+    }
+
+    // Chạm mốc 0: kiểm tra ảnh câu hỏi đầu tiên đã nạp xong chưa; nếu chưa, giữ thêm tối đa 2s.
+    if (cdRem <= 0) {
+      const q0 = currentQuestion(d, 0);
+      const firstReady = !q0 || q0.type !== 'img' || (getCached(q0.src) && getCached(q0.src).status !== 'loading');
+      if (firstReady || overdue >= GRACE_WAIT_MS) {
+        if (controller && !goPending) {
+          goPending = true;
+          dispatch('go');
+        } else if (numEl && numEl.textContent !== 'GO!') {
+          numEl.textContent = 'GO!';
+          numEl.classList.add('final');
+        }
+      } else if (numEl) {
+        numEl.textContent = '…';
+        const cdText = $('cdLoadText');
+        if (cdText) cdText.textContent = 'Mạng chậm — đang đợi ảnh đầu tiên sẵn sàng…';
+      }
+    }
+    return;
+  }
 
   if (state.phase === 'playing') {
     const cur = rem[d.turn];
@@ -542,8 +695,25 @@ function bindStaticUi() {
     else document.documentElement.requestFullscreen().catch(() => {});
   });
 
+  onPreloadProgress(updatePreloadBadges);
+
+  // Nút chọn thời lượng đếm ngược (5s / 10s)
+  const syncCdButtons = () => {
+    document.querySelectorAll('#cdSelect [data-cd]').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.cd) === cdDurationMs);
+    });
+  };
+  syncCdButtons();
+  document.querySelectorAll('#cdSelect [data-cd]').forEach((b) => {
+    b.addEventListener('click', () => {
+      cdDurationMs = Number(b.dataset.cd) || COUNTDOWN_MS;
+      localStorage.setItem('thefloor:cdMs', String(cdDurationMs));
+      syncCdButtons();
+    });
+  });
+
   const press = (id, fn) => $(id).addEventListener('click', (e) => { fn(); e.currentTarget.blur(); });
-  press('cBegin', () => dispatch('begin'));
+  press('cBegin', () => dispatch('begin', { durationMs: cdDurationMs }));
   press('cOk', () => dispatch('correct'));
   press('cPass', () => dispatch('pass'));
   press('cPause', () => dispatch(state && state.phase === 'paused' ? 'resume' : 'pause'));
@@ -585,16 +755,16 @@ function bindStaticUi() {
     if (state.phase === 'ready' && (k === ' ' || k === 'Enter')) {
       e.preventDefault();
       pulse('cBegin');
-      dispatch('begin');
-    } else if (k === ' ' || k === 'Enter') {
+      dispatch('begin', { durationMs: cdDurationMs });
+    } else if (state.phase === 'playing' && (k === ' ' || k === 'Enter')) {
       e.preventDefault();
       pulse('cOk');
       dispatch('correct');
-    } else if (k === 'p' || k === 'P' || k === 'ArrowDown') {
+    } else if (state.phase === 'playing' && (k === 'p' || k === 'P' || k === 'ArrowDown')) {
       e.preventDefault();
       pulse('cPass');
       dispatch('pass');
-    } else if (k === 't' || k === 'T') {
+    } else if ((state.phase === 'playing' || state.phase === 'paused') && (k === 't' || k === 'T')) {
       pulse('cPause');
       dispatch(state.phase === 'paused' ? 'resume' : 'pause');
     }

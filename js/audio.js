@@ -180,12 +180,34 @@ export const Sfx = {
   tick() {
     tone({ freq: 1000, type: 'square', dur: 0.07, vol: 0.12 });
   },
+  /** Nhịp đếm ngược chuẩn bị trận (sec = 10..1); 3-2-1 cao và dày hơn */
+  countdownBeat(sec) {
+    const c = ac();
+    if (!c) return;
+    const t = c.currentTime;
+    if (sec <= 3) {
+      const f = sec === 1 ? 880 : sec === 2 ? 740 : 659;
+      kickAt(t, 0.45);
+      toneAt(t, { freq: f, type: 'triangle', dur: 0.28, vol: 0.32 });
+      toneAt(t, { freq: f * 2, type: 'sine', dur: 0.18, vol: 0.14 });
+    } else {
+      kickAt(t, 0.28);
+      toneAt(t, { freq: 440, type: 'triangle', dur: 0.12, vol: 0.16 });
+    }
+  },
   click() {
     tone({ freq: 640, type: 'triangle', dur: 0.08, vol: 0.15 });
   },
+  /** Tín hiệu GO! khi hết đếm ngược và bắt đầu chạy đồng hồ 60s */
   start() {
-    [392, 523, 659, 784].forEach((f, i) => tone({ freq: f, type: 'triangle', start: i * 0.1, dur: 0.35, vol: 0.28 }));
-    tone({ freq: 1047, type: 'triangle', start: 0.4, dur: 0.8, vol: 0.28 });
+    const c = ac();
+    if (!c) return;
+    const t = c.currentTime;
+    kickAt(t, 0.55);
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      toneAt(t + i * 0.055, { freq: f, type: 'triangle', dur: 0.45, vol: 0.26 });
+    });
+    toneAt(t + 0.18, { freq: 1567.98, type: 'sine', dur: 0.65, vol: 0.22 });
   },
   ready() {
     tone({ freq: 330, type: 'triangle', dur: 0.25, vol: 0.2 });

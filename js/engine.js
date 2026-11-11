@@ -7,6 +7,7 @@ import { allCategories, getCategory } from './topics.js';
 
 export const DUEL_MS = 60000;
 export const PENALTY_MS = 2000;
+export const COUNTDOWN_MS = 10000;
 export const GRID_SIZE = 5;
 export const CELLS = GRID_SIZE * GRID_SIZE;
 
@@ -38,7 +39,7 @@ export function createInitialState(pin) {
   const players = DEFAULT_PLAYERS.map((p) => ({ ...p }));
   return {
     pin: pin || '',
-    phase: 'floor', // floor | ready | playing | paused | finished
+    phase: 'floor', // floor | ready | countdown | playing | paused | finished
     players,
     floor: dealFloor(players),
     setup: {},
@@ -53,6 +54,18 @@ export function playerById(state, id) {
 
 export function cellCount(state, id) {
   return state.floor.reduce((n, o) => n + (o === id ? 1 : 0), 0);
+}
+
+/** Trích xuất danh sách URL ảnh từ bộ items (theo thứ tự hàng đợi nếu có). */
+export function extractImageUrls(items = [], queue = null) {
+  const ordered = Array.isArray(queue) && queue.length ? queue.map((i) => items[i]).filter(Boolean) : items;
+  return ordered.filter((it) => it && it.type === 'img' && it.src).map((it) => it.src);
+}
+
+/** Thời gian đếm ngược chuẩn bị trận còn lại (ms) tại thời điểm `now`. */
+export function countdownRemainingOf(duel, now) {
+  if (!duel || !duel.cdEnd) return 0;
+  return Math.max(0, duel.cdEnd - now);
 }
 
 /** Thời gian còn lại (ms) của một phía tại thời điểm `now` (giờ server). */
@@ -110,17 +123,21 @@ export function reduce(s, type, arg = {}, now) {
       if (!owner) return false;
       s.setup = { ...s.setup, cell: arg.cell, defId: owner };
       if (s.setup.chalId === owner) delete s.setup.chalId;
-      s.setup.catId = playerById(s, owner).categoryId;
+      const cat = getCategory(playerById(s, owner).categoryId);
+      s.setup.catId = cat.id;
+      s.setup.preloadUrls = extractImageUrls(cat.items);
       return 'click';
     }
     case 'setChallenger':
       if (s.phase !== 'floor' || arg.id === s.setup.defId) return false;
       s.setup = { ...s.setup, chalId: arg.id };
       return 'click';
-    case 'setCategory':
+    case 'setCategory': {
       if (s.phase !== 'floor' || !allCategories().some((c) => c.id === arg.id)) return false;
-      s.setup = { ...s.setup, catId: arg.id };
+      const cat = getCategory(arg.id);
+      s.setup = { ...s.setup, catId: arg.id, preloadUrls: extractImageUrls(cat.items) };
       return null;
+    }
     case 'startDuel': {
       const { chalId, defId, catId } = s.setup;
       if (s.phase !== 'floor' || !chalId || !defId || !catId) return false;
@@ -142,14 +159,26 @@ export function reduce(s, type, arg = {}, now) {
         tStamp: 0,
         remA: DUEL_MS,
         remB: DUEL_MS,
+        cdTotal: COUNTDOWN_MS,
+        cdEnd: 0,
       };
       s.phase = 'ready';
       return 'ready';
     }
-    case 'begin':
+    case 'begin': {
       if (s.phase !== 'ready') return false;
+      const dur = Number(arg.durationMs) > 0 ? Number(arg.durationMs) : COUNTDOWN_MS;
+      d.cdTotal = dur;
+      d.cdEnd = now + dur;
+      d.running = false;
+      s.phase = 'countdown';
+      return 'countdown';
+    }
+    case 'go':
+      if (s.phase !== 'countdown') return false;
       d.running = true;
       d.tStamp = now;
+      d.cdEnd = 0;
       s.phase = 'playing';
       return 'start';
     case 'correct': {
@@ -195,7 +224,7 @@ export function reduce(s, type, arg = {}, now) {
       s.setup = {};
       return 'click';
     case 'abort':
-      if (!['ready', 'playing', 'paused'].includes(s.phase)) return false;
+      if (!['ready', 'countdown', 'playing', 'paused'].includes(s.phase)) return false;
       s.phase = 'floor';
       s.duel = null;
       s.setup = {};

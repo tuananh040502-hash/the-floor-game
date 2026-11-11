@@ -8,9 +8,10 @@
  *
  * Tối ưu độ trễ:
  *  - write() chỉ gửi phần thay đổi (multi-path update) thay vì cả phòng → payload vài chục byte
- *    cho mỗi lần bấm Đúng/Pass/Tạm dừng.
- *  - Mọi mốc thời gian dùng giờ server Firebase (Date.now() + serverTimeOffset) nên đồng hồ giữa
- *    2 máy không lệch dù đồng hồ hệ thống khác nhau.
+ *    cho mỗi lần bấm Đúng/Pass/Tạm dừng/Đếm ngược.
+ *  - Không recurse vào mảng như `setup.preloadUrls` hay `duel.items` để đồng bộ danh sách tải ngầm nguyên vẹn.
+ *  - Mọi mốc thời gian dùng giờ server Firebase (Date.now() + serverTimeOffset) nên đồng hồ đếm ngược
+ *    và đồng hồ 60s giữa 2 máy không lệch dù đồng hồ hệ thống khác nhau.
  */
 const FB_VERSION = '10.12.2';
 const FB_BASE = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
