@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Floor — Quản lý chủ đề</title>
+  <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="ambient"><i></i><i></i><i></i><b></b></div>
+
+  <div class="p-3 md:p-5">
+    <div class="window glass">
+      <!-- Sidebar -->
+      <aside class="window-side">
+        <div class="flex items-center justify-between">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <div class="flex gap-2">
+            <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
+            <a id="backLink" href="index.html" class="btn btn-ghost btn-sm">← Về game</a>
+          </div>
+        </div>
+        <div>
+          <div class="eyebrow">The Floor</div>
+          <h1 class="font-display text-3xl">Chủ đề</h1>
+        </div>
+
+        <div class="flex gap-2">
+          <button id="btnNew" class="btn btn-ok btn-sm flex-1">＋ Chủ đề mới</button>
+          <button id="btnClone" class="btn btn-ghost btn-sm" title="Nhân bản chủ đề có sẵn để chỉnh sửa">Nhân bản</button>
+        </div>
+        <div id="topicList" class="space-y-1 overflow-auto" style="max-height:38vh"></div>
+        <p class="t-3" style="font-size:11px">Chủ đề có sẵn không hiện ở đây — dùng “Nhân bản” để tạo bản của bạn rồi chỉnh sửa.</p>
+
+        <div class="divider"></div>
+
+        <div class="group group-pad space-y-3">
+          <div class="eyebrow">Sao lưu &amp; khôi phục</div>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="btnExportAll" class="btn btn-ghost btn-sm">⬇ Xuất tất cả</button>
+            <button id="btnExportOne" class="btn btn-ghost btn-sm">⬇ Chủ đề này</button>
+          </div>
+          <button id="btnImport" class="btn btn-ok btn-sm w-full">⬆ Nhập file JSON</button>
+          <input id="fileImport" type="file" accept=".json,application/json" class="hidden" />
+        </div>
+
+        <details id="drivePanel" class="group">
+          <summary>Google Drive</summary>
+          <div class="group-pad pt-0 space-y-3 text-sm">
+            <label class="field-label"><span class="eyebrow">Apps Script Web App URL</span>
+              <input id="driveUrl" class="input" placeholder="https://script.google.com/macros/s/.../exec" />
+            </label>
+            <label class="field-label"><span class="eyebrow">Folder ID</span>
+              <input id="driveFolder" class="input" placeholder="1AbC…xyz" />
+            </label>
+            <div class="flex gap-2">
+              <button id="btnDriveSave" class="btn btn-gold btn-sm flex-1">Lưu</button>
+              <button id="btnDriveTest" class="btn btn-ghost btn-sm">Kiểm tra</button>
+            </div>
+            <div id="driveStatus" class="t-2 text-xs"></div>
+            <details class="text-xs t-2">
+              <summary class="cursor-pointer font-semibold t-1">Hướng dẫn tạo Web App</summary>
+              <ol class="list-decimal ml-4 mt-2 space-y-1">
+                <li>Mở <b>script.google.com</b> → Dự án mới → dán mã bên dưới vào <code>Code.gs</code>.</li>
+                <li>Tạo một thư mục trên Drive, copy <b>Folder ID</b> trên thanh địa chỉ.</li>
+                <li><b>Triển khai → Ứng dụng web</b>: Thực thi bằng <i>Tôi</i>, Quyền truy cập <i>Bất kỳ ai</i>.</li>
+                <li>Cấp quyền Drive, copy URL <code>/exec</code> dán vào ô trên.</li>
+                <li>Sửa mã script thì phải triển khai lại phiên bản mới.</li>
+              </ol>
+              <div class="flex justify-end mt-2"><button id="btnCopyScript" class="btn btn-ghost btn-sm">Sao chép mã</button></div>
+              <pre id="scriptCode" class="mt-2 p-3 surface-sub rounded-xl overflow-auto" style="max-height:220px;font-size:11px"></pre>
+            </details>
+          </div>
+        </details>
+      </aside>
+
+      <!-- Nội dung -->
+      <section class="window-main">
+        <div id="emptyState" class="text-center py-24">
+          <div class="text-6xl mb-4">🖼️</div>
+          <div class="font-display text-3xl">Chọn hoặc tạo một chủ đề</div>
+          <p class="t-2 mt-2">Mỗi chủ đề chứa tối đa 50 ảnh kèm đáp án chuẩn.</p>
+        </div>
+
+        <div id="editorBody" class="hidden space-y-6 mx-auto" style="max-width:1100px">
+          <!-- Thông tin chủ đề -->
+          <div class="group group-pad grid gap-4 md:grid-cols-[84px_1fr_auto] items-end">
+            <label class="field-label"><span class="eyebrow">Biểu tượng</span>
+              <input id="tIcon" class="input text-center" style="font-size:1.6rem;padding:6px" maxlength="4" />
+            </label>
+            <label class="field-label"><span class="eyebrow">Tên chủ đề</span>
+              <input id="tName" class="input" style="font-size:18px;font-weight:700" maxlength="60" />
+            </label>
+            <div class="flex items-center gap-4 flex-wrap">
+              <label class="flex items-center gap-2 text-sm t-2 font-semibold"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
+              <span class="font-display text-2xl"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">50</span></span></span>
+              <button id="btnDeleteTopic" class="btn btn-pass btn-sm">Xóa chủ đề</button>
+            </div>
+          </div>
+
+          <!-- Thêm ảnh -->
+          <div class="grid gap-4 xl:grid-cols-2">
+            <div id="dropzone" class="dropzone p-6 text-center space-y-3">
+              <div class="text-4xl">☁️</div>
+              <div class="font-display text-xl">Kéo thả ảnh vào đây</div>
+              <div class="t-2 text-sm">Tối đa 50 ảnh · tự động tải lên Google Drive của bạn.</div>
+              <button id="btnPick" class="btn btn-ok btn-sm">Chọn ảnh…</button>
+              <input id="filePick" type="file" accept="image/*" multiple class="hidden" />
+              <div id="progressWrap" class="hidden text-left space-y-2 pt-1">
+                <div id="progressText" class="t-2 text-xs font-semibold"></div>
+                <div class="progress"><div id="progressBar" class="progress-fill"></div></div>
+              </div>
+            </div>
+
+            <div class="group group-pad space-y-3">
+              <div class="eyebrow">Dán link ảnh</div>
+              <textarea id="linkArea" rows="4" class="input" placeholder="Mỗi dòng một ảnh, có thể kèm đáp án:&#10;https://example.com/messi.jpg | Lionel Messi&#10;https://drive.google.com/file/d/ID/view | Ronaldo"></textarea>
+              <div class="flex items-center justify-between gap-3">
+                <span class="t-3" style="font-size:11px">Hỗ trợ link online và link chia sẻ Google Drive (“Bất kỳ ai có link”).</span>
+                <button id="btnAddLinks" class="btn btn-gold btn-sm">Thêm</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Thư viện ảnh -->
+          <div>
+            <div class="flex items-end justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <div class="eyebrow">Thư viện</div>
+                <h2 class="font-display text-2xl">Ảnh &amp; đáp án</h2>
+              </div>
+              <div class="flex gap-2">
+                <button id="btnPreviewAll" class="btn btn-ghost btn-sm">▶ Chạy thử</button>
+                <button id="btnClearItems" class="btn btn-ghost btn-sm">Xóa tất cả</button>
+              </div>
+            </div>
+            <p class="t-3 mb-3" style="font-size:11px">Kéo ảnh để đổi thứ tự (hoặc dùng ‹ ›). Bấm vào tên để sửa đáp án — tự lưu khi bấm ra ngoài. Đáp án phụ cách nhau bằng dấu phẩy.</p>
+            <div id="itemList" class="gallery"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Chạy thử -->
+  <div id="previewModal" class="hidden fixed inset-0 z-[70] scrim grid place-items-center p-4">
+    <div class="text-center space-y-4 max-w-3xl w-full">
+      <div id="pvImg" class="grid place-items-center" style="min-height:40vh"></div>
+      <div id="pvAnswer" class="font-display text-5xl t-gold"></div>
+      <div class="flex justify-center items-center gap-3">
+        <button id="pvPrev" class="btn btn-ghost btn-icon">‹</button>
+        <span id="pvIdx" class="font-num text-xl px-3"></span>
+        <button id="pvNext" class="btn btn-ghost btn-icon">›</button>
+        <button id="pvClose" class="btn btn-gold btn-sm">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden glass"></div>
+
+  <script type="module" src="js/theme.js"></script>
+  <script type="module" src="js/cms.js"></script>
+</body>
+</html>

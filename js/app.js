@@ -1,0 +1,614 @@
+import { loadFirebaseConfig } from './firebase-config.js';
+import { openFirebaseSettings } from './settings.js';
+import { createTransport } from './transport.js';
+import { allCategories, TOPICS_KEY } from './topics.js';
+import {
+  createInitialState, reduce, remainingOf, playerById, cellCount, currentQuestion, DUEL_MS, CELLS,
+} from './engine.js';
+import { Sfx } from './audio.js';
+import { Fireworks } from './fx.js';
+
+const $ = (id) => document.getElementById(id);
+const SIDE_COLOR = { A: '#0a84ff', B: '#ff7a59' };
+const RING_LEN = 552.92;
+const ICONS = {
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
+};
+
+// ---------- Tham số trang ----------
+const params = new URLSearchParams(location.search);
+const room = (params.get('room') || 'FLOOR').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20) || 'FLOOR';
+const requestedHost = params.get('role') === 'host';
+const pinKey = `thefloor:pin:${room}`;
+
+let role = 'view';
+let controller = false; // được phép điều khiển (Host hoặc đã mở khóa PIN)
+let state = null;
+let transport = null;
+let firstSnapshot = true;
+let lastEventId = null;
+let prevPhase = null;
+let tickPending = false;
+let floorBuilt = false;
+let artKey = '';
+let fx = null;
+let fxKey = '';
+
+// ---------- Khởi động ----------
+init();
+
+async function init() {
+  $('roomLabel').textContent = room;
+  $('gateRoom').textContent = room;
+  fx = new Fireworks($('fx'));
+  bindStaticUi();
+  transport = await createTransport(room, loadFirebaseConfig());
+  transport.onStatus(onConnStatus);
+  if (transport.mode === 'local') {
+    onConnStatus({ type: 'local' });
+    if (transport.fallbackReason) showConnError(`Firebase lỗi (${transport.fallbackReason}) — đang dùng chế độ cục bộ.`);
+  }
+  transport.subscribe(onSnapshot);
+  requestAnimationFrame(frame);
+}
+
+const conn = { base: '…', latency: '', error: '' };
+function paintConn() {
+  $('connLabel').textContent = `${conn.base}${conn.latency ? ` · ${conn.latency}` : ''}`;
+  $('connLabel').title = conn.error || '';
+  $('connLabel').style.borderColor = conn.error ? '#ef4444' : '';
+}
+function showConnError(message) {
+  conn.error = message;
+  conn.base = '● Lỗi kết nối';
+  paintConn();
+}
+function onConnStatus(ev) {
+  if (ev.type === 'online') { conn.base = '● Realtime'; conn.error = ''; }
+  else if (ev.type === 'offline') { conn.base = '● Mất kết nối'; conn.latency = ''; }
+  else if (ev.type === 'local') { conn.base = '● Cục bộ'; }
+  else if (ev.type === 'latency') { conn.latency = `${ev.ms}ms`; $('connLabel').title = `Khứ hồi ${ev.rtt}ms`; }
+  else if (ev.type === 'error') return showConnError(ev.message);
+  paintConn();
+  if (ev.type === 'latency') $('connLabel').title = `Khứ hồi ${ev.rtt}ms`;
+}
+
+function onSnapshot(remote) {
+  if (!remote) {
+    if (requestedHost && firstSnapshot) {
+      const fresh = createInitialState(sessionStorage.getItem(pinKey) || '');
+      role = 'host';
+      controller = true;
+      state = fresh;
+      transport.write(fresh);
+      firstSnapshot = false;
+      applyState(fresh);
+    } else {
+      showWaiting();
+    }
+    return;
+  }
+  if (firstSnapshot) {
+    if (requestedHost) {
+      const pin = sessionStorage.getItem(pinKey) || '';
+      if (!remote.pin || remote.pin === pin) {
+        role = 'host';
+      } else {
+        alert('PIN Host không đúng cho phòng này — bạn đang vào ở chế độ xem. Dùng bảng điều khiển mini để mở khóa.');
+      }
+    }
+    controller = role === 'host' || (remote.pin && sessionStorage.getItem(`${pinKey}:unlocked`) === remote.pin);
+  }
+  state = normalize(remote);
+  applyState(state, !firstSnapshot);
+  firstSnapshot = false;
+}
+
+/** Firebase bỏ mảng/object rỗng — khôi phục các trường bắt buộc. */
+function normalize(s) {
+  s.players = s.players || [];
+  s.floor = Array.from({ length: CELLS }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
+  s.setup = s.setup || {};
+  if (s.duel) {
+    s.duel.queue = s.duel.queue || [];
+    s.duel.items = s.duel.items || [];
+    s.duel.changed = s.duel.changed || [];
+  }
+  return s;
+}
+
+// ---------- Dispatch ----------
+/** Id sự kiện: kết thúc trận dùng id xác định để mọi máy tự tính cùng một sự kiện (không phát âm thanh 2 lần). */
+function makeEvent(next, type) {
+  const d = next.duel;
+  const id = type === 'finish' && d
+    ? `fin-${d.aId}-${d.bId}-${d.tStamp}-${d.qPos}`
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return { id, type };
+}
+
+function dispatch(type, arg) {
+  if (!controller || !state) return;
+  const prev = state;
+  const next = structuredClone(state);
+  const ev = reduce(next, type, arg, transport.serverNow());
+  if (ev === false) return;
+  if (ev) next.event = makeEvent(next, ev);
+  state = normalize(next);
+  applyState(state, true);
+  transport.write(state, prev); // chỉ gửi phần thay đổi
+}
+
+/**
+ * Hết giờ: mọi máy (Host lẫn Xem) tự phát hiện đồng hồ về 0 theo giờ server và kích hoạt
+ * còi/pháo hoa/lật ô cùng lúc. Chỉ máy có quyền điều khiển mới ghi kết quả lên cloud;
+ * máy Xem tính cục bộ (kết quả xác định) và sẽ khớp với dữ liệu Host gửi tới.
+ */
+function handleTimeUp() {
+  if (controller) {
+    dispatch('tick');
+    return;
+  }
+  const next = structuredClone(state);
+  const ev = reduce(next, 'tick', {}, transport.serverNow());
+  if (!ev) return;
+  next.event = makeEvent(next, ev);
+  state = normalize(next);
+  applyState(state, true);
+}
+
+// ---------- Áp dụng trạng thái ----------
+function applyState(s, allowEvents = true) {
+  $('waiting').classList.add('hidden');
+  document.body.classList.toggle('host', role === 'host');
+  $('linkCms').classList.toggle('hidden', role !== 'host');
+  $('linkCms').href = `topics.html?room=${encodeURIComponent(room)}`;
+  $('roleLabel').textContent = role === 'host' ? 'Host' : controller ? 'Màn hình · đã mở khóa Host' : 'Màn hình xem';
+
+  // Sự kiện cũ có sẵn trong phòng khi mới vào sẽ không phát lại (allowEvents=false ở snapshot đầu).
+  if (s.event && s.event.id !== lastEventId) {
+    if (allowEvents) playEvent(s.event.type);
+    lastEventId = s.event.id;
+  }
+
+  tickPending = false;
+  render(s);
+  prevPhase = s.phase;
+}
+
+function playEvent(type) {
+  switch (type) {
+    case 'ding': Sfx.ding(); break;
+    case 'buzz': Sfx.buzz(); break;
+    case 'start': Sfx.start(); break;
+    case 'ready': Sfx.ready(); break;
+    case 'pause':
+    case 'click': Sfx.click(); break;
+    case 'finish': Sfx.finishSequence(); break;
+    default: break;
+  }
+}
+
+function showWaiting() {
+  $('waiting').classList.remove('hidden');
+  ['viewFloor', 'viewArena', 'dock', 'miniPanel'].forEach((id) => $(id).classList.add('hidden'));
+}
+
+// ---------- Render ----------
+function render(s) {
+  const inDuel = s.phase !== 'floor';
+  if (!inDuel) document.documentElement.style.setProperty('--turn', 'transparent');
+  $('viewFloor').classList.toggle('hidden', inDuel);
+  $('viewArena').classList.toggle('hidden', !inDuel);
+  renderFloor(s);
+  if (inDuel) renderArena(s);
+  renderControls(s);
+  renderFireworks(s);
+  syncMusic(s);
+}
+
+// Nhạc nền đếm ngược: chỉ chạy khi đang đấu (dừng khi tạm dừng / kết thúc), nhịp tăng theo thời gian còn lại.
+function syncMusic(s) {
+  if (s.phase === 'playing' && s.duel) {
+    if (!Sfx.isMusicOn()) {
+      Sfx.musicStart(() => {
+        if (!state || !state.duel) return 60000;
+        const now = transport.serverNow();
+        return Math.min(remainingOf(state.duel, 'A', now), remainingOf(state.duel, 'B', now));
+      });
+    }
+  } else if (Sfx.isMusicOn()) {
+    Sfx.musicStop();
+  }
+}
+
+// ----- Sàn -----
+function buildFloor() {
+  const grid = $('floorGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < CELLS; i++) {
+    const el = document.createElement('div');
+    el.className = 'cell';
+    el.dataset.i = i;
+    el.innerHTML = '<span class="cell-avatar"></span><span class="cell-name"></span>';
+    el.addEventListener('click', () => {
+      if (role === 'host') dispatch('selectCell', { cell: i });
+    });
+    grid.appendChild(el);
+  }
+  floorBuilt = true;
+}
+
+function renderFloor(s) {
+  if (!floorBuilt) buildFloor();
+  const flipSet = new Set(prevPhase === 'finished' && s.phase === 'floor' && s.duel ? s.duel.changed : []);
+  [...$('floorGrid').children].forEach((el, i) => {
+    const owner = playerById(s, s.floor[i]);
+    if (!owner) return;
+    el.style.setProperty('--c', owner.color);
+    el.firstChild.textContent = owner.avatar;
+    el.lastChild.textContent = owner.name;
+    el.classList.toggle('is-sel', s.setup.cell === i);
+    el.classList.toggle('is-def', !!s.setup.defId && owner.id === s.setup.defId);
+    el.classList.toggle('is-chal', !!s.setup.chalId && owner.id === s.setup.chalId);
+    if (flipSet.has(i)) {
+      el.classList.add('is-flip');
+      setTimeout(() => el.classList.remove('is-flip'), 3300);
+    }
+  });
+
+  const def = playerById(s, s.setup.defId);
+  const chal = playerById(s, s.setup.chalId);
+  $('floorHint').textContent = def
+    ? `${chal ? chal.name : '???'}  vs  ${def.name}`
+    : role === 'host' ? 'Chọn một ô đất để thách đấu' : 'Chờ trận đấu kế tiếp';
+
+  // Bảng xếp hạng
+  const board = $('board');
+  const sorted = [...s.players].sort((a, b) => cellCount(s, b.id) - cellCount(s, a.id));
+  board.innerHTML = '';
+  sorted.forEach((p) => {
+    const n = cellCount(s, p.id);
+    const row = document.createElement('div');
+    row.className = '';
+    row.innerHTML = `
+      <div class="flex items-center gap-2 text-base font-semibold mb-1 ${n === 0 ? 'opacity-40' : ''}">
+        <span>${p.avatar}</span>
+        <span class="flex-1 truncate t-1">${esc(p.name)}</span>
+        <span style="color:${p.color}">${n}</span>
+      </div>
+      <div class="h-1.5 rounded track overflow-hidden"><div style="width:${(n / CELLS) * 100}%;background:${p.color};border-radius:9999px;transition:width .6s" class="h-full"></div></div>`;
+    board.appendChild(row);
+  });
+
+  renderSetup(s);
+}
+
+function renderSetup(s) {
+  const panel = $('setupPanel');
+  const show = role === 'host' && s.phase === 'floor';
+  panel.classList.toggle('hidden', !show);
+  if (!show) return;
+
+  const def = playerById(s, s.setup.defId);
+  $('setupDef').textContent = def ? `${def.avatar} ${def.name} (${cellCount(s, def.id)} ô)` : '—';
+
+  const chalSel = $('selChal');
+  const chalSig = JSON.stringify([s.players.map((p) => [p.id, p.name, p.avatar]), s.setup.defId]);
+  if (chalSel.dataset.sig !== chalSig) {
+    chalSel.dataset.sig = chalSig;
+    chalSel.innerHTML = '<option value="">— Chọn người thách đấu —</option>' +
+      s.players.filter((p) => p.id !== s.setup.defId)
+        .map((p) => `<option value="${p.id}">${p.avatar} ${esc(p.name)}</option>`).join('');
+  }
+  chalSel.value = s.setup.chalId || '';
+
+  const cats = allCategories();
+  const catSel = $('selCat');
+  const catSig = JSON.stringify(cats.map((c) => [c.id, c.name, c.icon, c.items.length]));
+  if (catSel.dataset.sig !== catSig) {
+    catSel.dataset.sig = catSig;
+    catSel.innerHTML = cats.map((c) => `<option value="${c.id}" ${c.items.length ? '' : 'disabled'}>${c.icon} ${esc(c.name)} (${c.items.length})</option>`).join('');
+  }
+  catSel.value = s.setup.catId || cats[0].id;
+  const chosen = cats.find((c) => c.id === catSel.value);
+  $('btnStartDuel').disabled = !(s.setup.defId && s.setup.chalId && chosen && chosen.items.length);
+
+  // Roster editor (tránh phá focus khi đang gõ)
+  const roster = $('roster');
+  const sig = JSON.stringify([s.players, cats.map((c) => c.id + c.name)]);
+  if (roster.dataset.sig !== sig && !roster.contains(document.activeElement)) {
+    roster.dataset.sig = sig;
+    roster.innerHTML = '';
+    s.players.forEach((p) => {
+      const row = document.createElement('div');
+      row.className = 'grid grid-cols-[2.2rem_1fr_2.2rem_1.7fr] gap-1 items-center';
+      row.innerHTML = `
+        <input class="input !p-1 text-center" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" />
+        <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" />
+        <input type="color" data-f="color" value="${p.color}" class="w-8 h-8 bg-transparent" />
+        <select class="input" data-f="categoryId">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>`;
+      row.querySelectorAll('[data-f]').forEach((inp) => {
+        inp.addEventListener('change', () => {
+          const v = inp.value.trim();
+          if (!v) return;
+          dispatch('updatePlayer', { id: p.id, patch: { [inp.dataset.f]: v } });
+        });
+      });
+      roster.appendChild(row);
+    });
+  }
+}
+
+// ----- Đấu trường -----
+function renderArena(s) {
+  const d = s.duel;
+  if (!d) return;
+  const A = playerById(s, d.aId);
+  const B = playerById(s, d.bId);
+  [['A', A], ['B', B]].forEach(([side, p]) => {
+    $(`avatar${side}`).textContent = p.avatar;
+    $(`avatar${side}`).style.setProperty('--pc', p.color);
+    $(`name${side}`).textContent = p.name;
+    $(`cells${side}`).textContent = cellCount(s, p.id);
+    const card = $(`card${side}`);
+    const active = s.phase === 'playing' && d.turn === side;
+    const finished = s.phase === 'finished';
+    card.classList.toggle('active', active);
+    card.classList.toggle('idle', (s.phase === 'playing' || s.phase === 'paused') && d.turn !== side);
+    card.classList.toggle('out', finished && d.loserSide === side);
+    card.classList.toggle('win', finished && d.loserSide !== side);
+  });
+
+  // Viền LED & banner lượt
+  let led = '#64d2ff';
+  let banner = 'SẴN SÀNG';
+  if (s.phase === 'playing' || s.phase === 'paused') {
+    led = SIDE_COLOR[d.turn];
+    banner = `LƯỢT: ${(d.turn === 'A' ? A : B).name.toUpperCase()}`;
+  } else if (s.phase === 'finished') {
+    led = '#ffd60a';
+    banner = 'KẾT THÚC';
+  }
+  $('qWrap').style.setProperty('--led', led);
+  document.documentElement.style.setProperty('--turn', led);
+  $('qWrap').classList.toggle('paused', s.phase === 'paused');
+  $('turnBanner').textContent = banner;
+  $('catBadge').textContent = `${d.catIcon || '🖼️'} ${d.catName || ''}`;
+
+  // Nội dung câu đố
+  const key = `${s.phase === 'ready' ? 'r' : 'q'}-${d.categoryId}-${d.qPos}-${s.phase === 'finished'}`;
+  if (key !== artKey) {
+    artKey = key;
+    const content = $('qContent');
+    content.innerHTML = '';
+    if (s.phase === 'ready') {
+      content.innerHTML = '<div class="font-display text-5xl md:text-7xl t-accent text-center px-4">SẴN SÀNG?<div class="text-2xl md:text-3xl t-2 mt-2">Chờ Host bấm BẮT ĐẦU</div></div>';
+    } else if (s.phase !== 'finished') {
+      const q = currentQuestion(d);
+      if (q) content.appendChild(buildArt(q));
+      const nq = currentQuestion(d, 1);
+      if (nq && nq.type === 'img') { const pre = new Image(); pre.referrerPolicy = 'no-referrer'; pre.src = nq.src; } // preload ảnh kế tiếp
+    } else {
+      content.innerHTML = '';
+    }
+  }
+  $('qInner').classList.toggle('blurred', s.phase === 'paused');
+  $('pauseOverlay').classList.toggle('hidden', s.phase !== 'paused');
+
+  const fin = s.phase === 'finished';
+  $('resultOverlay').classList.toggle('hidden', !fin);
+  if (fin) {
+    const w = playerById(s, d.winnerId);
+    $('resultName').textContent = `${w.avatar} ${w.name.toUpperCase()}`;
+    $('resultSub').textContent = `Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w.id)} ô`;
+  }
+}
+
+function buildArt(q) {
+  if (q.type === 'img') {
+    const img = document.createElement('img');
+    img.className = 'q-img';
+    img.alt = 'Câu đố';
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', () => {
+      img.replaceWith(Object.assign(document.createElement('div'), {
+        className: 'font-display text-4xl t-danger text-center px-4',
+        textContent: '⚠️ Ảnh không tải được',
+      }));
+    });
+    img.src = q.src;
+    return img;
+  }
+  const div = document.createElement('div');
+  div.className = 'q-emoji';
+  div.textContent = q.emoji;
+  return div;
+}
+
+// ----- Điều khiển -----
+function renderControls(s) {
+  const phase = s.phase;
+  const inDuel = phase !== 'floor';
+  const isHostScreen = role === 'host';
+
+  // Dock (host) hoặc mini panel (xem)
+  $('dock').classList.toggle('hidden', !(isHostScreen && inDuel));
+  $('miniPanel').classList.toggle('hidden', isHostScreen);
+  if (!isHostScreen) {
+    $('miniLock').classList.toggle('hidden', controller);
+    $('miniCtrl').classList.toggle('hidden', !controller);
+    const bar = $('ctrlBar');
+    if (bar.parentElement.id !== 'miniButtons') $('miniButtons').appendChild(bar);
+    bar.classList.toggle('hidden', !(controller && inDuel));
+  } else {
+    const bar = $('ctrlBar');
+    if (bar.parentElement.id !== 'dockInner') $('dockInner').appendChild(bar);
+  }
+
+  $('cBegin').classList.toggle('hidden', phase !== 'ready');
+  $('cOk').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
+  $('cPass').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
+  $('cPause').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
+  $('cOk').disabled = phase !== 'playing';
+  $('cPass').disabled = phase !== 'playing';
+  $('cPause').innerHTML = phase === 'paused' ? `${ICONS.play} Tiếp tục <kbd>T</kbd>` : `${ICONS.pause} Tạm dừng <kbd>T</kbd>`;
+  $('cBack').classList.toggle('hidden', phase !== 'finished');
+  $('cAbort').classList.toggle('hidden', phase === 'finished' || phase === 'floor');
+  if (isHostScreen) $('dockInner').classList.toggle('hidden', !inDuel);
+
+  // Đáp án nhắc bài
+  const q = s.duel && phase !== 'finished' && phase !== 'ready' ? currentQuestion(s.duel) : null;
+  $('answerWrap').classList.toggle('hidden', !(isHostScreen && q));
+  $('answerText').textContent = q ? q.answer : '';
+  $('answerAlias').textContent = q && q.aliases && q.aliases.length ? `(${q.aliases.join(' / ')})` : '';
+  $('miniAnswer').textContent = q ? `Đáp án: ${q.answer}${q.aliases && q.aliases.length ? ' (' + q.aliases.join(' / ') + ')' : ''}` : '';
+}
+
+// ----- Pháo hoa -----
+function renderFireworks(s) {
+  const d = s.duel;
+  if (s.phase === 'finished' && d) {
+    const winnerSide = d.loserSide === 'A' ? 'B' : 'A';
+    const key = `${d.winnerId}-${winnerSide}-${d.changed.join(',')}`;
+    if (key === fxKey) return;
+    fxKey = key;
+    const w = playerById(s, d.winnerId);
+    const zone = window.innerWidth >= 1024 ? (winnerSide === 'A' ? [0.02, 0.36] : [0.64, 0.98]) : [0.1, 0.9];
+    fx.start(zone, [SIDE_COLOR[winnerSide], '#eab308', w.color, '#ffffff']);
+    Sfx.boom();
+  } else if (fxKey) {
+    fxKey = '';
+    fx.stop();
+    Sfx.stopSiren();
+  }
+}
+
+// ---------- Vòng lặp đồng hồ (mượt, 60fps) ----------
+function frame() {
+  requestAnimationFrame(frame);
+  if (!state || !state.duel || state.phase === 'floor') return;
+  const d = state.duel;
+  const now = transport.serverNow();
+  const rem = { A: remainingOf(d, 'A', now), B: remainingOf(d, 'B', now) };
+
+  ['A', 'B'].forEach((side) => {
+    const ms = rem[side];
+    const clock = $(`clock${side}`);
+    const bar = $(`bar${side}`);
+    const text = (ms / 1000).toFixed(1).padStart(4, '0');
+    if (clock.textContent !== text) clock.textContent = text;
+    const danger = ms > 0 && ms <= 10000 && state.phase !== 'ready';
+    clock.classList.toggle('danger', danger && d.turn === side && state.phase === 'playing');
+    clock.classList.toggle('zero', ms <= 0);
+    bar.classList.toggle('danger', danger);
+    bar.style.width = `${(ms / DUEL_MS) * 100}%`;
+    const ring = $(`ring${side}`);
+    ring.style.strokeDashoffset = String(RING_LEN * (1 - ms / DUEL_MS));
+    ring.classList.toggle('danger', danger);
+  });
+
+  if (state.phase === 'playing') {
+    const cur = rem[d.turn];
+    if (cur <= 0 && !tickPending) {
+      tickPending = true;
+      handleTimeUp();
+    }
+  }
+}
+
+// ---------- UI tĩnh & phím tắt ----------
+function bindStaticUi() {
+  const unlock = () => {
+    Sfx.unlock();
+    $('soundGate').classList.add('hidden');
+  };
+  $('soundGate').addEventListener('click', unlock);
+  window.addEventListener('keydown', () => Sfx.unlock(), { once: true });
+
+  window.addEventListener('storage', (e) => {
+    if (e.key === TOPICS_KEY && state) render(state);
+  });
+  window.addEventListener('pageshow', () => { if (state) render(state); });
+
+  $('btnFirebase').addEventListener('click', openFirebaseSettings);
+  $('btnMute').addEventListener('click', () => {
+    Sfx.setMuted(!Sfx.isMuted());
+    $('btnMute').textContent = Sfx.isMuted() ? '🔇' : '🔊';
+  });
+  $('btnFull').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  });
+
+  const press = (id, fn) => $(id).addEventListener('click', (e) => { fn(); e.currentTarget.blur(); });
+  press('cBegin', () => dispatch('begin'));
+  press('cOk', () => dispatch('correct'));
+  press('cPass', () => dispatch('pass'));
+  press('cPause', () => dispatch(state && state.phase === 'paused' ? 'resume' : 'pause'));
+  press('cBack', () => dispatch('back'));
+  press('cAbort', () => { if (confirm('Hủy trận đấu hiện tại? Ô đất sẽ không thay đổi.')) dispatch('abort'); });
+
+  press('btnStartDuel', () => dispatch('startDuel'));
+  press('btnShuffleFloor', () => { if (confirm('Chia lại toàn bộ sàn ngẫu nhiên?')) dispatch('shuffleFloor'); });
+  press('btnResetAll', () => { if (confirm('Đặt lại thí sinh và sàn về mặc định?')) dispatch('resetAll'); });
+  $('selChal').addEventListener('change', (e) => e.target.value && dispatch('setChallenger', { id: e.target.value }));
+  $('selCat').addEventListener('change', (e) => dispatch('setCategory', { id: e.target.value }));
+
+  // Mini panel
+  $('miniToggle').addEventListener('click', () => {
+    const c = $('miniPanel').classList.toggle('collapsed');
+    $('miniArrow').textContent = c ? '▲' : '▼';
+  });
+  const tryUnlock = () => {
+    const pin = $('miniPin').value;
+    if (state && (!state.pin || state.pin === pin)) {
+      sessionStorage.setItem(`${pinKey}:unlocked`, state.pin || '');
+      controller = true;
+      $('miniErr').classList.add('hidden');
+      render(state);
+      $('roleLabel').textContent = 'Màn hình · đã mở khóa Host';
+    } else {
+      $('miniErr').classList.remove('hidden');
+    }
+  };
+  $('miniUnlock').addEventListener('click', tryUnlock);
+  $('miniPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); tryUnlock(); } });
+
+  window.addEventListener('keydown', (e) => {
+    if (!controller || !state) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (['input', 'select', 'textarea'].includes(tag)) return;
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key;
+    if (state.phase === 'ready' && (k === ' ' || k === 'Enter')) {
+      e.preventDefault();
+      pulse('cBegin');
+      dispatch('begin');
+    } else if (k === ' ' || k === 'Enter') {
+      e.preventDefault();
+      pulse('cOk');
+      dispatch('correct');
+    } else if (k === 'p' || k === 'P' || k === 'ArrowDown') {
+      e.preventDefault();
+      pulse('cPass');
+      dispatch('pass');
+    } else if (k === 't' || k === 'T') {
+      pulse('cPause');
+      dispatch(state.phase === 'paused' ? 'resume' : 'pause');
+    }
+  });
+}
+
+/** Phản hồi xúc giác: nút co lại 0.95 rồi nảy ra khi dùng phím tắt. */
+function pulse(id) {
+  const el = $(id);
+  if (!el || el.disabled) return;
+  el.classList.add('pressed');
+  setTimeout(() => el.classList.remove('pressed'), 150);
+}
+
+function esc(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}

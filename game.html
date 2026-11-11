@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Floor — Đấu trường</title>
+  <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="ambient"><i></i><i></i><i></i><b></b></div>
+  <canvas id="fx"></canvas>
+
+  <!-- Cổng bật âm thanh -->
+  <div id="soundGate" class="fixed inset-0 z-[80] grid place-items-center scrim cursor-pointer">
+    <div class="glass px-10 py-12 text-center" style="border-radius:40px">
+      <div class="eyebrow">Game show</div>
+      <div class="font-display wordmark text-6xl md:text-7xl mt-1">The Floor</div>
+      <div class="t-2 mt-4 text-base">Chạm để bật âm thanh &amp; vào phòng <b class="t-1">PIN <span id="gateRoom"></span></b></div>
+      <div class="btn btn-ok btn-lg mt-6">Bắt đầu</div>
+    </div>
+  </div>
+
+  <header class="appbar glass">
+    <div class="flex items-center gap-3 flex-wrap">
+      <a href="index.html" class="font-display wordmark text-2xl">The Floor</a>
+      <span class="chip">PIN <b id="roomLabel"></b></span>
+      <span id="roleLabel" class="chip"></span>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <span id="connLabel" class="chip">…</span>
+      <a id="linkCms" class="hidden btn btn-ghost btn-sm" href="topics.html">Chủ đề</a>
+      <button id="btnFirebase" class="btn btn-ghost btn-sm" title="Cấu hình Firebase &amp; Đám Mây">⚙︎ Firebase</button>
+      <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
+      <button id="btnMute" class="btn btn-ghost btn-sm btn-icon" title="Bật/tắt âm">🔊</button>
+      <button id="btnFull" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
+    </div>
+  </header>
+
+  <main class="px-3 md:px-6 pt-4 pb-40 mx-auto" style="max-width:1600px">
+    <div id="waiting" class="hidden text-center text-2xl mt-28 t-2 font-display">Đang chờ Host tạo phòng…</div>
+
+    <!-- ===== SÀN THE FLOOR ===== -->
+    <section id="viewFloor" class="hidden">
+      <div class="grid gap-6 lg:grid-cols-[1fr_340px]">
+        <div>
+          <div class="text-center mb-4">
+            <div class="eyebrow">The Floor</div>
+            <div id="floorHint" class="font-display text-3xl md:text-4xl mt-1">The Floor</div>
+          </div>
+          <div class="floor-stage"><div id="floorGrid" class="floor-grid"></div></div>
+        </div>
+        <aside class="space-y-4">
+          <div class="panel p-5">
+            <div class="eyebrow mb-3">Bảng xếp hạng</div>
+            <div id="board" class="space-y-3"></div>
+          </div>
+
+          <!-- Chuẩn bị trận (chỉ Host) -->
+          <div id="setupPanel" class="panel p-5 hidden space-y-4">
+            <div>
+              <div class="eyebrow">Chọn cặp đấu</div>
+              <p class="t-3 text-xs mt-1">Chạm một ô trên sàn để chọn người bị thách đấu (chủ ô).</p>
+            </div>
+            <div class="surface-sub rounded-2xl px-4 py-3 flex items-center justify-between">
+              <span class="t-2 text-sm">Người bị thách</span>
+              <b id="setupDef" class="t-warn text-sm">—</b>
+            </div>
+            <label class="field-label"><span class="eyebrow">Người thách đấu</span>
+              <select id="selChal" class="input"></select>
+            </label>
+            <label class="field-label"><span class="eyebrow">Chủ đề</span>
+              <select id="selCat" class="input"></select>
+            </label>
+            <button id="btnStartDuel" class="btn btn-ok btn-lg w-full">Vào đấu trường</button>
+            <details class="text-sm">
+              <summary class="cursor-pointer t-2 font-semibold">Thí sinh &amp; sàn</summary>
+              <div id="roster" class="space-y-2 mt-3"></div>
+              <div class="flex gap-2 mt-4">
+                <button id="btnShuffleFloor" class="btn btn-ghost btn-sm">Chia lại sàn</button>
+                <button id="btnResetAll" class="btn btn-ghost btn-sm">Đặt lại</button>
+              </div>
+            </details>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ===== ĐẤU TRƯỜNG ===== -->
+    <section id="viewArena" class="hidden">
+      <div class="grid grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,2.2fr)_minmax(0,1fr)] gap-4 md:gap-6 items-start">
+        <!-- Thí sinh A -->
+        <div id="cardA" class="side-card" style="--sc: var(--a)">
+          <div class="eyebrow">Thí sinh A · Thách đấu</div>
+          <div id="avatarA" class="avatar"></div>
+          <div id="nameA" class="font-display text-2xl md:text-3xl truncate"></div>
+          <div class="t-2 text-sm font-semibold mt-1">▦ <span id="cellsA" class="t-1">0</span> ô đất</div>
+          <div class="ring-wrap">
+            <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringA" class="ring-fill" cx="100" cy="100" r="88"/></svg>
+            <div id="clockA" class="clock">60.0</div>
+          </div>
+          <div class="capsule"><div id="barA" class="capsule-fill"></div></div>
+        </div>
+
+        <!-- Giữa -->
+        <div class="order-last col-span-2 lg:order-none lg:col-span-1">
+          <div class="text-center mb-3 flex items-center justify-center gap-3 flex-wrap">
+            <span id="turnBanner" class="turn-banner">—</span>
+            <span id="catBadge" class="chip"></span>
+          </div>
+          <div id="qWrap" class="q-wrap">
+            <div id="qInner" class="q-inner">
+              <div id="qContent"></div>
+              <div id="pauseOverlay" class="hidden overlay-glass">
+                <div>
+                  <div class="eyebrow">Trận đấu</div>
+                  <div class="font-display text-5xl md:text-6xl mt-1">Tạm dừng</div>
+                </div>
+              </div>
+              <div id="resultOverlay" class="hidden overlay-glass">
+                <div>
+                  <div class="eyebrow">Chiến thắng</div>
+                  <div id="resultName" class="result-title text-5xl md:text-7xl mt-1"></div>
+                  <div id="resultSub" class="t-2 text-lg font-semibold mt-2"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Đáp án: Dynamic Pill nổi dưới ảnh (chỉ Host) -->
+          <div id="answerWrap" class="hidden text-center mt-4">
+            <div class="answer-pill">
+              <span class="eyebrow">Đáp án</span>
+              <span id="answerText" class="answer-strip font-display text-2xl t-gold"></span>
+              <span id="answerAlias" class="answer-strip t-2 text-sm"></span>
+            </div>
+            <div class="t-3 text-[10px] tracking-widest uppercase font-bold mt-2">Rê chuột để xem đáp án</div>
+          </div>
+        </div>
+
+        <!-- Thí sinh B -->
+        <div id="cardB" class="side-card" style="--sc: var(--b)">
+          <div class="eyebrow">Thí sinh B · Chủ ô</div>
+          <div id="avatarB" class="avatar"></div>
+          <div id="nameB" class="font-display text-2xl md:text-3xl truncate"></div>
+          <div class="t-2 text-sm font-semibold mt-1">▦ <span id="cellsB" class="t-1">0</span> ô đất</div>
+          <div class="ring-wrap">
+            <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringB" class="ring-fill" cx="100" cy="100" r="88"/></svg>
+            <div id="clockB" class="clock">60.0</div>
+          </div>
+          <div class="capsule"><div id="barB" class="capsule-fill"></div></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== HOST DOCK (Dynamic Island) ===== -->
+  <div id="dock" class="hidden">
+    <div id="dockInner" class="island">
+      <div id="ctrlBar" class="ctrl-bar">
+        <button id="cBegin" class="btn btn-gold btn-lg hidden">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+          Bắt đầu <kbd>␣ Space</kbd>
+        </button>
+        <button id="cOk" class="btn btn-ok btn-lg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+          Đúng <kbd>␣ Space</kbd>
+        </button>
+        <button id="cPass" class="btn btn-pass btn-lg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          Bỏ lượt −2s <kbd>P / ↓</kbd>
+        </button>
+        <button id="cPause" class="btn btn-ghost"></button>
+        <button id="cBack" class="btn btn-gold btn-lg hidden">Về sàn The Floor</button>
+        <button id="cAbort" class="btn btn-ghost btn-sm">Hủy trận</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MINI PANEL (màn hình xem) ===== -->
+  <div id="miniPanel" class="mini-panel panel hidden collapsed">
+    <button id="miniToggle" class="w-full flex items-center justify-between gap-6 px-4 py-3 text-sm font-semibold">
+      <span>Điều khiển Host</span><span id="miniArrow" class="t-3">▲</span>
+    </button>
+    <div class="mini-body p-4 pt-0 space-y-3">
+      <div id="miniLock" class="space-y-2">
+        <input id="miniPin" type="password" placeholder="Mật khẩu Host" class="input" />
+        <button id="miniUnlock" class="btn btn-gold btn-sm w-full">Mở khóa</button>
+        <div id="miniErr" class="t-danger text-xs hidden">Mật khẩu không đúng.</div>
+      </div>
+      <div id="miniCtrl" class="hidden space-y-3">
+        <div id="miniAnswer" class="text-sm t-gold font-semibold answer-strip"></div>
+        <div id="miniButtons" class="flex flex-wrap gap-2"></div>
+        <div class="t-3 text-[10px] tracking-widest uppercase font-bold">Space · P / ↓ · T</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/theme.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Floor — Vào phòng</title>
+  <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="min-h-screen">
+  <div class="ambient"><i></i><i></i><i></i><b></b></div>
+
+  <div class="fixed top-4 right-4 flex gap-2 z-10">
+    <a href="topics.html" class="btn btn-ghost btn-sm">Chủ đề</a>
+    <button id="btnFirebase" class="btn btn-ghost btn-sm">⚙︎ Firebase</button>
+    <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
+  </div>
+
+  <main class="min-h-screen grid place-items-center p-4">
+    <div class="w-full max-w-md">
+      <div class="text-center mb-8">
+        <div class="eyebrow">Fox · Game show</div>
+        <h1 class="font-display wordmark hero-title mt-2">The Floor</h1>
+        <p class="t-2 mt-3 text-base">Đấu trường 60 giây · Realtime Host &amp; Màn hình xem</p>
+      </div>
+
+      <div class="glass p-6 space-y-5" style="border-radius:32px">
+        <label class="field-label"><span class="eyebrow">Game PIN · mã phòng 4 số</span>
+          <div class="flex gap-2">
+            <input id="room" class="input font-num text-center" style="font-size:2rem;letter-spacing:.35em;padding:10px 12px" inputmode="numeric" maxlength="4" placeholder="0000" />
+            <button id="btnRandom" class="btn btn-ghost btn-icon" title="Tạo mã ngẫu nhiên">🎲</button>
+          </div>
+        </label>
+        <label class="field-label"><span class="eyebrow">Mật khẩu Host</span>
+          <input id="pin" type="password" class="input" placeholder="Đặt khi tạo phòng · dùng để mở khóa điều khiển" />
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <button id="goHost" class="btn btn-ok btn-lg">Vào làm Host</button>
+          <button id="goView" class="btn btn-ghost btn-lg">Xem</button>
+        </div>
+        <p id="mode" class="t-3 text-center" style="font-size:11px"></p>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="js/theme.js"></script>
+  <script type="module">
+    import { getConfigSource } from './js/firebase-config.js';
+    import { openFirebaseSettings } from './js/settings.js';
+    const $ = (id) => document.getElementById(id);
+    const rand4 = () => String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+    $('mode').textContent = {
+      custom: 'Firebase Realtime · cấu hình của bạn',
+      default: 'Firebase Realtime · cấu hình mặc định',
+      local: 'Chế độ cục bộ — chỉ đồng bộ giữa các tab cùng trình duyệt',
+      none: 'Chế độ cục bộ — chưa có cấu hình Firebase',
+    }[getConfigSource()];
+    $('room').value = localStorage.getItem('thefloor:lastRoom') || rand4();
+    $('room').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
+    $('btnRandom').onclick = () => { $('room').value = rand4(); };
+    $('btnFirebase').onclick = openFirebaseSettings;
+    const go = (role) => {
+      const room = $('room').value.trim();
+      if (!/^\d{4}$/.test(room)) { alert('Game PIN phải gồm đúng 4 chữ số.'); return; }
+      localStorage.setItem('thefloor:lastRoom', room);
+      if (role === 'host') {
+        if (!$('pin').value) { alert('Nhập mật khẩu Host.'); return; }
+        sessionStorage.setItem(`thefloor:pin:${room}`, $('pin').value);
+      }
+      location.href = `game.html?role=${role}&room=${room}`;
+    };
+    $('goHost').onclick = () => go('host');
+    $('goView').onclick = () => go('view');
+  </script>
+</body>
+</html>
