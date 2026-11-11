@@ -133,9 +133,24 @@
                   <div class="eyebrow">Chiến thắng</div>
                   <div id="resultName" class="result-title text-5xl md:text-7xl mt-1"></div>
                   <div id="resultSub" class="t-2 text-lg font-semibold mt-2"></div>
-                  <div id="victoryAudioControls" class="hidden mt-5 flex items-center justify-center gap-2">
-                    <button id="btnVicToggle" type="button" class="btn btn-ghost btn-sm">⏸ Tạm dừng nhạc</button>
-                    <button id="btnVicReplay" type="button" class="btn btn-ghost btn-sm">↻ Phát lại</button>
+                  <div id="victoryAudioControls" class="hidden mt-4 space-y-2.5">
+                    <div class="flex items-center justify-center gap-2 flex-wrap">
+                      <button id="btnVicToggle" type="button" class="btn btn-ghost btn-sm">⏸ Tạm dừng nhạc</button>
+                      <button id="btnVicReplay" type="button" class="btn btn-ghost btn-sm">↻ Phát lại</button>
+                    </div>
+                    <div class="vic-mixer">
+                      <div class="vic-mixer-row" title="Âm lượng file ghi âm / SFX từ máy">
+                        <button id="btnLiveLocalMute" type="button" class="vic-spk" aria-label="Bật/tắt tiếng file máy">🎙️</button>
+                        <input id="liveLocalVol" type="range" min="0" max="100" step="1" value="100" class="vol-range vol-range-mini" />
+                        <span id="liveLocalVolLabel" class="vic-pct font-num t-accent">100%</span>
+                      </div>
+                      <div class="vic-mixer-sep"></div>
+                      <div class="vic-mixer-row" title="Âm lượng nhạc ngoài (YouTube / SoundCloud / MP3)">
+                        <button id="btnLiveOnlineMute" type="button" class="vic-spk" aria-label="Bật/tắt tiếng nhạc ngoài">🎵</button>
+                        <input id="liveOnlineVol" type="range" min="0" max="100" step="1" value="100" class="vol-range vol-range-gold vol-range-mini" />
+                        <span id="liveOnlineVolLabel" class="vic-pct font-num t-gold">100%</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

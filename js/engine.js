@@ -3,7 +3,7 @@
  * Đồng hồ dùng mô hình: remA/remB (ms còn lại tại thời điểm tStamp) + running/turn,
  * nhờ vậy mọi màn hình tự tính đồng hồ mượt mà từ cùng một trạng thái.
  */
-import { allCategories, getCategory } from './topics.js';
+import { allCategories, getCategory, clampVolume01 } from './topics.js';
 
 export const DUEL_MS = 60000;
 export const PENALTY_MS = 2000;
@@ -129,6 +129,8 @@ export function reduce(s, type, arg = {}, now) {
       s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
       s.setup.victoryVoiceData = cat.victoryVoiceData || '';
       s.setup.victoryVoiceName = cat.victoryVoiceName || '';
+      s.setup.localAudioVolume = clampVolume01(cat.localAudioVolume, 1.0);
+      s.setup.onlineAudioVolume = clampVolume01(cat.onlineAudioVolume, 1.0);
       return 'click';
     }
     case 'setChallenger':
@@ -145,6 +147,8 @@ export function reduce(s, type, arg = {}, now) {
         victoryAudioUrl: cat.victoryAudioUrl || '',
         victoryVoiceData: cat.victoryVoiceData || '',
         victoryVoiceName: cat.victoryVoiceName || '',
+        localAudioVolume: clampVolume01(cat.localAudioVolume, 1.0),
+        onlineAudioVolume: clampVolume01(cat.onlineAudioVolume, 1.0),
       };
       return null;
     }
@@ -162,6 +166,8 @@ export function reduce(s, type, arg = {}, now) {
         victoryAudioUrl: cat.victoryAudioUrl || '',
         victoryVoiceData: cat.victoryVoiceData || s.setup.victoryVoiceData || '',
         victoryVoiceName: cat.victoryVoiceName || s.setup.victoryVoiceName || '',
+        localAudioVolume: clampVolume01(cat.localAudioVolume ?? s.setup.localAudioVolume, 1.0),
+        onlineAudioVolume: clampVolume01(cat.onlineAudioVolume ?? s.setup.onlineAudioVolume, 1.0),
         aId: chalId,
         bId: defId,
         categoryId: catId,
@@ -177,6 +183,16 @@ export function reduce(s, type, arg = {}, now) {
       };
       s.phase = 'ready';
       return 'ready';
+    }
+    case 'setVictoryVolumes': {
+      if (!d) return false;
+      if (arg.localAudioVolume !== undefined) {
+        d.localAudioVolume = clampVolume01(arg.localAudioVolume, d.localAudioVolume ?? 1.0);
+      }
+      if (arg.onlineAudioVolume !== undefined) {
+        d.onlineAudioVolume = clampVolume01(arg.onlineAudioVolume, d.onlineAudioVolume ?? 1.0);
+      }
+      return null;
     }
     case 'begin': {
       if (s.phase !== 'ready') return false;

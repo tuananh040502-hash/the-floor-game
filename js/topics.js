@@ -38,12 +38,15 @@ function openAudioDb() {
   return idbPromise;
 }
 
-export async function saveTopicAudioIDB(topicId, record) {
+export async function saveTopicAudioIDB(topicId, dataOrRecord, name = '', extra = {}) {
   try {
     const db = await openAudioDb();
+    const payload = typeof dataOrRecord === 'object' && dataOrRecord !== null
+      ? { topicId, ...dataOrRecord, updatedAt: Date.now() }
+      : { topicId, dataUrl: String(dataOrRecord || ''), name: String(name || ''), ...extra, updatedAt: Date.now() };
     await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put({ topicId, ...record, updatedAt: Date.now() });
+      tx.objectStore(IDB_STORE).put(payload);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -319,6 +322,12 @@ export function sanitizeItem(it) {
   return src ? { type: 'img', src, answer, aliases } : null;
 }
 
+export function clampVolume01(v, fallback = 1.0) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.round(Math.max(0, Math.min(1, n)) * 100) / 100;
+}
+
 export function sanitizeTopic(t) {
   if (!t || typeof t !== 'object') return null;
   const name = str(t.name, 60);
@@ -335,6 +344,8 @@ export function sanitizeTopic(t) {
     victoryAudioUrl: normalizeVictoryAudioUrl(t.victoryAudioUrl),
     victoryVoiceName: voiceData ? (str(t.victoryVoiceName, 80) || 'Ghi âm chiến thắng') : str(t.victoryVoiceName, 80),
     victoryVoiceData: voiceData,
+    localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
+    onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
     custom: true,
     items,
   };
@@ -354,6 +365,8 @@ export function exportPayload(topics) {
       victoryAudioUrl: t.victoryAudioUrl || '',
       victoryVoiceName: t.victoryVoiceName || '',
       victoryVoiceData: t.victoryVoiceData || '',
+      localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
+      onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
       items: t.items,
     })),
   };

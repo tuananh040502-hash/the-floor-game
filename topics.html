@@ -105,19 +105,19 @@
             <div class="space-y-3">
               <div class="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <div class="eyebrow">🎧 Hệ thống Âm thanh Chiến thắng Kép (Dual Audio &amp; Auto-Ducking)</div>
-                  <p class="t-3 mt-0.5" style="font-size:11px">Tự động nạp sẵn bộ đệm (0ms) ở màn đếm ngược. Khi có cả file ghi âm &amp; nhạc nền ngoài, hệ thống tự động phát song song: giọng nói <b>100%</b> và hạ nhạc nền xuống <b>20%</b>.</p>
+                  <div class="eyebrow">🎧 Hệ thống Âm thanh Chiến thắng Kép (Dual Volume Sliders)</div>
+                  <p class="t-3 mt-0.5" style="font-size:11px">Tự động nạp sẵn bộ đệm (0ms) ở màn đếm ngược. Tùy chỉnh độc lập âm lượng của từng nguồn âm thanh theo tỷ lệ % mong muốn.</p>
                 </div>
                 <div class="flex items-center gap-2 flex-wrap">
                   <span id="dualAudioModeBadge" class="chip">Mặc định (Fanfare)</span>
-                  <button id="btnTestVictoryAudio" type="button" class="btn btn-gold btn-sm">▶ Nghe thử chiến thắng</button>
+                  <button id="btnTestVictoryAudio" type="button" class="btn btn-gold btn-sm">▶ Nghe thử phối âm</button>
                   <button id="btnStopVictoryAudio" type="button" class="btn btn-ghost btn-sm hidden">⏹ Dừng</button>
                 </div>
               </div>
 
               <div class="grid gap-3 lg:grid-cols-2">
-                <!-- Kênh 1: File âm thanh từ máy (IndexedDB + Base64) -->
-                <div class="surface-sub rounded-2xl p-3.5 space-y-2.5">
+                <!-- Kênh 1: File âm thanh từ máy (IndexedDB + Base64) + Thanh trượt 1 -->
+                <div class="surface-sub rounded-2xl p-3.5 space-y-3">
                   <div class="flex items-center justify-between gap-2">
                     <span class="eyebrow">🎙️ 1. File ghi âm / SFX từ máy (.mp3, .m4a, .wav)</span>
                     <span id="voiceAudioBadge" class="chip">Chưa có file</span>
@@ -128,20 +128,32 @@
                     <button id="btnTestVoiceOnly" type="button" class="btn btn-ghost btn-sm hidden">▶ Nghe thử file</button>
                     <button id="btnClearVoiceAudio" type="button" class="btn btn-pass btn-sm hidden" title="Xóa file âm thanh đã tải">✕ Xóa</button>
                   </div>
-                  <div class="t-3" style="font-size:11px">Lưu trữ vào IndexedDB &amp; nén đồng bộ theo chủ đề. Âm lượng luôn ưu tiên <b>100%</b>.</div>
+                  <div class="vol-slider-box">
+                    <div class="flex items-center justify-between text-xs font-semibold mb-1.5">
+                      <span class="t-2">Âm lượng âm thanh tải lên/ghi âm từ máy</span>
+                      <span id="tLocalAudioVolLabel" class="font-num t-accent text-sm">100%</span>
+                    </div>
+                    <input id="tLocalAudioVol" type="range" min="0" max="100" step="1" value="100" class="vol-range" />
+                  </div>
                 </div>
 
-                <!-- Kênh 2: Link nhạc ngoài -->
-                <div class="surface-sub rounded-2xl p-3.5 space-y-2.5">
+                <!-- Kênh 2: Link nhạc ngoài + Thanh trượt 2 -->
+                <div class="surface-sub rounded-2xl p-3.5 space-y-3">
                   <div class="flex items-center justify-between gap-2">
-                    <span class="eyebrow">🎵 2. Link nhạc nền ngoài (YouTube / SoundCloud / MP3)</span>
+                    <span class="eyebrow">🎵 2. Link nhạc ngoài (YouTube / SoundCloud / MP3)</span>
                     <span id="victoryAudioBadge" class="chip">Không dùng</span>
                   </div>
                   <div class="flex items-center gap-2">
                     <input id="tVictoryAudio" class="input flex-1" placeholder="Dán link YouTube, SoundCloud, hoặc link .mp3 / .wav / Google Drive" />
                     <button id="btnTestExternalOnly" type="button" class="btn btn-ghost btn-sm">▶ Nghe thử link</button>
                   </div>
-                  <div class="t-3" style="font-size:11px">Phát <b>100%</b> nếu đứng riêng, hoặc tự động ducking xuống <b>20%</b> làm nhạc nền khi có file ghi âm.</div>
+                  <div class="vol-slider-box">
+                    <div class="flex items-center justify-between text-xs font-semibold mb-1.5">
+                      <span class="t-2">Âm lượng nhạc ngoài (YouTube / SoundCloud / MP3)</span>
+                      <span id="tOnlineAudioVolLabel" class="font-num t-gold text-sm">100%</span>
+                    </div>
+                    <input id="tOnlineAudioVol" type="range" min="0" max="100" step="1" value="100" class="vol-range vol-range-gold" />
+                  </div>
                 </div>
               </div>
             </div>

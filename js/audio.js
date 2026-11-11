@@ -1,15 +1,16 @@
 /**
- * Hệ thống âm thanh gameshow (Web Audio API) + Âm thanh kép thông minh (Dual Audio & Auto-Ducking):
- *  - Luồng 1 (Local Voice / SFX): File ghi âm giọng nói hoặc hiệu ứng do Host tải lên từ máy (IndexedDB / Base64 DataURL).
- *    Luôn phát ở âm lượng 100% (1.0) để nghe rõ giọng đọc.
- *  - Luồng 2 (External BGM): Link YouTube / SoundCloud / Direct MP3 / Google Drive audio.
- *    + Kịch bản 1 (Có CẢ file ghi âm trong máy VÀ link nhạc ngoài): Phát song song cả hai;
- *      file ghi âm ở 100% (1.0), nhạc ngoài tự động ducking xuống 20% (0.2) làm nhạc nền đệm.
- *    + Kịch bản 2 (CHỈ CÓ link nhạc ngoài): Nhạc ngoài phát ở 100% (1.0).
- *    + Kịch bản 3 (CHỈ CÓ file ghi âm trong máy): Phát file ghi âm ở 100% (1.0) kết hợp nhạc chiến thắng mặc định (WebAudio fanfare đệm).
- *  - Cả 2 luồng đều được nạp sẵn (pre-buffer) ngay từ lúc chọn chủ đề / đếm ngược để phát tức thì 0ms.
+ * Hệ thống âm thanh gameshow (Web Audio API) + Âm thanh kép tùy chỉnh độc lập (Dual Volume Sliders):
+ *  - Nguồn 1 (Local Voice / SFX): File ghi âm giọng nói hoặc hiệu ứng do Host tải lên từ máy (IndexedDB / Base64 DataURL).
+ *    Áp dụng chính xác mức âm lượng `localAudioVolume` (0.0 đến 1.0). Nếu bằng 0 thì ngắt tiếng hoàn toàn.
+ *  - Nguồn 2 (External BGM): Link YouTube / SoundCloud / Direct MP3 / Google Drive audio.
+ *    Áp dụng chính xác mức âm lượng `onlineAudioVolume` (0.0 đến 1.0):
+ *      + YouTube IFrame: player.setVolume(onlineAudioVolume * 100)
+ *      + SoundCloud Widget: widget.setVolume(onlineAudioVolume * 100)
+ *      + Thẻ Audio MP3: audio.volume = onlineAudioVolume
+ *  - Cả 2 nguồn đều được nạp sẵn (pre-buffer) ngay từ lúc chọn chủ đề / đếm ngược để phát tức thì 0ms,
+ *    và hỗ trợ kéo thanh trượt chỉnh âm lượng trực tiếp (on-the-fly) ngay khi đang phát.
  */
-import { parseVictoryAudio, loadTopicAudioIDB } from './topics.js';
+import { parseVictoryAudio, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 
 let ctx = null;
 let master = null;
@@ -24,25 +25,28 @@ window.isVictoryAudioReady = false;
 const victoryListeners = new Set();
 
 const victory = {
-  // Luồng 2: Nhạc nền ngoài (YouTube / SoundCloud / Direct URL)
+  // Nguồn 2: Nhạc nền ngoài (YouTube / SoundCloud / Direct URL)
   rawUrl: '',
   parsed: null,
   status: 'idle', // idle | loading | ready | error
-  extTargetVol: 1.0, // 1.0 hoặc 0.2 khi ducking
+  onlineVol: 1.0, // 0.0 .. 1.0 (onlineAudioVolume)
+  extTargetVol: 1.0,
   audioEl: null,
   ytPlayer: null,
   ytReady: false,
   scWidget: null,
   scIframe: null,
 
-  // Luồng 1: File ghi âm / SFX tải từ máy (IndexedDB / Base64)
+  // Nguồn 1: File ghi âm / SFX tải từ máy (IndexedDB / Base64)
   topicId: '',
   voiceSrc: '',
   voiceName: '',
   voiceStatus: 'idle', // idle | loading | ready | error
+  localVol: 1.0, // 0.0 .. 1.0 (localAudioVolume)
   voiceEl: null,
   voiceBuf: null,
   voiceNode: null,
+  voiceGain: null,
   voiceBlobUrl: '',
 
   playing: false,
@@ -80,10 +84,11 @@ export function getVictoryState() {
     voiceName: victory.voiceName,
     status: victory.status,
     voiceStatus: victory.voiceStatus,
+    localAudioVolume: victory.localVol,
+    onlineAudioVolume: victory.onlineVol,
     ready: computeReady(),
     playing: victory.playing,
     usingFallback: victory.usingFallback,
-    ducked: hasExt && hasVoice,
   };
 }
 
@@ -166,25 +171,48 @@ function loadSoundCloudApi() {
   return scApiPromise;
 }
 
-/** Áp dụng mức âm lượng cho luồng nhạc ngoài (1.0 hoặc 0.2 khi ducking). */
+/** Áp dụng mức âm lượng cho Nguồn 1 (File ghi âm / âm thanh tải lên từ máy, 0.0 -> 1.0). */
+function applyLocalVolume(vol01) {
+  const v = clampVolume01(vol01, victory.localVol);
+  victory.localVol = v;
+  const eff = muted || v <= 0 ? 0 : v;
+  if (victory.voiceGain && ctx) {
+    try {
+      victory.voiceGain.gain.setValueAtTime(eff, ctx.currentTime);
+    } catch {
+      victory.voiceGain.gain.value = eff;
+    }
+  }
+  if (victory.voiceEl) {
+    try {
+      victory.voiceEl.muted = eff <= 0;
+      victory.voiceEl.volume = eff;
+    } catch { /* ignore */ }
+  }
+}
+
+/** Áp dụng mức âm lượng cho Nguồn 2 (Nhạc ngoài: YouTube / SoundCloud / Direct MP3, 0.0 -> 1.0). */
 function applyExternalVolume(vol01) {
-  const v = Math.max(0, Math.min(1, Number(vol01) || 0));
+  const v = clampVolume01(vol01, victory.onlineVol);
+  victory.onlineVol = v;
   victory.extTargetVol = v;
-  const eff = muted ? 0 : v;
+  const eff = muted || v <= 0 ? 0 : v;
+  const pct = Math.round(eff * 100);
   if (victory.audioEl) {
-    try { victory.audioEl.volume = eff; } catch { /* ignore */ }
+    try {
+      victory.audioEl.muted = eff <= 0;
+      victory.audioEl.volume = eff;
+    } catch { /* ignore */ }
   }
   if (victory.ytPlayer && victory.ytReady) {
     try {
-      if (muted) victory.ytPlayer.mute();
-      else {
-        victory.ytPlayer.unMute();
-        victory.ytPlayer.setVolume(Math.round(eff * 100));
-      }
+      victory.ytPlayer.setVolume(pct);
+      if (eff <= 0) victory.ytPlayer.mute();
+      else victory.ytPlayer.unMute();
     } catch { /* ignore */ }
   }
   if (victory.scWidget) {
-    try { victory.scWidget.setVolume(Math.round(eff * 100)); } catch { /* ignore */ }
+    try { victory.scWidget.setVolume(pct); } catch { /* ignore */ }
   }
 }
 
@@ -193,6 +221,10 @@ function stopVoiceStream() {
     try { victory.voiceNode.stop(); } catch { /* ignore */ }
     try { victory.voiceNode.disconnect(); } catch { /* ignore */ }
     victory.voiceNode = null;
+  }
+  if (victory.voiceGain) {
+    try { victory.voiceGain.disconnect(); } catch { /* ignore */ }
+    victory.voiceGain = null;
   }
   if (victory.voiceEl) {
     try {
@@ -290,7 +322,9 @@ async function preloadVoiceStream({ topicId = '', voiceData = '', voiceName = ''
   try {
     const a = new Audio();
     a.preload = 'auto';
-    a.volume = muted ? 0 : 1.0;
+    const eff = muted || victory.localVol <= 0 ? 0 : victory.localVol;
+    a.muted = eff <= 0;
+    a.volume = eff;
     a.oncanplaythrough = () => {
       if (victory.voiceSrc !== sig) return;
       victory.voiceEl = a;
@@ -311,10 +345,7 @@ async function preloadVoiceStream({ topicId = '', voiceData = '', voiceName = ''
       }
     };
     a.onended = () => {
-      // Khi giọng đọc kết thúc, nếu nhạc ngoài đang phát ở mức ducking 20% thì nâng mượt lên 100%
-      if (victory.playing && victory.parsed && victory.status === 'ready') {
-        applyExternalVolume(1.0);
-      } else {
+      if (!victory.parsed || victory.status !== 'ready') {
         victory.playing = false;
       }
       notifyVictory();
@@ -578,13 +609,19 @@ async function preloadExternalStream(rawUrl) {
 }
 
 /**
- * Hàm tổng hợp nạp sẵn cả 2 luồng âm thanh chiến thắng (Link ngoài + File ghi âm trong máy).
- * Có thể truyền vào chuỗi URL hoặc object { url, topicId, voiceData, voiceName }.
+ * Hàm tổng hợp nạp sẵn cả 2 luồng âm thanh chiến thắng (Link ngoài + File ghi âm trong máy) kèm âm lượng.
+ * Có thể truyền vào chuỗi URL hoặc object { url, topicId, voiceData, voiceName, localAudioVolume, onlineAudioVolume }.
  */
 async function preloadVictoryAudio(input) {
   const opts = typeof input === 'string'
     ? { url: input, topicId: victory.topicId, voiceData: '', voiceName: '' }
     : (input || {});
+  if (opts.localAudioVolume !== undefined) {
+    applyLocalVolume(opts.localAudioVolume);
+  }
+  if (opts.onlineAudioVolume !== undefined) {
+    applyExternalVolume(opts.onlineAudioVolume);
+  }
   await Promise.all([
     preloadExternalStream(opts.url || ''),
     preloadVoiceStream({
@@ -747,9 +784,14 @@ function scheduleMusic(m) {
   }
 }
 
-/** Phát Luồng 1 (File ghi âm / SFX trong máy) ở mức âm lượng 100% (1.0). Trả về true nếu phát thành công. */
-function playVoiceAtFullVolume({ fromStart = true } = {}) {
+/** Phát Nguồn 1 (File ghi âm / SFX trong máy) với mức âm lượng `vol01` (0.0 -> 1.0). Trả về true nếu phát thành công. */
+function playVoiceWithVolume(vol01, { fromStart = true } = {}) {
   if (!victory.voiceSrc || victory.voiceStatus === 'error') return false;
+  applyLocalVolume(vol01);
+  if (victory.localVol <= 0) {
+    stopVoiceStream();
+    return true;
+  }
 
   // Ưu tiên phát qua WebAudio AudioBuffer (0ms, không bị chặn autoplay)
   const c = ac();
@@ -760,14 +802,18 @@ function playVoiceAtFullVolume({ fromStart = true } = {}) {
       const src = c.createBufferSource();
       src.buffer = victory.voiceBuf;
       const g = c.createGain();
-      g.gain.value = muted ? 0.0001 : 1.0; // 100% volume
+      const eff = muted || victory.localVol <= 0 ? 0 : victory.localVol;
+      g.gain.value = eff;
       src.connect(g).connect(master);
       victory.voiceNode = src;
+      victory.voiceGain = g;
       src.onended = () => {
-        if (victory.voiceNode === src) victory.voiceNode = null;
-        // Khi file ghi âm phát xong, nếu nhạc ngoài đang phát ở mức ducking 20% thì nâng lên 100%
-        if (victory.playing && victory.parsed && victory.status === 'ready') {
-          applyExternalVolume(1.0);
+        if (victory.voiceNode === src) {
+          victory.voiceNode = null;
+          victory.voiceGain = null;
+        }
+        if (!victory.parsed || victory.status !== 'ready') {
+          victory.playing = false;
         }
         notifyVictory();
       };
@@ -781,8 +827,9 @@ function playVoiceAtFullVolume({ fromStart = true } = {}) {
   if (victory.voiceEl) {
     try {
       if (fromStart) victory.voiceEl.currentTime = 0;
-      victory.voiceEl.muted = false;
-      victory.voiceEl.volume = muted ? 0 : 1.0; // 100% volume
+      const eff = muted || victory.localVol <= 0 ? 0 : victory.localVol;
+      victory.voiceEl.muted = eff <= 0;
+      victory.voiceEl.volume = eff;
       const p = victory.voiceEl.play();
       victory.playing = true;
       notifyVictory();
@@ -797,7 +844,7 @@ function playVoiceAtFullVolume({ fromStart = true } = {}) {
   return false;
 }
 
-/** Phát Luồng 2 (Nhạc ngoài: YouTube / SoundCloud / Direct MP3) với mức âm lượng `vol01` (1.0 hoặc 0.2 khi ducking). */
+/** Phát Nguồn 2 (Nhạc ngoài: YouTube / SoundCloud / Direct MP3) với mức âm lượng `vol01` (0.0 -> 1.0). */
 function playExternalWithVolume(vol01, { fromStart = true, onFail = null } = {}) {
   const p = victory.parsed;
   if (!p || victory.status === 'error') {
@@ -806,12 +853,18 @@ function playExternalWithVolume(vol01, { fromStart = true, onFail = null } = {})
   }
 
   applyExternalVolume(vol01);
+  if (victory.onlineVol <= 0) {
+    stopExternalStream();
+    return true;
+  }
+  const eff = muted ? 0 : victory.onlineVol;
+  const pct = Math.round(eff * 100);
 
   if (p.kind === 'direct' && victory.audioEl) {
     try {
       if (fromStart) victory.audioEl.currentTime = 0;
-      victory.audioEl.muted = false;
-      victory.audioEl.volume = muted ? 0 : vol01;
+      victory.audioEl.muted = eff <= 0;
+      victory.audioEl.volume = eff;
       const playPromise = victory.audioEl.play();
       victory.playing = true;
       notifyVictory();
@@ -827,11 +880,9 @@ function playExternalWithVolume(vol01, { fromStart = true, onFail = null } = {})
 
   if (p.kind === 'youtube' && victory.ytPlayer && victory.ytReady) {
     try {
-      if (muted) victory.ytPlayer.mute();
-      else {
-        victory.ytPlayer.unMute();
-        victory.ytPlayer.setVolume(Math.round(vol01 * 100));
-      }
+      victory.ytPlayer.setVolume(pct);
+      if (eff <= 0) victory.ytPlayer.mute();
+      else victory.ytPlayer.unMute();
       if (fromStart) victory.ytPlayer.seekTo(p.startSec || 0, true);
       victory.ytPlayer.playVideo();
       victory.playing = true;
@@ -845,7 +896,7 @@ function playExternalWithVolume(vol01, { fromStart = true, onFail = null } = {})
 
   if (p.kind === 'soundcloud' && victory.scWidget && victory.status === 'ready') {
     try {
-      victory.scWidget.setVolume(muted ? 0 : Math.round(vol01 * 100));
+      victory.scWidget.setVolume(pct);
       if (fromStart) victory.scWidget.seekTo(0);
       victory.scWidget.play();
       victory.playing = true;
@@ -873,40 +924,48 @@ export const Sfx = {
   isUnlocked: () => !!ctx && ctx.state === 'running',
   setMuted(m) {
     muted = m;
-    if (m) {
-      this.stopSiren();
-      if (victory.voiceEl) {
-        try { victory.voiceEl.volume = 0; } catch { /* ignore */ }
-      }
-      applyExternalVolume(victory.extTargetVol);
-    } else {
-      if (victory.voiceEl) {
-        try { victory.voiceEl.volume = 1.0; } catch { /* ignore */ }
-      }
-      applyExternalVolume(victory.extTargetVol);
-    }
+    if (m) this.stopSiren();
+    applyLocalVolume(victory.localVol);
+    applyExternalVolume(victory.onlineVol);
   },
   isMuted: () => muted,
+
+  /** Điều chỉnh trực tiếp âm lượng 2 kênh (0.0 -> 1.0) theo thời gian thực */
+  setLocalVolume(vol01) {
+    applyLocalVolume(vol01);
+    notifyVictory();
+  },
+  setOnlineVolume(vol01) {
+    applyExternalVolume(vol01);
+    notifyVictory();
+  },
+  setVolumes({ localAudioVolume, onlineAudioVolume } = {}) {
+    if (localAudioVolume !== undefined) applyLocalVolume(localAudioVolume);
+    if (onlineAudioVolume !== undefined) applyExternalVolume(onlineAudioVolume);
+    notifyVictory();
+  },
 
   /** Preload cả 2 luồng âm thanh chiến thắng (link nhạc ngoài + file ghi âm trong máy) */
   preloadVictory(input) {
     return preloadVictoryAudio(input);
   },
-  /** Nghe thử riêng file ghi âm trong máy (100% volume) tại trang Quản lý chủ đề */
-  async previewVoiceOnly(opts) {
+  /** Nghe thử riêng file ghi âm trong máy theo mức localAudioVolume */
+  async previewVoiceOnly(opts = {}) {
     this.unlock();
     this.stopVictory();
+    const vol = opts.localAudioVolume !== undefined ? clampVolume01(opts.localAudioVolume, 1.0) : victory.localVol;
     await preloadVoiceStream(opts);
-    return playVoiceAtFullVolume({ fromStart: true });
+    return playVoiceWithVolume(vol, { fromStart: true });
   },
-  /** Nghe thử riêng link nhạc ngoài (100% volume) tại trang Quản lý chủ đề */
-  async previewExternalOnly(url) {
+  /** Nghe thử riêng link nhạc ngoài theo mức onlineAudioVolume */
+  async previewExternalOnly(url, vol01) {
     this.unlock();
     this.stopVictory();
+    const vol = vol01 !== undefined ? clampVolume01(vol01, 1.0) : victory.onlineVol;
     await preloadExternalStream(url);
-    return playExternalWithVolume(1.0, {
+    return playExternalWithVolume(vol, {
       fromStart: true,
-      onFail: () => this.fanfare(0),
+      onFail: () => this.fanfare(0, vol),
     });
   },
   getVictoryState,
@@ -1031,14 +1090,11 @@ export const Sfx = {
   },
 
   /**
-   * KÍCH HOẠT ÂM THANH CHIẾN THẮNG KÉP (DUAL AUDIO & SMART VOLUME DUCKING):
-   *  - Kịch bản 1 (Có CẢ file ghi âm trong máy VÀ link nhạc ngoài):
-   *    Phát song song cả 2 luồng; file ghi âm ở 100% (1.0), nhạc ngoài tự động hạ xuống 20% (0.2).
-   *  - Kịch bản 2 (CHỈ CÓ link nhạc ngoài):
-   *    Nhạc ngoài phát ở 100% (1.0).
-   *  - Kịch bản 3 (CHỈ CÓ file ghi âm trong máy):
-   *    Phát file ghi âm ở 100% (1.0) kết hợp nhạc chiến thắng mặc định (fanfare đệm).
-   *  - Mặc định / Fallback: Còi hú + Fanfare 100%.
+   * KÍCH HOẠT ÂM THANH CHIẾN THẮNG KÉP (DUAL VOLUME SLIDERS):
+   *  - Nguồn 1 (File ghi âm / âm thanh từ máy): Áp dụng chính xác `localAudioVolume` (0.0 đến 1.0).
+   *  - Nguồn 2 (Nhạc YouTube / SoundCloud / link MP3 ngoài): Áp dụng chính xác `onlineAudioVolume` (0.0 đến 1.0).
+   *  - Nếu một thanh kéo về 0%, nguồn đó tự động ngắt tiếng (mute hoàn toàn).
+   *  - Nếu chỉ có 1 trong 2 nguồn được thiết lập, nguồn đó phát đúng theo mức % trên thanh trượt của nó.
    */
   finishSequence(opts) {
     this.musicStop();
@@ -1046,6 +1102,8 @@ export const Sfx = {
     this.horn();
 
     if (opts) {
+      if (opts.localAudioVolume !== undefined) applyLocalVolume(opts.localAudioVolume);
+      if (opts.onlineAudioVolume !== undefined) applyExternalVolume(opts.onlineAudioVolume);
       preloadVictoryAudio(opts);
     }
 
@@ -1055,43 +1113,44 @@ export const Sfx = {
   playVictoryCustom({ fromStart = false } = {}) {
     const hasVoice = !!victory.voiceSrc && victory.voiceStatus !== 'error' && (!!victory.voiceBuf || !!victory.voiceEl);
     const hasExt = !!victory.parsed && victory.status !== 'error';
+    const localVol = clampVolume01(victory.localVol, 1.0);
+    const onlineVol = clampVolume01(victory.onlineVol, 1.0);
 
     victory.usingFallback = false;
 
-    // KỊCH BẢN 1: Có CẢ file âm thanh gốc trong máy VÀ link nhạc ngoài
+    // 1. Có CẢ file âm thanh gốc trong máy VÀ link nhạc ngoài -> phát đồng thời theo đúng localAudioVolume & onlineAudioVolume
     if (hasVoice && hasExt) {
-      const voiceOk = playVoiceAtFullVolume({ fromStart });
-      const extVol = voiceOk ? 0.2 : 1.0; // Auto-ducking 20% khi có giọng nói
-      playExternalWithVolume(extVol, {
+      playVoiceWithVolume(localVol, { fromStart });
+      playExternalWithVolume(onlineVol, {
         fromStart,
         onFail: () => {
-          // Nếu link nhạc ngoài bị lỗi/chặn, đệm bằng fanfare nhẹ phía sau giọng nói
-          this.fanfare(0.4, 0.35);
+          if (onlineVol > 0) this.fanfare(0.4, onlineVol * 0.5);
         },
       });
       return;
     }
 
-    // KỊCH BẢN 2: CHỈ CÓ link nhạc ngoài, không có file ghi âm
+    // 2. CHỈ CÓ link nhạc ngoài -> phát đúng theo mức onlineAudioVolume
     if (!hasVoice && hasExt) {
-      playExternalWithVolume(1.0, {
+      playExternalWithVolume(onlineVol, {
         fromStart,
         onFail: () => {
           victory.usingFallback = true;
           victory.playing = false;
           notifyVictory();
           this.siren(1, 200);
-          this.fanfare(1.2, 1.0);
+          if (onlineVol > 0) this.fanfare(1.2, onlineVol);
         },
       });
       return;
     }
 
-    // KỊCH BẢN 3: CHỈ CÓ file ghi âm trong máy
+    // 3. CHỈ CÓ file ghi âm trong máy -> phát đúng theo mức localAudioVolume kết hợp hiệu ứng chiến thắng
     if (hasVoice && !hasExt) {
-      const voiceOk = playVoiceAtFullVolume({ fromStart });
-      // Kết hợp hiệu ứng âm thanh chiến thắng mặc định của game
-      this.fanfare(voiceOk ? 0.35 : 0, voiceOk ? 0.45 : 1.0);
+      playVoiceWithVolume(localVol, { fromStart });
+      if (onlineVol > 0) {
+        this.fanfare(0.35, Math.min(0.45, onlineVol));
+      }
       return;
     }
 

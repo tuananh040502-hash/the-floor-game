@@ -1,7 +1,7 @@
 import { loadFirebaseConfig } from './firebase-config.js';
 import { openFirebaseSettings } from './settings.js';
 import { createTransport } from './transport.js';
-import { allCategories, TOPICS_KEY, loadTopicAudioIDB } from './topics.js';
+import { allCategories, TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, CELLS,
@@ -122,6 +122,8 @@ function normalize(s) {
   s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
   s.setup.victoryVoiceData = s.setup.victoryVoiceData || '';
   s.setup.victoryVoiceName = s.setup.victoryVoiceName || '';
+  s.setup.localAudioVolume = clampVolume01(s.setup.localAudioVolume, 1.0);
+  s.setup.onlineAudioVolume = clampVolume01(s.setup.onlineAudioVolume, 1.0);
   if (s.duel) {
     s.duel.queue = s.duel.queue || [];
     s.duel.items = s.duel.items || [];
@@ -131,13 +133,20 @@ function normalize(s) {
     s.duel.victoryAudioUrl = s.duel.victoryAudioUrl || '';
     s.duel.victoryVoiceData = s.duel.victoryVoiceData || '';
     s.duel.victoryVoiceName = s.duel.victoryVoiceName || '';
+    s.duel.localAudioVolume = clampVolume01(s.duel.localAudioVolume, 1.0);
+    s.duel.onlineAudioVolume = clampVolume01(s.duel.onlineAudioVolume, 1.0);
   }
   return s;
 }
 
 /** Cấu hình âm thanh chiến thắng kép của chủ đề hiện tại (từ duel hoặc setup). */
 function activeVictorySpec(s) {
-  if (!s) return { url: '', topicId: '', voiceData: '', voiceName: '' };
+  if (!s) {
+    return {
+      url: '', topicId: '', voiceData: '', voiceName: '',
+      localAudioVolume: 1.0, onlineAudioVolume: 1.0,
+    };
+  }
   if (s.duel) {
     const cat = s.duel.categoryId ? allCategories().find((c) => c.id === s.duel.categoryId) : null;
     return {
@@ -145,6 +154,8 @@ function activeVictorySpec(s) {
       topicId: s.duel.categoryId || '',
       voiceData: s.duel.victoryVoiceData || (cat && cat.victoryVoiceData) || '',
       voiceName: s.duel.victoryVoiceName || (cat && cat.victoryVoiceName) || '',
+      localAudioVolume: clampVolume01(s.duel.localAudioVolume ?? cat?.localAudioVolume, 1.0),
+      onlineAudioVolume: clampVolume01(s.duel.onlineAudioVolume ?? cat?.onlineAudioVolume, 1.0),
     };
   }
   if (s.setup && s.setup.catId) {
@@ -154,9 +165,14 @@ function activeVictorySpec(s) {
       topicId: s.setup.catId || '',
       voiceData: s.setup.victoryVoiceData || (cat && cat.victoryVoiceData) || '',
       voiceName: s.setup.victoryVoiceName || (cat && cat.victoryVoiceName) || '',
+      localAudioVolume: clampVolume01(s.setup.localAudioVolume ?? cat?.localAudioVolume, 1.0),
+      onlineAudioVolume: clampVolume01(s.setup.onlineAudioVolume ?? cat?.onlineAudioVolume, 1.0),
     };
   }
-  return { url: '', topicId: '', voiceData: '', voiceName: '' };
+  return {
+    url: '', topicId: '', voiceData: '', voiceName: '',
+    localAudioVolume: 1.0, onlineAudioVolume: 1.0,
+  };
 }
 
 /** Danh sách URL ảnh cần tải ngầm của trạng thái hiện tại (ưu tiên ảnh theo thứ tự ra câu hỏi). */
@@ -192,6 +208,12 @@ function syncPreload(s) {
   }
 
   const spec = activeVictorySpec(s);
+  // Luôn đồng bộ âm lượng thời gian thực cho cả 2 nguồn
+  Sfx.setVolumes({
+    localAudioVolume: spec.localAudioVolume,
+    onlineAudioVolume: spec.onlineAudioVolume,
+  });
+
   const vicSig = `${spec.topicId}|${spec.url}|${spec.voiceData ? spec.voiceData.length : 0}|${spec.voiceName}`;
   if (vicSig !== lastVictoryUrl) {
     lastVictoryUrl = vicSig;
@@ -589,10 +611,32 @@ function renderArena(s) {
 }
 
 function paintVictoryButtons() {
-  const btn = $('btnVicToggle');
-  if (!btn) return;
   const st = Sfx.getVictoryState();
-  btn.textContent = st.playing ? '⏸ Tạm dừng nhạc' : '▶ Phát tiếp nhạc';
+  const btn = $('btnVicToggle');
+  if (btn) btn.textContent = st.playing ? '⏸ Tạm dừng nhạc' : '▶ Phát tiếp nhạc';
+
+  const lPct = Math.round(clampVolume01(st.localAudioVolume, 1.0) * 100);
+  const oPct = Math.round(clampVolume01(st.onlineAudioVolume, 1.0) * 100);
+
+  const lSlider = $('liveLocalVol');
+  const lLabel = $('liveLocalVolLabel');
+  const lMute = $('btnLiveLocalMute');
+  if (lSlider && document.activeElement !== lSlider) lSlider.value = String(lPct);
+  if (lLabel) lLabel.textContent = `${lPct}%`;
+  if (lMute) {
+    lMute.textContent = lPct === 0 ? '🔇' : '🎙️';
+    lMute.classList.toggle('muted', lPct === 0);
+  }
+
+  const oSlider = $('liveOnlineVol');
+  const oLabel = $('liveOnlineVolLabel');
+  const oMute = $('btnLiveOnlineMute');
+  if (oSlider && document.activeElement !== oSlider) oSlider.value = String(oPct);
+  if (oLabel) oLabel.textContent = `${oPct}%`;
+  if (oMute) {
+    oMute.textContent = oPct === 0 ? '🔇' : '🎵';
+    oMute.classList.toggle('muted', oPct === 0);
+  }
 }
 
 function buildArt(q) {
@@ -815,6 +859,60 @@ function bindStaticUi() {
       e.stopPropagation();
       Sfx.unlock();
       Sfx.replayVictory();
+    });
+  }
+
+  // Cụm thanh trượt kính mờ (frosted glass) chỉnh âm lượng trực tiếp trên màn hình Chiến thắng
+  let lastSavedLocalVol = 1.0;
+  let lastSavedOnlineVol = 1.0;
+  if ($('liveLocalVol')) {
+    $('liveLocalVol').addEventListener('input', (e) => {
+      e.stopPropagation();
+      const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+      const vol01 = clampVolume01(pct / 100, 1.0);
+      if (vol01 > 0) lastSavedLocalVol = vol01;
+      Sfx.setLocalVolume(vol01);
+    });
+    $('liveLocalVol').addEventListener('change', (e) => {
+      e.stopPropagation();
+      const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+      const vol01 = clampVolume01(pct / 100, 1.0);
+      dispatch('setVictoryVolumes', { localAudioVolume: vol01 });
+    });
+  }
+  if ($('btnLiveLocalMute')) {
+    $('btnLiveLocalMute').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const curVol = Sfx.getVictoryState().localAudioVolume;
+      const nextVol = curVol > 0 ? 0 : (lastSavedLocalVol || 1.0);
+      if (curVol > 0) lastSavedLocalVol = curVol;
+      Sfx.setLocalVolume(nextVol);
+      dispatch('setVictoryVolumes', { localAudioVolume: nextVol });
+    });
+  }
+  if ($('liveOnlineVol')) {
+    $('liveOnlineVol').addEventListener('input', (e) => {
+      e.stopPropagation();
+      const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+      const vol01 = clampVolume01(pct / 100, 1.0);
+      if (vol01 > 0) lastSavedOnlineVol = vol01;
+      Sfx.setOnlineVolume(vol01);
+    });
+    $('liveOnlineVol').addEventListener('change', (e) => {
+      e.stopPropagation();
+      const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+      const vol01 = clampVolume01(pct / 100, 1.0);
+      dispatch('setVictoryVolumes', { onlineAudioVolume: vol01 });
+    });
+  }
+  if ($('btnLiveOnlineMute')) {
+    $('btnLiveOnlineMute').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const curVol = Sfx.getVictoryState().onlineAudioVolume;
+      const nextVol = curVol > 0 ? 0 : (lastSavedOnlineVol || 1.0);
+      if (curVol > 0) lastSavedOnlineVol = curVol;
+      Sfx.setOnlineVolume(nextVol);
+      dispatch('setVictoryVolumes', { onlineAudioVolume: nextVol });
     });
   }
 

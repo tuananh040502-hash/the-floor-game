@@ -3,7 +3,7 @@ import {
   MAX_ITEMS, loadCustom, saveCustom, newId, loadDrive, saveDrive, driveThumb,
   normalizeImageUrl, parseVictoryAudio, normalizeVictoryAudioUrl,
   saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
-  sanitizeItem, sanitizeTopic, exportPayload, parseImport,
+  clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
 import { Sfx } from './audio.js';
 
@@ -62,6 +62,12 @@ async function hydrateTopicVoice(t) {
     if (rec && rec.dataUrl) {
       t.victoryVoiceData = rec.dataUrl;
       if (!t.victoryVoiceName && rec.name) t.victoryVoiceName = rec.name;
+      if (rec.localAudioVolume !== undefined && t.localAudioVolume === undefined) {
+        t.localAudioVolume = clampVolume01(rec.localAudioVolume, 1.0);
+      }
+      if (rec.onlineAudioVolume !== undefined && t.onlineAudioVolume === undefined) {
+        t.onlineAudioVolume = clampVolume01(rec.onlineAudioVolume, 1.0);
+      }
       renderAudioBadges(t);
     }
   } catch { /* ignore */ }
@@ -71,6 +77,18 @@ function renderAudioBadges(t) {
   const extUrl = t ? t.victoryAudioUrl : '';
   const hasVoice = !!(t && (t.victoryVoiceData || t.victoryVoiceName));
   const p = parseVictoryAudio(extUrl);
+  const localPct = Math.round(clampVolume01(t?.localAudioVolume, 1.0) * 100);
+  const onlinePct = Math.round(clampVolume01(t?.onlineAudioVolume, 1.0) * 100);
+
+  const localSlider = $('tLocalAudioVol');
+  const localLabel = $('tLocalAudioVolLabel');
+  if (localSlider && document.activeElement !== localSlider) localSlider.value = String(localPct);
+  if (localLabel) localLabel.textContent = `${localPct}%`;
+
+  const onlineSlider = $('tOnlineAudioVol');
+  const onlineLabel = $('tOnlineAudioVolLabel');
+  if (onlineSlider && document.activeElement !== onlineSlider) onlineSlider.value = String(onlinePct);
+  if (onlineLabel) onlineLabel.textContent = `${onlinePct}%`;
 
   const extBadge = $('victoryAudioBadge');
   if (extBadge) {
@@ -98,11 +116,11 @@ function renderAudioBadges(t) {
   const dualBadge = $('dualAudioModeBadge');
   if (dualBadge) {
     if (hasVoice && p) {
-      dualBadge.textContent = 'Kịch bản 1 · Kép (File 100% + Nhạc 20%)';
+      dualBadge.textContent = `Phối âm kép · File ${localPct}% + Nhạc ${onlinePct}%`;
     } else if (p) {
-      dualBadge.textContent = 'Kịch bản 2 · Nhạc ngoài (100%)';
+      dualBadge.textContent = `Nhạc ngoài · ${onlinePct}%`;
     } else if (hasVoice) {
-      dualBadge.textContent = 'Kịch bản 3 · File máy (100%) + Fanfare';
+      dualBadge.textContent = `File máy · ${localPct}% + Fanfare`;
     } else {
       dualBadge.textContent = 'Mặc định (Fanfare)';
     }
@@ -417,12 +435,19 @@ function showPreview() {
 }
 
 function topicAudioSpec(t) {
-  if (!t) return { url: '', topicId: '', voiceData: '', voiceName: '' };
+  if (!t) {
+    return {
+      url: '', topicId: '', voiceData: '', voiceName: '',
+      localAudioVolume: 1.0, onlineAudioVolume: 1.0,
+    };
+  }
   return {
     url: t.victoryAudioUrl || '',
     topicId: t.id || '',
     voiceData: t.victoryVoiceData || '',
     voiceName: t.victoryVoiceName || '',
+    localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
+    onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
   };
 }
 
@@ -562,7 +587,7 @@ function bind() {
     persist();
   });
 
-  // --- Kênh 1: Tải file âm thanh từ máy (.mp3, .m4a, .wav) ---
+  // --- Kênh 1: Tải file âm thanh từ máy (.mp3, .m4a, .wav) + Thanh trượt âm lượng 1 ---
   $('btnPickVoiceAudio').addEventListener('click', () => $('fileVoiceAudio').click());
   $('fileVoiceAudio').addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -574,7 +599,11 @@ function bind() {
       const { dataUrl, name } = await encodeAudioFile(file);
       t.victoryVoiceData = dataUrl;
       t.victoryVoiceName = name;
-      await saveTopicAudioIDB(t.id, dataUrl, name);
+      if (t.localAudioVolume === undefined) t.localAudioVolume = 1.0;
+      await saveTopicAudioIDB(t.id, dataUrl, name, {
+        localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
+        onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
+      });
       persist();
       renderAudioBadges(t);
       renderTopics();
@@ -582,6 +611,31 @@ function bind() {
       toast(`Đã lưu file âm thanh “${name}” vào IndexedDB & đồng bộ chủ đề.`);
     } catch (err) {
       toast(err.message || 'Không thể đọc file âm thanh.', true);
+    }
+  });
+
+  $('tLocalAudioVol').addEventListener('input', (e) => {
+    const t = cur();
+    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+    $('tLocalAudioVolLabel').textContent = `${pct}%`;
+    const vol01 = clampVolume01(pct / 100, 1.0);
+    Sfx.setLocalVolume(vol01);
+    if (t) {
+      t.localAudioVolume = vol01;
+      renderAudioBadges(t);
+    }
+  });
+  $('tLocalAudioVol').addEventListener('change', async (e) => {
+    const t = cur();
+    if (!t) return;
+    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+    t.localAudioVolume = clampVolume01(pct / 100, 1.0);
+    persist();
+    if (t.victoryVoiceData) {
+      await saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '', {
+        localAudioVolume: t.localAudioVolume,
+        onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
+      });
     }
   });
 
@@ -605,12 +659,14 @@ function bind() {
       return;
     }
     Sfx.unlock();
-    toast(`Đang phát thử file “${t.victoryVoiceName || 'Ghi âm'}” (100% âm lượng)…`);
-    const ok = await Sfx.previewVoiceOnly(topicAudioSpec(t));
+    const spec = topicAudioSpec(t);
+    const pct = Math.round(spec.localAudioVolume * 100);
+    toast(`Đang phát thử file “${t.victoryVoiceName || 'Ghi âm'}” ở mức ${pct}%…`);
+    const ok = await Sfx.previewVoiceOnly(spec);
     if (!ok) toast('Không phát được file âm thanh này.', true);
   });
 
-  // --- Kênh 2: Link nhạc nền ngoài ---
+  // --- Kênh 2: Link nhạc nền ngoài + Thanh trượt âm lượng 2 ---
   $('tVictoryAudio').addEventListener('change', () => {
     const t = cur();
     if (!t) return;
@@ -634,6 +690,31 @@ function bind() {
     }
   });
 
+  $('tOnlineAudioVol').addEventListener('input', (e) => {
+    const t = cur();
+    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+    $('tOnlineAudioVolLabel').textContent = `${pct}%`;
+    const vol01 = clampVolume01(pct / 100, 1.0);
+    Sfx.setOnlineVolume(vol01);
+    if (t) {
+      t.onlineAudioVolume = vol01;
+      renderAudioBadges(t);
+    }
+  });
+  $('tOnlineAudioVol').addEventListener('change', async (e) => {
+    const t = cur();
+    if (!t) return;
+    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+    t.onlineAudioVolume = clampVolume01(pct / 100, 1.0);
+    persist();
+    if (t.victoryVoiceData) {
+      await saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '', {
+        localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
+        onlineAudioVolume: t.onlineAudioVolume,
+      });
+    }
+  });
+
   $('btnTestExternalOnly').addEventListener('click', async () => {
     const t = cur();
     if (!t) return;
@@ -653,11 +734,13 @@ function bind() {
       toast('Hãy dán link YouTube, SoundCloud hoặc MP3 trước.', true);
       return;
     }
-    toast('Đang nạp & phát thử link nhạc ngoài (100% âm lượng)…');
-    await Sfx.previewExternalOnly(t.victoryAudioUrl);
+    const spec = topicAudioSpec(t);
+    const pct = Math.round(spec.onlineAudioVolume * 100);
+    toast(`Đang nạp & phát thử link nhạc ngoài ở mức ${pct}%…`);
+    await Sfx.previewExternalOnly(t.victoryAudioUrl, spec.onlineAudioVolume);
   });
 
-  // --- Nghe thử tổng hợp (Dual Audio & Auto-Ducking) ---
+  // --- Nghe thử phối âm (Dual Volume Sliders) ---
   $('btnTestVictoryAudio').addEventListener('click', async () => {
     const t = cur();
     if (!t) return;
@@ -672,12 +755,14 @@ function bind() {
     const spec = topicAudioSpec(t);
     const hasVoice = !!(spec.voiceData || spec.voiceName);
     const hasExt = !!spec.url;
+    const lPct = Math.round(spec.localAudioVolume * 100);
+    const oPct = Math.round(spec.onlineAudioVolume * 100);
     if (hasVoice && hasExt) {
-      toast('Kịch bản 1: Phát song song — File ghi âm (100%) + Nhạc nền ngoài (20% Auto-Ducking)!');
+      toast(`Đang phát thử phối âm: File từ máy (${lPct}%) + Nhạc ngoài (${oPct}%).`);
     } else if (hasExt) {
-      toast('Kịch bản 2: Phát nhạc ngoài với âm lượng tối đa (100%)!');
+      toast(`Đang phát thử nhạc ngoài ở mức ${oPct}%.`);
     } else if (hasVoice) {
-      toast('Kịch bản 3: Phát file ghi âm (100%) kết hợp hiệu ứng chiến thắng!');
+      toast(`Đang phát thử file từ máy (${lPct}%) kết hợp nhạc chiến thắng.`);
     } else {
       toast('Đang phát thử nhạc chiến thắng mặc định (Fanfare).');
     }
