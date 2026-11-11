@@ -1,10 +1,15 @@
 /**
- * Âm thanh gameshow tổng hợp bằng Web Audio API + Bộ phát Nhạc chiến thắng tùy chỉnh (Custom Victory Audio):
- *  - Nhạc nền đếm ngược dồn dập (nhịp tăng dần theo thời gian còn lại)
- *  - Ding! / Buzzer / còi kết thúc / còi hú / nhạc chiến thắng mặc định (WebAudio fallback)
- *  - Pre-buffer 0ms cho nhạc chiến thắng tùy chỉnh: Direct Audio (.mp3/.wav/Google Drive), YouTube IFrame API (1x1 ẩn), SoundCloud Widget API.
+ * Hệ thống âm thanh gameshow (Web Audio API) + Âm thanh kép thông minh (Dual Audio & Auto-Ducking):
+ *  - Luồng 1 (Local Voice / SFX): File ghi âm giọng nói hoặc hiệu ứng do Host tải lên từ máy (IndexedDB / Base64 DataURL).
+ *    Luôn phát ở âm lượng 100% (1.0) để nghe rõ giọng đọc.
+ *  - Luồng 2 (External BGM): Link YouTube / SoundCloud / Direct MP3 / Google Drive audio.
+ *    + Kịch bản 1 (Có CẢ file ghi âm trong máy VÀ link nhạc ngoài): Phát song song cả hai;
+ *      file ghi âm ở 100% (1.0), nhạc ngoài tự động ducking xuống 20% (0.2) làm nhạc nền đệm.
+ *    + Kịch bản 2 (CHỈ CÓ link nhạc ngoài): Nhạc ngoài phát ở 100% (1.0).
+ *    + Kịch bản 3 (CHỈ CÓ file ghi âm trong máy): Phát file ghi âm ở 100% (1.0) kết hợp nhạc chiến thắng mặc định (WebAudio fanfare đệm).
+ *  - Cả 2 luồng đều được nạp sẵn (pre-buffer) ngay từ lúc chọn chủ đề / đếm ngược để phát tức thì 0ms.
  */
-import { parseVictoryAudio } from './topics.js';
+import { parseVictoryAudio, loadTopicAudioIDB } from './topics.js';
 
 let ctx = null;
 let master = null;
@@ -13,26 +18,49 @@ let muted = false;
 let sirenTimers = [];
 let music = null;
 
-// Trạng thái nhạc chiến thắng tùy chỉnh
+// Cờ toàn cục báo hiệu âm thanh chiến thắng đã nạp sẵn
 window.isVictoryAudioReady = false;
+
 const victoryListeners = new Set();
+
 const victory = {
+  // Luồng 2: Nhạc nền ngoài (YouTube / SoundCloud / Direct URL)
   rawUrl: '',
   parsed: null,
   status: 'idle', // idle | loading | ready | error
-  playing: false,
-  usingFallback: false,
+  extTargetVol: 1.0, // 1.0 hoặc 0.2 khi ducking
   audioEl: null,
   ytPlayer: null,
   ytReady: false,
-  ytPendingVideoId: null,
   scWidget: null,
   scIframe: null,
+
+  // Luồng 1: File ghi âm / SFX tải từ máy (IndexedDB / Base64)
+  topicId: '',
+  voiceSrc: '',
+  voiceName: '',
+  voiceStatus: 'idle', // idle | loading | ready | error
+  voiceEl: null,
+  voiceBuf: null,
+  voiceNode: null,
+  voiceBlobUrl: '',
+
+  playing: false,
+  usingFallback: false,
 };
 
+function computeReady() {
+  const extOk = !victory.parsed || victory.status === 'ready';
+  const voiceOk = !victory.voiceSrc || victory.voiceStatus === 'ready';
+  return (!!victory.parsed || !!victory.voiceSrc) && extOk && voiceOk;
+}
+
 function notifyVictory() {
-  window.isVictoryAudioReady = victory.status === 'ready';
-  victoryListeners.forEach((cb) => cb(getVictoryState()));
+  window.isVictoryAudioReady = computeReady();
+  const snapshot = getVictoryState();
+  victoryListeners.forEach((cb) => {
+    try { cb(snapshot); } catch { /* ignore listener error */ }
+  });
 }
 
 export function onVictoryAudioChange(cb) {
@@ -41,14 +69,21 @@ export function onVictoryAudioChange(cb) {
 }
 
 export function getVictoryState() {
+  const hasExt = !!victory.parsed && victory.status !== 'error';
+  const hasVoice = !!victory.voiceSrc && victory.voiceStatus !== 'error';
   return {
-    hasCustom: !!victory.parsed,
+    hasCustom: hasExt || hasVoice,
+    hasExternal: hasExt,
+    hasVoice,
     kind: victory.parsed ? victory.parsed.kind : 'default',
     rawUrl: victory.rawUrl,
+    voiceName: victory.voiceName,
     status: victory.status,
-    ready: victory.status === 'ready',
+    voiceStatus: victory.voiceStatus,
+    ready: computeReady(),
     playing: victory.playing,
     usingFallback: victory.usingFallback,
+    ducked: hasExt && hasVoice,
   };
 }
 
@@ -70,22 +105,30 @@ function loadYouTubeApi() {
   if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
   if (ytApiPromise) return ytApiPromise;
   ytApiPromise = new Promise((resolve, reject) => {
-    const prev = window.onYouTubeIframeAPIReady;
-    const timer = setTimeout(() => reject(new Error('YouTube API timeout')), 12000);
-    window.onYouTubeIframeAPIReady = () => {
-      clearTimeout(timer);
-      if (typeof prev === 'function') prev();
-      resolve(window.YT);
-    };
-    const s = document.createElement('script');
-    s.src = 'https://www.youtube.com/iframe_api';
-    s.async = true;
-    s.onerror = () => {
-      clearTimeout(timer);
+    try {
+      const prev = window.onYouTubeIframeAPIReady;
+      const timer = setTimeout(() => {
+        ytApiPromise = null;
+        reject(new Error('YouTube API timeout'));
+      }, 12000);
+      window.onYouTubeIframeAPIReady = () => {
+        clearTimeout(timer);
+        try { if (typeof prev === 'function') prev(); } catch { /* ignore */ }
+        resolve(window.YT);
+      };
+      const s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      s.async = true;
+      s.onerror = () => {
+        clearTimeout(timer);
+        ytApiPromise = null;
+        reject(new Error('Không tải được YouTube IFrame API'));
+      };
+      document.head.appendChild(s);
+    } catch (err) {
       ytApiPromise = null;
-      reject(new Error('Không tải được YouTube IFrame API'));
-    };
-    document.head.appendChild(s);
+      reject(err);
+    }
   });
   return ytApiPromise;
 }
@@ -96,27 +139,70 @@ function loadSoundCloudApi() {
   if (window.SC && window.SC.Widget) return Promise.resolve(window.SC);
   if (scApiPromise) return scApiPromise;
   scApiPromise = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('SoundCloud API timeout')), 12000);
-    const s = document.createElement('script');
-    s.src = 'https://w.soundcloud.com/player/api.js';
-    s.async = true;
-    s.onload = () => {
-      clearTimeout(timer);
-      if (window.SC && window.SC.Widget) resolve(window.SC);
-      else reject(new Error('SoundCloud Widget không khả dụng'));
-    };
-    s.onerror = () => {
-      clearTimeout(timer);
+    try {
+      const timer = setTimeout(() => {
+        scApiPromise = null;
+        reject(new Error('SoundCloud API timeout'));
+      }, 12000);
+      const s = document.createElement('script');
+      s.src = 'https://w.soundcloud.com/player/api.js';
+      s.async = true;
+      s.onload = () => {
+        clearTimeout(timer);
+        if (window.SC && window.SC.Widget) resolve(window.SC);
+        else reject(new Error('SoundCloud Widget không khả dụng'));
+      };
+      s.onerror = () => {
+        clearTimeout(timer);
+        scApiPromise = null;
+        reject(new Error('Không tải được SoundCloud Widget API'));
+      };
+      document.head.appendChild(s);
+    } catch (err) {
       scApiPromise = null;
-      reject(new Error('Không tải được SoundCloud Widget API'));
-    };
-    document.head.appendChild(s);
+      reject(err);
+    }
   });
   return scApiPromise;
 }
 
-function stopCustomMedia() {
-  victory.playing = false;
+/** Áp dụng mức âm lượng cho luồng nhạc ngoài (1.0 hoặc 0.2 khi ducking). */
+function applyExternalVolume(vol01) {
+  const v = Math.max(0, Math.min(1, Number(vol01) || 0));
+  victory.extTargetVol = v;
+  const eff = muted ? 0 : v;
+  if (victory.audioEl) {
+    try { victory.audioEl.volume = eff; } catch { /* ignore */ }
+  }
+  if (victory.ytPlayer && victory.ytReady) {
+    try {
+      if (muted) victory.ytPlayer.mute();
+      else {
+        victory.ytPlayer.unMute();
+        victory.ytPlayer.setVolume(Math.round(eff * 100));
+      }
+    } catch { /* ignore */ }
+  }
+  if (victory.scWidget) {
+    try { victory.scWidget.setVolume(Math.round(eff * 100)); } catch { /* ignore */ }
+  }
+}
+
+function stopVoiceStream() {
+  if (victory.voiceNode) {
+    try { victory.voiceNode.stop(); } catch { /* ignore */ }
+    try { victory.voiceNode.disconnect(); } catch { /* ignore */ }
+    victory.voiceNode = null;
+  }
+  if (victory.voiceEl) {
+    try {
+      victory.voiceEl.pause();
+      victory.voiceEl.currentTime = 0;
+    } catch { /* ignore */ }
+  }
+}
+
+function stopExternalStream() {
   if (victory.audioEl) {
     try {
       victory.audioEl.pause();
@@ -124,22 +210,130 @@ function stopCustomMedia() {
     } catch { /* ignore */ }
   }
   if (victory.ytPlayer && victory.ytReady) {
-    try {
-      victory.ytPlayer.pauseVideo();
-    } catch { /* ignore */ }
+    try { victory.ytPlayer.pauseVideo(); } catch { /* ignore */ }
   }
   if (victory.scWidget) {
+    try { victory.scWidget.pause(); } catch { /* ignore */ }
+  }
+}
+
+function stopCustomMedia() {
+  victory.playing = false;
+  stopVoiceStream();
+  stopExternalStream();
+}
+
+/**
+ * Nạp sẵn (pre-buffer) Luồng 1: File ghi âm / SFX trong máy (từ IndexedDB hoặc chuỗi Base64).
+ * Giải mã sẵn sang WebAudio AudioBuffer (phát 0ms không bao giờ bị chặn) + HTMLAudioElement dự phòng.
+ */
+async function preloadVoiceStream({ topicId = '', voiceData = '', voiceName = '' } = {}) {
+  let resolvedData = typeof voiceData === 'string' ? voiceData.trim() : '';
+  let resolvedName = voiceName || '';
+
+  // Nếu có topicId, ưu tiên kiểm tra bản gốc chất lượng cao trong IndexedDB của máy hiện tại
+  if (topicId) {
     try {
-      victory.scWidget.pause();
-    } catch { /* ignore */ }
+      const rec = await loadTopicAudioIDB(topicId);
+      if (rec) {
+        if (rec.rawBlob instanceof Blob) {
+          if (victory.voiceBlobUrl) {
+            try { URL.revokeObjectURL(victory.voiceBlobUrl); } catch { /* ignore */ }
+          }
+          victory.voiceBlobUrl = URL.createObjectURL(rec.rawBlob);
+          resolvedData = victory.voiceBlobUrl;
+        } else if (typeof rec.dataUrl === 'string' && rec.dataUrl) {
+          resolvedData = rec.dataUrl;
+        }
+        if (rec.name) resolvedName = rec.name;
+      }
+    } catch { /* ignore IDB error */ }
+  }
+
+  const sig = `${topicId}::${resolvedData.slice(0, 120)}::${resolvedData.length}`;
+  if (sig === victory.voiceSrc && (victory.voiceStatus === 'ready' || victory.voiceStatus === 'loading')) {
+    return;
+  }
+
+  stopVoiceStream();
+  victory.topicId = topicId || '';
+  victory.voiceSrc = sig;
+  victory.voiceName = resolvedName;
+  victory.voiceBuf = null;
+
+  if (!resolvedData) {
+    victory.voiceSrc = '';
+    victory.voiceStatus = 'idle';
+    notifyVictory();
+    return;
+  }
+
+  victory.voiceStatus = 'loading';
+  notifyVictory();
+
+  // Giải mã sẵn AudioBuffer cho WebAudio (độ trễ 0ms)
+  try {
+    const c = ac();
+    if (c) {
+      const res = await fetch(resolvedData);
+      const ab = await res.arrayBuffer();
+      const buf = await c.decodeAudioData(ab.slice(0));
+      if (victory.voiceSrc === sig) {
+        victory.voiceBuf = buf;
+        victory.voiceStatus = 'ready';
+        notifyVictory();
+      }
+    }
+  } catch { /* fallback sang HTMLAudioElement bên dưới */ }
+
+  // Luôn chuẩn bị thêm HTMLAudioElement dự phòng
+  try {
+    const a = new Audio();
+    a.preload = 'auto';
+    a.volume = muted ? 0 : 1.0;
+    a.oncanplaythrough = () => {
+      if (victory.voiceSrc !== sig) return;
+      victory.voiceEl = a;
+      victory.voiceStatus = 'ready';
+      notifyVictory();
+    };
+    a.onloadeddata = () => {
+      if (victory.voiceSrc !== sig) return;
+      victory.voiceEl = a;
+      victory.voiceStatus = 'ready';
+      notifyVictory();
+    };
+    a.onerror = () => {
+      if (victory.voiceSrc !== sig) return;
+      if (!victory.voiceBuf) {
+        victory.voiceStatus = 'error';
+        notifyVictory();
+      }
+    };
+    a.onended = () => {
+      // Khi giọng đọc kết thúc, nếu nhạc ngoài đang phát ở mức ducking 20% thì nâng mượt lên 100%
+      if (victory.playing && victory.parsed && victory.status === 'ready') {
+        applyExternalVolume(1.0);
+      } else {
+        victory.playing = false;
+      }
+      notifyVictory();
+    };
+    a.src = resolvedData;
+    a.load();
+    victory.voiceEl = a;
+  } catch {
+    if (!victory.voiceBuf) {
+      victory.voiceStatus = 'error';
+      notifyVictory();
+    }
   }
 }
 
 /**
- * Preload chống trễ cho nhạc chiến thắng của chủ đề.
- * Gọi ngay khi chọn chủ đề, vào phòng chờ (ready) hoặc bắt đầu đếm ngược (countdown).
+ * Nạp sẵn (pre-buffer) Luồng 2: Nhạc nền ngoài (YouTube / SoundCloud / Direct MP3)
  */
-async function preloadVictoryAudio(rawUrl) {
+async function preloadExternalStream(rawUrl) {
   const parsed = parseVictoryAudio(rawUrl);
   const nextRaw = parsed ? parsed.raw : '';
 
@@ -147,7 +341,7 @@ async function preloadVictoryAudio(rawUrl) {
     return;
   }
 
-  stopCustomMedia();
+  stopExternalStream();
   victory.rawUrl = nextRaw;
   victory.parsed = parsed;
   victory.usingFallback = false;
@@ -177,7 +371,7 @@ async function preloadVictoryAudio(rawUrl) {
       const a = new Audio();
       a.preload = 'auto';
       a.crossOrigin = 'anonymous';
-      a.volume = muted ? 0 : 1;
+      a.volume = muted ? 0 : victory.extTargetVol;
       let settled = false;
       const done = (ok) => {
         if (settled || victory.rawUrl !== nextRaw) return;
@@ -190,33 +384,37 @@ async function preloadVictoryAudio(rawUrl) {
           idx += 1;
           tryLoad();
         } else {
-          // Thử lại không có crossOrigin (một số CDN/Drive redirect chặn CORS nhưng vẫn phát được qua HTMLAudioElement)
-          const fallbackAudio = new Audio();
-          fallbackAudio.preload = 'auto';
-          fallbackAudio.volume = muted ? 0 : 1;
-          fallbackAudio.oncanplaythrough = () => {
-            if (victory.rawUrl !== nextRaw) return;
-            victory.audioEl = fallbackAudio;
-            victory.status = 'ready';
-            notifyVictory();
-          };
-          fallbackAudio.onloadeddata = () => {
-            if (victory.rawUrl !== nextRaw || victory.status === 'ready') return;
-            victory.audioEl = fallbackAudio;
-            victory.status = 'ready';
-            notifyVictory();
-          };
-          fallbackAudio.onerror = () => {
-            if (victory.rawUrl !== nextRaw) return;
+          try {
+            const fallbackAudio = new Audio();
+            fallbackAudio.preload = 'auto';
+            fallbackAudio.volume = muted ? 0 : victory.extTargetVol;
+            fallbackAudio.oncanplaythrough = () => {
+              if (victory.rawUrl !== nextRaw) return;
+              victory.audioEl = fallbackAudio;
+              victory.status = 'ready';
+              notifyVictory();
+            };
+            fallbackAudio.onloadeddata = () => {
+              if (victory.rawUrl !== nextRaw || victory.status === 'ready') return;
+              victory.audioEl = fallbackAudio;
+              victory.status = 'ready';
+              notifyVictory();
+            };
+            fallbackAudio.onerror = () => {
+              if (victory.rawUrl !== nextRaw) return;
+              victory.status = 'error';
+              notifyVictory();
+            };
+            fallbackAudio.onended = () => {
+              victory.playing = false;
+              notifyVictory();
+            };
+            fallbackAudio.src = parsed.playUrl;
+            fallbackAudio.load();
+          } catch {
             victory.status = 'error';
             notifyVictory();
-          };
-          fallbackAudio.onended = () => {
-            victory.playing = false;
-            notifyVictory();
-          };
-          fallbackAudio.src = parsed.playUrl;
-          fallbackAudio.load();
+          }
         }
       };
       a.oncanplaythrough = () => done(true);
@@ -226,8 +424,12 @@ async function preloadVictoryAudio(rawUrl) {
         victory.playing = false;
         notifyVictory();
       };
-      a.src = src;
-      a.load();
+      try {
+        a.src = src;
+        a.load();
+      } catch {
+        done(false);
+      }
     };
     tryLoad();
     return;
@@ -248,7 +450,8 @@ async function preloadVictoryAudio(rawUrl) {
 
       const cueAndPrime = (player) => {
         try {
-          player.setVolume(muted ? 0 : 100);
+          const vol = muted ? 0 : Math.round(victory.extTargetVol * 100);
+          player.setVolume(vol);
           if (muted) player.mute();
           else player.unMute();
           player.cueVideoById({ videoId: parsed.videoId, startSeconds: parsed.startSec || 0, suggestedQuality: 'small' });
@@ -263,7 +466,6 @@ async function preloadVictoryAudio(rawUrl) {
       if (victory.ytPlayer && victory.ytReady) {
         cueAndPrime(victory.ytPlayer);
       } else if (!victory.ytPlayer) {
-        victory.ytPendingVideoId = parsed.videoId;
         victory.ytPlayer = new YT.Player('__ytVictorySlot', {
           width: '1',
           height: '1',
@@ -287,7 +489,6 @@ async function preloadVictoryAudio(rawUrl) {
               }
             },
             onStateChange: (e) => {
-              // YT.PlayerState: PLAYING = 1, PAUSED = 2, ENDED = 0, CUED = 5
               if (e.data === 1) {
                 victory.playing = true;
                 notifyVictory();
@@ -328,13 +529,13 @@ async function preloadVictoryAudio(rawUrl) {
         ifr.width = '1';
         ifr.height = '1';
         ifr.allow = 'autoplay';
-        ifr.src = `https://w.soundcloud.com/player/?url=${encodeURIComponent(parsed.playUrl)}&auto_play=false& buying=false&liking=false&download=false&sharing=false&show_artwork=false&show_comments=false&show_playcount=false&show_user=false`;
+        ifr.src = `https://w.soundcloud.com/player/?url=${encodeURIComponent(parsed.playUrl)}&auto_play=false&buying=false&liking=false&download=false&sharing=false&show_artwork=false&show_comments=false&show_playcount=false&show_user=false`;
         host.appendChild(ifr);
         victory.scIframe = ifr;
         const widget = SC.Widget(ifr);
         victory.scWidget = widget;
         widget.bind(SC.Widget.Events.READY, () => {
-          widget.setVolume(muted ? 0 : 100);
+          try { widget.setVolume(muted ? 0 : Math.round(victory.extTargetVol * 100)); } catch { /* ignore */ }
           victory.status = 'ready';
           notifyVictory();
         });
@@ -361,7 +562,7 @@ async function preloadVictoryAudio(rawUrl) {
           show_artwork: false,
           callback: () => {
             if (victory.rawUrl !== nextRaw) return;
-            victory.scWidget.setVolume(muted ? 0 : 100);
+            try { victory.scWidget.setVolume(muted ? 0 : Math.round(victory.extTargetVol * 100)); } catch { /* ignore */ }
             victory.status = 'ready';
             notifyVictory();
           },
@@ -377,43 +578,67 @@ async function preloadVictoryAudio(rawUrl) {
 }
 
 /**
+ * Hàm tổng hợp nạp sẵn cả 2 luồng âm thanh chiến thắng (Link ngoài + File ghi âm trong máy).
+ * Có thể truyền vào chuỗi URL hoặc object { url, topicId, voiceData, voiceName }.
+ */
+async function preloadVictoryAudio(input) {
+  const opts = typeof input === 'string'
+    ? { url: input, topicId: victory.topicId, voiceData: '', voiceName: '' }
+    : (input || {});
+  await Promise.all([
+    preloadExternalStream(opts.url || ''),
+    preloadVoiceStream({
+      topicId: opts.topicId || '',
+      voiceData: opts.voiceData || '',
+      voiceName: opts.voiceName || '',
+    }),
+  ]);
+}
+
+/**
  * Mở khóa (warm-up) các phần tử media trong sự kiện click/keydown của người dùng
  * để trình duyệt cho phép phát tự động khi trận đấu kết thúc.
  */
 function unlockCustomMedia() {
-  if (victory.audioEl && !victory.playing) {
-    try {
-      const prevMuted = victory.audioEl.muted;
-      victory.audioEl.muted = true;
-      const p = victory.audioEl.play();
-      if (p && typeof p.then === 'function') {
-        p.then(() => {
-          victory.audioEl.pause();
-          victory.audioEl.currentTime = 0;
-          victory.audioEl.muted = prevMuted;
-        }).catch(() => {
-          victory.audioEl.muted = prevMuted;
-        });
-      }
-    } catch { /* ignore */ }
-  }
+  [victory.audioEl, victory.voiceEl].forEach((el) => {
+    if (el && !victory.playing) {
+      try {
+        const prevMuted = el.muted;
+        el.muted = true;
+        const p = el.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            el.pause();
+            el.currentTime = 0;
+            el.muted = prevMuted;
+          }).catch(() => {
+            el.muted = prevMuted;
+          });
+        }
+      } catch { /* ignore */ }
+    }
+  });
 }
 
 function ac() {
   if (!ctx) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    ctx = new AC();
-    master = ctx.createGain();
-    master.gain.value = 0.9;
-    const comp = ctx.createDynamicsCompressor();
-    master.connect(comp).connect(ctx.destination);
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.9;
+      const comp = ctx.createDynamicsCompressor();
+      master.connect(comp).connect(ctx.destination);
+    } catch {
+      return null;
+    }
   }
   return ctx;
 }
 
 function noise() {
-  if (!noiseBuf) {
+  if (!noiseBuf && ctx) {
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -425,26 +650,28 @@ function noise() {
 function toneAt(t, { freq, type = 'sine', dur = 0.3, vol = 0.3, slideTo = null, detune = 0, lowpass = 0, attack = 0.012 }) {
   const c = ac();
   if (!c || muted) return;
-  const osc = c.createOscillator();
-  const gain = c.createGain();
-  osc.type = type;
-  osc.detune.value = detune;
-  osc.frequency.setValueAtTime(freq, t);
-  if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(slideTo, 1), t + dur);
-  gain.gain.setValueAtTime(0.0001, t);
-  gain.gain.exponentialRampToValueAtTime(vol, t + attack);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  let node = osc;
-  if (lowpass) {
-    const f = c.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = lowpass;
-    node.connect(f);
-    node = f;
-  }
-  node.connect(gain).connect(master);
-  osc.start(t);
-  osc.stop(t + dur + 0.05);
+  try {
+    const osc = c.createOscillator();
+    const gain = c.createGain();
+    osc.type = type;
+    osc.detune.value = detune;
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(slideTo, 1), t + dur);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(vol, t + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    let node = osc;
+    if (lowpass) {
+      const f = c.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = lowpass;
+      node.connect(f);
+      node = f;
+    }
+    node.connect(gain).connect(master);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  } catch { /* ignore audio node error */ }
 }
 
 function tone(opts) {
@@ -456,26 +683,30 @@ function tone(opts) {
 function noiseAt(t, { dur = 0.05, vol = 0.2, hp = 6000, lp = 0 }) {
   const c = ac();
   if (!c || muted) return;
-  const src = c.createBufferSource();
-  src.buffer = noise();
-  const f = c.createBiquadFilter();
-  f.type = 'highpass';
-  f.frequency.value = hp;
-  const g = c.createGain();
-  g.gain.setValueAtTime(vol, t);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(f);
-  let last = f;
-  if (lp) {
-    const l = c.createBiquadFilter();
-    l.type = 'lowpass';
-    l.frequency.value = lp;
-    f.connect(l);
-    last = l;
-  }
-  last.connect(g).connect(master);
-  src.start(t);
-  src.stop(t + dur + 0.05);
+  try {
+    const buf = noise();
+    if (!buf) return;
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    const f = c.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = hp;
+    const g = c.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f);
+    let last = f;
+    if (lp) {
+      const l = c.createBiquadFilter();
+      l.type = 'lowpass';
+      l.frequency.value = lp;
+      f.connect(l);
+      last = l;
+    }
+    last.connect(g).connect(master);
+    src.start(t);
+    src.stop(t + dur + 0.05);
+  } catch { /* ignore */ }
 }
 
 function kickAt(t, vol = 0.5) {
@@ -489,15 +720,11 @@ function playMusicStep(step, t, stepDur, ms) {
   const urgent = ms <= 10000;
   const final = ms <= 5000;
   const s8 = step % 8;
-  // Kick: mỗi phách, dồn dập hơn ở giai đoạn cuối
   if (s8 % 2 === 0 || (urgent && s8 % 2 === 1)) kickAt(t, urgent ? 0.55 : 0.42);
-  // Hi-hat/tick
   noiseAt(t + (s8 % 2 ? 0 : stepDur * 0.5), { dur: 0.03, vol: urgent ? 0.16 : 0.09, hp: 7000 });
-  // Bass lặp
   toneAt(t, { freq: BASS[s8] * (urgent ? 2 : 1), type: 'sawtooth', dur: stepDur * 0.9, vol: 0.13, lowpass: 380 + (1 - Math.min(ms, 60000) / 60000) * 900 });
-  // Giai đoạn cuối: xung cao vút tăng dần
   if (urgent) {
-    const k = 1 - ms / 10000; // 0 → 1
+    const k = 1 - ms / 10000;
     toneAt(t, { freq: 880 + k * 900, type: 'square', dur: stepDur * 0.4, vol: 0.05 + k * 0.05 });
   }
   if (final && s8 % 4 === 0) {
@@ -511,19 +738,135 @@ function scheduleMusic(m) {
   while (m.next < c.currentTime + 0.18) {
     const ms = Math.max(0, m.getMs());
     const frac = 1 - Math.min(1, ms / 60000);
-    let bpm = 84 + frac * 66; // 84 → 150 BPM theo thời gian
-    if (ms <= 10000) bpm += (1 - ms / 10000) * 70; // nước rút: đến ~220 BPM
-    const stepDur = 60 / bpm / 2; // nốt móc đơn
+    let bpm = 84 + frac * 66;
+    if (ms <= 10000) bpm += (1 - ms / 10000) * 70;
+    const stepDur = 60 / bpm / 2;
     playMusicStep(m.step, m.next, stepDur, ms);
     m.next += stepDur;
     m.step += 1;
   }
 }
 
+/** Phát Luồng 1 (File ghi âm / SFX trong máy) ở mức âm lượng 100% (1.0). Trả về true nếu phát thành công. */
+function playVoiceAtFullVolume({ fromStart = true } = {}) {
+  if (!victory.voiceSrc || victory.voiceStatus === 'error') return false;
+
+  // Ưu tiên phát qua WebAudio AudioBuffer (0ms, không bị chặn autoplay)
+  const c = ac();
+  if (c && victory.voiceBuf) {
+    try {
+      stopVoiceStream();
+      if (c.state === 'suspended') c.resume();
+      const src = c.createBufferSource();
+      src.buffer = victory.voiceBuf;
+      const g = c.createGain();
+      g.gain.value = muted ? 0.0001 : 1.0; // 100% volume
+      src.connect(g).connect(master);
+      victory.voiceNode = src;
+      src.onended = () => {
+        if (victory.voiceNode === src) victory.voiceNode = null;
+        // Khi file ghi âm phát xong, nếu nhạc ngoài đang phát ở mức ducking 20% thì nâng lên 100%
+        if (victory.playing && victory.parsed && victory.status === 'ready') {
+          applyExternalVolume(1.0);
+        }
+        notifyVictory();
+      };
+      src.start(0);
+      victory.playing = true;
+      notifyVictory();
+      return true;
+    } catch { /* fallback sang HTMLAudioElement */ }
+  }
+
+  if (victory.voiceEl) {
+    try {
+      if (fromStart) victory.voiceEl.currentTime = 0;
+      victory.voiceEl.muted = false;
+      victory.voiceEl.volume = muted ? 0 : 1.0; // 100% volume
+      const p = victory.voiceEl.play();
+      victory.playing = true;
+      notifyVictory();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Phát Luồng 2 (Nhạc ngoài: YouTube / SoundCloud / Direct MP3) với mức âm lượng `vol01` (1.0 hoặc 0.2 khi ducking). */
+function playExternalWithVolume(vol01, { fromStart = true, onFail = null } = {}) {
+  const p = victory.parsed;
+  if (!p || victory.status === 'error') {
+    if (typeof onFail === 'function') onFail();
+    return false;
+  }
+
+  applyExternalVolume(vol01);
+
+  if (p.kind === 'direct' && victory.audioEl) {
+    try {
+      if (fromStart) victory.audioEl.currentTime = 0;
+      victory.audioEl.muted = false;
+      victory.audioEl.volume = muted ? 0 : vol01;
+      const playPromise = victory.audioEl.play();
+      victory.playing = true;
+      notifyVictory();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => { if (typeof onFail === 'function') onFail(); });
+      }
+      return true;
+    } catch {
+      if (typeof onFail === 'function') onFail();
+      return false;
+    }
+  }
+
+  if (p.kind === 'youtube' && victory.ytPlayer && victory.ytReady) {
+    try {
+      if (muted) victory.ytPlayer.mute();
+      else {
+        victory.ytPlayer.unMute();
+        victory.ytPlayer.setVolume(Math.round(vol01 * 100));
+      }
+      if (fromStart) victory.ytPlayer.seekTo(p.startSec || 0, true);
+      victory.ytPlayer.playVideo();
+      victory.playing = true;
+      notifyVictory();
+      return true;
+    } catch {
+      if (typeof onFail === 'function') onFail();
+      return false;
+    }
+  }
+
+  if (p.kind === 'soundcloud' && victory.scWidget && victory.status === 'ready') {
+    try {
+      victory.scWidget.setVolume(muted ? 0 : Math.round(vol01 * 100));
+      if (fromStart) victory.scWidget.seekTo(0);
+      victory.scWidget.play();
+      victory.playing = true;
+      notifyVictory();
+      return true;
+    } catch {
+      if (typeof onFail === 'function') onFail();
+      return false;
+    }
+  }
+
+  if (typeof onFail === 'function') onFail();
+  return false;
+}
+
 export const Sfx = {
   unlock() {
     const c = ac();
-    if (c && c.state === 'suspended') c.resume();
+    if (c && c.state === 'suspended') {
+      try { c.resume(); } catch { /* ignore */ }
+    }
     unlockCustomMedia();
     return !!c && c.state !== 'closed';
   },
@@ -532,28 +875,39 @@ export const Sfx = {
     muted = m;
     if (m) {
       this.stopSiren();
-      if (victory.audioEl) victory.audioEl.volume = 0;
-      if (victory.ytPlayer && victory.ytReady) {
-        try { victory.ytPlayer.mute(); } catch { /* ignore */ }
+      if (victory.voiceEl) {
+        try { victory.voiceEl.volume = 0; } catch { /* ignore */ }
       }
-      if (victory.scWidget) {
-        try { victory.scWidget.setVolume(0); } catch { /* ignore */ }
-      }
+      applyExternalVolume(victory.extTargetVol);
     } else {
-      if (victory.audioEl) victory.audioEl.volume = 1;
-      if (victory.ytPlayer && victory.ytReady) {
-        try { victory.ytPlayer.unMute(); victory.ytPlayer.setVolume(100); } catch { /* ignore */ }
+      if (victory.voiceEl) {
+        try { victory.voiceEl.volume = 1.0; } catch { /* ignore */ }
       }
-      if (victory.scWidget) {
-        try { victory.scWidget.setVolume(100); } catch { /* ignore */ }
-      }
+      applyExternalVolume(victory.extTargetVol);
     }
   },
   isMuted: () => muted,
 
-  /** Preload nhạc chiến thắng tùy chỉnh cho chủ đề */
-  preloadVictory(url) {
-    return preloadVictoryAudio(url);
+  /** Preload cả 2 luồng âm thanh chiến thắng (link nhạc ngoài + file ghi âm trong máy) */
+  preloadVictory(input) {
+    return preloadVictoryAudio(input);
+  },
+  /** Nghe thử riêng file ghi âm trong máy (100% volume) tại trang Quản lý chủ đề */
+  async previewVoiceOnly(opts) {
+    this.unlock();
+    this.stopVictory();
+    await preloadVoiceStream(opts);
+    return playVoiceAtFullVolume({ fromStart: true });
+  },
+  /** Nghe thử riêng link nhạc ngoài (100% volume) tại trang Quản lý chủ đề */
+  async previewExternalOnly(url) {
+    this.unlock();
+    this.stopVictory();
+    await preloadExternalStream(url);
+    return playExternalWithVolume(1.0, {
+      fromStart: true,
+      onFail: () => this.fanfare(0),
+    });
   },
   getVictoryState,
   onVictoryAudioChange,
@@ -655,122 +1009,98 @@ export const Sfx = {
     sirenTimers.forEach(clearTimeout);
     sirenTimers = [];
   },
-  /** Nhạc chiến thắng hoành tráng: hợp âm + giai điệu + cymbal */
-  fanfare(delay = 0) {
+  /** Nhạc chiến thắng hoành tráng: hợp âm + giai điệu + cymbal (volScale cho phép hạ nhỏ khi làm nền cho giọng nói) */
+  fanfare(delay = 0, volScale = 1.0) {
     const c = ac();
     if (!c) return;
     const t = c.currentTime + delay;
+    const s = Math.max(0.1, Math.min(1, volScale));
     const melody = [
       [523, 0], [659, 0.16], [784, 0.32], [1047, 0.5], [784, 0.74], [1047, 0.9], [1319, 1.1], [1568, 1.5],
     ];
     melody.forEach(([f, o], i) => {
-      toneAt(t + o, { freq: f, type: 'triangle', dur: i === melody.length - 1 ? 1.8 : 0.4, vol: 0.28 });
-      toneAt(t + o, { freq: f / 2, type: 'sawtooth', dur: i === melody.length - 1 ? 1.8 : 0.4, vol: 0.09, lowpass: 1400 });
+      toneAt(t + o, { freq: f, type: 'triangle', dur: i === melody.length - 1 ? 1.8 : 0.4, vol: 0.28 * s });
+      toneAt(t + o, { freq: f / 2, type: 'sawtooth', dur: i === melody.length - 1 ? 1.8 : 0.4, vol: 0.09 * s, lowpass: 1400 });
     });
-    // hợp âm cuối C major
     [262, 330, 392, 523, 659, 784].forEach((f) => {
-      toneAt(t + 1.5, { freq: f, type: 'sawtooth', dur: 2.2, vol: 0.09, lowpass: 2000, attack: 0.02 });
+      toneAt(t + 1.5, { freq: f, type: 'sawtooth', dur: 2.2, vol: 0.09 * s, lowpass: 2000, attack: 0.02 });
     });
-    kickAt(t + 1.5, 0.6);
-    noiseAt(t + 1.5, { dur: 1.6, vol: 0.18, hp: 5000 });
-    // trống roll dẫn vào hợp âm cuối
-    for (let i = 0; i < 12; i++) noiseAt(t + 0.9 + i * 0.05, { dur: 0.05, vol: 0.05 + i * 0.01, hp: 3000 });
+    kickAt(t + 1.5, 0.6 * s);
+    noiseAt(t + 1.5, { dur: 1.6, vol: 0.18 * s, hp: 5000 });
+    for (let i = 0; i < 12; i++) noiseAt(t + 0.9 + i * 0.05, { dur: 0.05, vol: (0.05 + i * 0.01) * s, hp: 3000 });
   },
+
   /**
-   * Chuỗi kết thúc trận đấu:
-   *  - Ngắt ngay nhạc nền đếm ngược (BGM nhịp tim).
-   *  - Phát còi kết thúc trận (horn) + kích hoạt ngay nhạc chiến thắng đã nạp sẵn (nếu có).
-   *  - Nếu không cài nhạc riêng hoặc nhạc ngoài gặp lỗi / bị chặn: tự động phát còi hú + fanfare WebAudio mặc định.
+   * KÍCH HOẠT ÂM THANH CHIẾN THẮNG KÉP (DUAL AUDIO & SMART VOLUME DUCKING):
+   *  - Kịch bản 1 (Có CẢ file ghi âm trong máy VÀ link nhạc ngoài):
+   *    Phát song song cả 2 luồng; file ghi âm ở 100% (1.0), nhạc ngoài tự động hạ xuống 20% (0.2).
+   *  - Kịch bản 2 (CHỈ CÓ link nhạc ngoài):
+   *    Nhạc ngoài phát ở 100% (1.0).
+   *  - Kịch bản 3 (CHỈ CÓ file ghi âm trong máy):
+   *    Phát file ghi âm ở 100% (1.0) kết hợp nhạc chiến thắng mặc định (fanfare đệm).
+   *  - Mặc định / Fallback: Còi hú + Fanfare 100%.
    */
-  finishSequence(customUrl) {
+  finishSequence(opts) {
     this.musicStop();
     this.stopSiren();
     this.horn();
 
-    if (typeof customUrl === 'string' && customUrl.trim() !== victory.rawUrl) {
-      preloadVictoryAudio(customUrl);
+    if (opts) {
+      preloadVictoryAudio(opts);
     }
 
-    if (victory.parsed && victory.status !== 'error') {
-      this.playVictoryCustom({ fromStart: true });
-    } else {
-      victory.usingFallback = true;
-      victory.playing = true;
-      notifyVictory();
-      this.siren(2, 1300);
-      this.fanfare(3.0);
-    }
+    this.playVictoryCustom({ fromStart: true });
   },
 
-  /** Phát nguồn nhạc chiến thắng tùy chỉnh; nếu thất bại thì chuyển sang bộ WebAudio mặc định. */
   playVictoryCustom({ fromStart = false } = {}) {
-    if (!victory.parsed) {
-      this.fanfare(0);
-      return;
-    }
-    const triggerFallback = () => {
-      victory.usingFallback = true;
-      victory.playing = false;
-      notifyVictory();
-      this.siren(1, 200);
-      this.fanfare(1.2);
-    };
+    const hasVoice = !!victory.voiceSrc && victory.voiceStatus !== 'error' && (!!victory.voiceBuf || !!victory.voiceEl);
+    const hasExt = !!victory.parsed && victory.status !== 'error';
 
-    const p = victory.parsed;
     victory.usingFallback = false;
 
-    if (p.kind === 'direct' && victory.audioEl) {
-      try {
-        if (fromStart) victory.audioEl.currentTime = 0;
-        victory.audioEl.muted = false;
-        victory.audioEl.volume = muted ? 0 : 1;
-        const playPromise = victory.audioEl.play();
-        victory.playing = true;
-        notifyVictory();
-        if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(() => triggerFallback());
-        }
-        return;
-      } catch {
-        triggerFallback();
-        return;
-      }
+    // KỊCH BẢN 1: Có CẢ file âm thanh gốc trong máy VÀ link nhạc ngoài
+    if (hasVoice && hasExt) {
+      const voiceOk = playVoiceAtFullVolume({ fromStart });
+      const extVol = voiceOk ? 0.2 : 1.0; // Auto-ducking 20% khi có giọng nói
+      playExternalWithVolume(extVol, {
+        fromStart,
+        onFail: () => {
+          // Nếu link nhạc ngoài bị lỗi/chặn, đệm bằng fanfare nhẹ phía sau giọng nói
+          this.fanfare(0.4, 0.35);
+        },
+      });
+      return;
     }
 
-    if (p.kind === 'youtube' && victory.ytPlayer && victory.ytReady) {
-      try {
-        if (muted) victory.ytPlayer.mute();
-        else {
-          victory.ytPlayer.unMute();
-          victory.ytPlayer.setVolume(100);
-        }
-        if (fromStart) victory.ytPlayer.seekTo(p.startSec || 0, true);
-        victory.ytPlayer.playVideo();
-        victory.playing = true;
-        notifyVictory();
-        return;
-      } catch {
-        triggerFallback();
-        return;
-      }
+    // KỊCH BẢN 2: CHỈ CÓ link nhạc ngoài, không có file ghi âm
+    if (!hasVoice && hasExt) {
+      playExternalWithVolume(1.0, {
+        fromStart,
+        onFail: () => {
+          victory.usingFallback = true;
+          victory.playing = false;
+          notifyVictory();
+          this.siren(1, 200);
+          this.fanfare(1.2, 1.0);
+        },
+      });
+      return;
     }
 
-    if (p.kind === 'soundcloud' && victory.scWidget && victory.status === 'ready') {
-      try {
-        victory.scWidget.setVolume(muted ? 0 : 100);
-        if (fromStart) victory.scWidget.seekTo(0);
-        victory.scWidget.play();
-        victory.playing = true;
-        notifyVictory();
-        return;
-      } catch {
-        triggerFallback();
-        return;
-      }
+    // KỊCH BẢN 3: CHỈ CÓ file ghi âm trong máy
+    if (hasVoice && !hasExt) {
+      const voiceOk = playVoiceAtFullVolume({ fromStart });
+      // Kết hợp hiệu ứng âm thanh chiến thắng mặc định của game
+      this.fanfare(voiceOk ? 0.35 : 0, voiceOk ? 0.45 : 1.0);
+      return;
     }
 
-    // Nếu tài nguyên chưa kịp ready hoặc lỗi → dùng ngay fanfare mặc định để không bị im lặng
-    triggerFallback();
+    // Mặc định (không cài cả hai hoặc cả hai đều lỗi)
+    victory.usingFallback = true;
+    victory.playing = true;
+    notifyVictory();
+    this.siren(2, 900);
+    this.fanfare(2.2, 1.0);
   },
 
   /** Tạm dừng nhạc chiến thắng (dành cho nút điều khiển của Host ở màn kết thúc). */
@@ -784,21 +1114,16 @@ export const Sfx = {
   toggleVictory() {
     if (victory.playing) {
       this.pauseVictory();
-    } else if (victory.parsed && !victory.usingFallback && victory.status === 'ready') {
-      this.playVictoryCustom({ fromStart: false });
     } else {
-      this.fanfare(0);
+      this.playVictoryCustom({ fromStart: false });
     }
   },
 
-  /** Phát lại từ đầu bài nhạc chiến thắng (custom hoặc fanfare mặc định). */
+  /** Phát lại từ đầu bài nhạc chiến thắng (kép / đơn / mặc định). */
   replayVictory() {
     this.stopSiren();
-    if (victory.parsed && victory.status === 'ready') {
-      this.playVictoryCustom({ fromStart: true });
-    } else {
-      this.fanfare(0);
-    }
+    stopCustomMedia();
+    this.playVictoryCustom({ fromStart: true });
   },
 
   /** Dừng toàn bộ âm thanh chiến thắng khi rời màn kết thúc về sàn. */

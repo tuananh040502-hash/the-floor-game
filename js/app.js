@@ -1,14 +1,14 @@
 import { loadFirebaseConfig } from './firebase-config.js';
 import { openFirebaseSettings } from './settings.js';
 import { createTransport } from './transport.js';
-import { allCategories, TOPICS_KEY } from './topics.js';
+import { allCategories, TOPICS_KEY, loadTopicAudioIDB } from './topics.js';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, CELLS,
 } from './engine.js';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
-import { preloadImages, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
+import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
 
 const $ = (id) => document.getElementById(id);
 const SIDE_COLOR = { A: '#0a84ff', B: '#ff7a59' };
@@ -120,6 +120,8 @@ function normalize(s) {
   s.setup = s.setup || {};
   s.setup.preloadUrls = s.setup.preloadUrls || [];
   s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
+  s.setup.victoryVoiceData = s.setup.victoryVoiceData || '';
+  s.setup.victoryVoiceName = s.setup.victoryVoiceName || '';
   if (s.duel) {
     s.duel.queue = s.duel.queue || [];
     s.duel.items = s.duel.items || [];
@@ -127,20 +129,34 @@ function normalize(s) {
     s.duel.cdTotal = s.duel.cdTotal || COUNTDOWN_MS;
     s.duel.cdEnd = s.duel.cdEnd || 0;
     s.duel.victoryAudioUrl = s.duel.victoryAudioUrl || '';
+    s.duel.victoryVoiceData = s.duel.victoryVoiceData || '';
+    s.duel.victoryVoiceName = s.duel.victoryVoiceName || '';
   }
   return s;
 }
 
-/** URL nhạc chiến thắng của chủ đề hiện tại (từ duel hoặc setup). */
-function activeVictoryUrl(s) {
-  if (!s) return '';
-  if (s.duel && typeof s.duel.victoryAudioUrl === 'string') return s.duel.victoryAudioUrl;
-  if (s.setup && typeof s.setup.victoryAudioUrl === 'string' && s.setup.victoryAudioUrl) return s.setup.victoryAudioUrl;
+/** Cấu hình âm thanh chiến thắng kép của chủ đề hiện tại (từ duel hoặc setup). */
+function activeVictorySpec(s) {
+  if (!s) return { url: '', topicId: '', voiceData: '', voiceName: '' };
+  if (s.duel) {
+    const cat = s.duel.categoryId ? allCategories().find((c) => c.id === s.duel.categoryId) : null;
+    return {
+      url: s.duel.victoryAudioUrl || (cat && cat.victoryAudioUrl) || '',
+      topicId: s.duel.categoryId || '',
+      voiceData: s.duel.victoryVoiceData || (cat && cat.victoryVoiceData) || '',
+      voiceName: s.duel.victoryVoiceName || (cat && cat.victoryVoiceName) || '',
+    };
+  }
   if (s.setup && s.setup.catId) {
     const cat = allCategories().find((c) => c.id === s.setup.catId);
-    if (cat && cat.victoryAudioUrl) return cat.victoryAudioUrl;
+    return {
+      url: s.setup.victoryAudioUrl || (cat && cat.victoryAudioUrl) || '',
+      topicId: s.setup.catId || '',
+      voiceData: s.setup.victoryVoiceData || (cat && cat.victoryVoiceData) || '',
+      voiceName: s.setup.victoryVoiceName || (cat && cat.victoryVoiceName) || '',
+    };
   }
-  return '';
+  return { url: '', topicId: '', voiceData: '', voiceName: '' };
 }
 
 /** Danh sách URL ảnh cần tải ngầm của trạng thái hiện tại (ưu tiên ảnh theo thứ tự ra câu hỏi). */
@@ -159,7 +175,7 @@ function activeUrls(s) {
   return [];
 }
 
-/** Giai đoạn 1 & 2: tự động kích hoạt preload ngầm ảnh + nhạc chiến thắng trên cả máy Host và máy Xem. */
+/** Giai đoạn 1 & 2: tự động kích hoạt preload ngầm ảnh + âm thanh chiến thắng kép trên cả máy Host và máy Xem. */
 function syncPreload(s) {
   const urls = activeUrls(s);
   if (urls.length) {
@@ -167,13 +183,34 @@ function syncPreload(s) {
     const sig = `${inArena ? 'P' : 'S'}:${urls.join('|')}`;
     if (sig !== lastPreloadSig) {
       lastPreloadSig = sig;
-      preloadImages(urls, { priority: inArena });
+      // Chỉ giữ trong window.__imageCache ảnh của chủ đề đang thi đấu, giải phóng ảnh chủ đề cũ
+      preloadImages(urls, { priority: inArena, evictOthers: true });
     }
+  } else if (s.phase === 'floor' && !s.setup?.catId && lastPreloadSig) {
+    lastPreloadSig = '';
+    pruneCache([]);
   }
-  const vicUrl = activeVictoryUrl(s);
-  if (vicUrl !== lastVictoryUrl) {
-    lastVictoryUrl = vicUrl;
-    Sfx.preloadVictory(vicUrl);
+
+  const spec = activeVictorySpec(s);
+  const vicSig = `${spec.topicId}|${spec.url}|${spec.voiceData ? spec.voiceData.length : 0}|${spec.voiceName}`;
+  if (vicSig !== lastVictoryUrl) {
+    lastVictoryUrl = vicSig;
+    Sfx.preloadVictory(spec);
+    // Nếu trên máy Host có lưu file âm thanh trong IndexedDB mà chưa đồng bộ vào state, tự động nạp bổ sung
+    if (controller && spec.topicId && !spec.voiceData) {
+      loadTopicAudioIDB(spec.topicId).then((rec) => {
+        if (rec && rec.dataUrl && state) {
+          if (state.setup && state.setup.catId === spec.topicId && !state.setup.victoryVoiceData) {
+            state.setup.victoryVoiceData = rec.dataUrl;
+            state.setup.victoryVoiceName = rec.name || '';
+          }
+          if (state.duel && state.duel.categoryId === spec.topicId && !state.duel.victoryVoiceData) {
+            state.duel.victoryVoiceData = rec.dataUrl;
+            state.duel.victoryVoiceName = rec.name || '';
+          }
+        }
+      }).catch(() => {});
+    }
   }
 }
 
@@ -282,7 +319,7 @@ function playEvent(type) {
     case 'countdown': Sfx.ready(); break;
     case 'pause':
     case 'click': Sfx.click(); break;
-    case 'finish': Sfx.finishSequence(activeVictoryUrl(state)); break;
+    case 'finish': Sfx.finishSequence(activeVictorySpec(state)); break;
     default: break;
   }
 }
@@ -295,7 +332,14 @@ function showWaiting() {
 // ---------- Render ----------
 function render(s) {
   const inDuel = s.phase !== 'floor';
-  if (!inDuel) document.documentElement.style.setProperty('--turn', 'transparent');
+  if (!inDuel) {
+    document.documentElement.style.setProperty('--turn', 'transparent');
+    if (artKey) {
+      artKey = '';
+      const content = $('qContent');
+      if (content) content.innerHTML = '';
+    }
+  }
   $('viewFloor').classList.toggle('hidden', inDuel);
   $('viewArena').classList.toggle('hidden', !inDuel);
   renderFloor(s);
@@ -324,15 +368,23 @@ function syncMusic(s) {
 function buildFloor() {
   const grid = $('floorGrid');
   grid.innerHTML = '';
+  const frag = document.createDocumentFragment();
   for (let i = 0; i < CELLS; i++) {
     const el = document.createElement('div');
     el.className = 'cell';
-    el.dataset.i = i;
+    el.dataset.i = String(i);
     el.innerHTML = '<span class="cell-avatar"></span><span class="cell-name"></span>';
-    el.addEventListener('click', () => {
-      if (role === 'host') dispatch('selectCell', { cell: i });
+    frag.appendChild(el);
+  }
+  grid.appendChild(frag);
+  if (!grid.dataset.bound) {
+    grid.dataset.bound = '1';
+    grid.addEventListener('click', (e) => {
+      if (role !== 'host') return;
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      dispatch('selectCell', { cell: Number(cell.dataset.i) });
     });
-    grid.appendChild(el);
   }
   floorBuilt = true;
 }
@@ -365,10 +417,10 @@ function renderFloor(s) {
   const board = $('board');
   const sorted = [...s.players].sort((a, b) => cellCount(s, b.id) - cellCount(s, a.id));
   board.innerHTML = '';
+  const frag = document.createDocumentFragment();
   sorted.forEach((p) => {
     const n = cellCount(s, p.id);
     const row = document.createElement('div');
-    row.className = '';
     row.innerHTML = `
       <div class="flex items-center gap-2 text-base font-semibold mb-1 ${n === 0 ? 'opacity-40' : ''}">
         <span>${p.avatar}</span>
@@ -376,8 +428,9 @@ function renderFloor(s) {
         <span style="color:${p.color}">${n}</span>
       </div>
       <div class="h-1.5 rounded track overflow-hidden"><div style="width:${(n / CELLS) * 100}%;background:${p.color};border-radius:9999px;transition:width .6s" class="h-full"></div></div>`;
-    board.appendChild(row);
+    frag.appendChild(row);
   });
+  board.appendChild(frag);
 
   renderSetup(s);
 }
@@ -412,29 +465,36 @@ function renderSetup(s) {
   const chosen = cats.find((c) => c.id === catSel.value);
   $('btnStartDuel').disabled = !(s.setup.defId && s.setup.chalId && chosen && chosen.items.length);
 
-  // Roster editor (tránh phá focus khi đang gõ)
+  // Roster editor (dùng event delegation trên #roster tránh gắn lại listener mỗi lần render)
   const roster = $('roster');
+  if (!roster.dataset.bound) {
+    roster.dataset.bound = '1';
+    roster.addEventListener('change', (e) => {
+      const inp = e.target.closest('[data-f]');
+      const row = e.target.closest('[data-pid]');
+      if (!inp || !row) return;
+      const v = inp.value.trim();
+      if (!v) return;
+      dispatch('updatePlayer', { id: row.dataset.pid, patch: { [inp.dataset.f]: v } });
+    });
+  }
   const sig = JSON.stringify([s.players, cats.map((c) => c.id + c.name)]);
   if (roster.dataset.sig !== sig && !roster.contains(document.activeElement)) {
     roster.dataset.sig = sig;
     roster.innerHTML = '';
+    const rFrag = document.createDocumentFragment();
     s.players.forEach((p) => {
       const row = document.createElement('div');
+      row.dataset.pid = p.id;
       row.className = 'grid grid-cols-[2.2rem_1fr_2.2rem_1.7fr] gap-1 items-center';
       row.innerHTML = `
         <input class="input !p-1 text-center" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" />
         <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" />
         <input type="color" data-f="color" value="${p.color}" class="w-8 h-8 bg-transparent" />
         <select class="input" data-f="categoryId">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>`;
-      row.querySelectorAll('[data-f]').forEach((inp) => {
-        inp.addEventListener('change', () => {
-          const v = inp.value.trim();
-          if (!v) return;
-          dispatch('updatePlayer', { id: p.id, patch: { [inp.dataset.f]: v } });
-        });
-      });
-      roster.appendChild(row);
+      rFrag.appendChild(row);
     });
+    roster.appendChild(rFrag);
   }
 }
 
@@ -555,7 +615,7 @@ function buildArt(q) {
         className: 'font-display text-4xl t-danger text-center px-4',
         textContent: '⚠️ Ảnh không tải được',
       }));
-    });
+    }, { once: true });
     return img;
   }
   const div = document.createElement('div');
@@ -604,19 +664,28 @@ function renderControls(s) {
   $('miniAnswer').textContent = q ? `Đáp án: ${q.answer}${q.aliases && q.aliases.length ? ' (' + q.aliases.join(' / ') + ')' : ''}` : '';
 }
 
-// ----- Pháo hoa -----
+// ----- Pháo hoa liên tục (Continuous Fireworks Loop) -----
 function renderFireworks(s) {
   const d = s.duel;
   if (s.phase === 'finished' && d) {
     const winnerSide = d.loserSide === 'A' ? 'B' : 'A';
     const key = `${d.winnerId}-${winnerSide}-${d.changed.join(',')}`;
-    if (key === fxKey) return;
+    if (key === fxKey && fx && fx.running) return;
     fxKey = key;
     const w = playerById(s, d.winnerId);
-    const zone = window.innerWidth >= 1024 ? (winnerSide === 'A' ? [0.02, 0.36] : [0.64, 0.98]) : [0.1, 0.9];
-    fx.start(zone, [SIDE_COLOR[winnerSide], '#eab308', w.color, '#ffffff']);
+    const zone = window.innerWidth >= 1024 ? (winnerSide === 'A' ? [0.04, 0.42] : [0.58, 0.96]) : [0.08, 0.92];
+    fx.start(zone, [
+      SIDE_COLOR[winnerSide],
+      w ? w.color : '#ffd60a',
+      '#ffd60a',
+      '#0a84ff',
+      '#ff7a59',
+      '#30d158',
+      '#bf5af2',
+      '#ffffff',
+    ]);
     Sfx.boom();
-  } else if (fxKey) {
+  } else if (fxKey || (fx && fx.running)) {
     fxKey = '';
     fx.stop();
     Sfx.stopVictory();

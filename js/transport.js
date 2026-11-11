@@ -33,7 +33,13 @@ export async function createTransport(room, config) {
 // ---------- Diff để chỉ gửi phần thay đổi ----------
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isEmpty = (v) => v === undefined || v === null || (Array.isArray(v) && v.length === 0) || (isPlain(v) && !Object.keys(v).length);
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const same = (a, b) => {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+};
 
 function diffPaths(prev, next, base, out) {
   const keys = new Set([...Object.keys(prev || {}), ...Object.keys(next || {})]);
@@ -96,13 +102,18 @@ async function firebaseTransport(room, config) {
       });
     },
     write(state, prev) {
-      const handle = (err) => emit({ type: 'error', message: `Không ghi được dữ liệu: ${err.message}` });
-      if (prev) {
-        const patch = diffPaths(prev, state, '', {});
-        if (!Object.keys(patch).length) return Promise.resolve();
-        return db.update(stateRef, patch).catch(handle);
+      const handle = (err) => emit({ type: 'error', message: `Không ghi được dữ liệu: ${err?.message || err}` });
+      try {
+        if (prev) {
+          const patch = diffPaths(prev, state, '', {});
+          if (!Object.keys(patch).length) return Promise.resolve();
+          return db.update(stateRef, patch).catch(handle);
+        }
+        return db.set(stateRef, state).catch(handle);
+      } catch (err) {
+        handle(err);
+        return Promise.resolve();
       }
-      return db.set(stateRef, state).catch(handle);
     },
     onStatus: (cb) => listeners.push(cb),
   };
@@ -172,8 +183,12 @@ function localTransport(room) {
       setTimeout(() => listeners.forEach((s) => s({ type: 'local' })), 0);
     },
     write(state) {
-      localStorage.setItem(key, JSON.stringify(state));
-      if (channel) channel.postMessage(1);
+      try {
+        localStorage.setItem(key, JSON.stringify(state));
+        if (channel) channel.postMessage(1);
+      } catch (err) {
+        console.warn('localStorage write error:', err);
+      }
       return Promise.resolve();
     },
     onStatus: (cb) => listeners.push(cb),

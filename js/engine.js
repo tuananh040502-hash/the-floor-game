@@ -127,6 +127,8 @@ export function reduce(s, type, arg = {}, now) {
       s.setup.catId = cat.id;
       s.setup.preloadUrls = extractImageUrls(cat.items);
       s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
+      s.setup.victoryVoiceData = cat.victoryVoiceData || '';
+      s.setup.victoryVoiceName = cat.victoryVoiceName || '';
       return 'click';
     }
     case 'setChallenger':
@@ -141,6 +143,8 @@ export function reduce(s, type, arg = {}, now) {
         catId: arg.id,
         preloadUrls: extractImageUrls(cat.items),
         victoryAudioUrl: cat.victoryAudioUrl || '',
+        victoryVoiceData: cat.victoryVoiceData || '',
+        victoryVoiceName: cat.victoryVoiceName || '',
       };
       return null;
     }
@@ -149,13 +153,15 @@ export function reduce(s, type, arg = {}, now) {
       if (s.phase !== 'floor' || !chalId || !defId || !catId) return false;
       const cat = getCategory(catId);
       if (!cat || !cat.items.length) return false;
-      // Chụp lại bộ câu hỏi + nhạc chiến thắng vào trận để mọi màn hình đều đồng bộ.
+      // Chụp lại bộ câu hỏi + âm thanh chiến thắng kép vào trận để mọi màn hình đều đồng bộ.
       const order = cat.items.map((_, i) => i);
       s.duel = {
         items: cat.items.map((it) => ({ ...it, aliases: it.aliases || [] })),
         catName: cat.name,
         catIcon: cat.icon,
         victoryAudioUrl: cat.victoryAudioUrl || '',
+        victoryVoiceData: cat.victoryVoiceData || s.setup.victoryVoiceData || '',
+        victoryVoiceName: cat.victoryVoiceName || s.setup.victoryVoiceName || '',
         aId: chalId,
         bId: defId,
         categoryId: catId,

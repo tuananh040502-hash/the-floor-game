@@ -95,10 +95,38 @@ function pump() {
 }
 
 /**
- * Xếp hàng tải các URL theo thứ tự. priority=true: đẩy các ảnh chưa bắt đầu tải lên đầu hàng đợi (dùng khi vào trận).
+ * Giải phóng bộ nhớ đệm hình ảnh của các chủ đề cũ:
+ * Chỉ giữ lại trong window.__imageCache danh sách URL của chủ đề đang thi đấu hiện tại.
  */
-export function preloadImages(urls, { priority = false } = {}) {
+export function pruneCache(keepUrls = []) {
+  const keep = new Set((keepUrls || []).filter(Boolean));
+  pending = pending.filter((u) => keep.has(u));
+  Object.keys(cache).forEach((u) => {
+    if (!keep.has(u)) {
+      const entry = cache[u];
+      if (entry && entry.img) {
+        try {
+          entry.img.onload = null;
+          entry.img.onerror = null;
+          entry.img.src = '';
+        } catch { /* ignore */ }
+        entry.img = null;
+      }
+      delete cache[u];
+    }
+  });
+}
+
+/**
+ * Xếp hàng tải các URL theo thứ tự.
+ *  - priority=true: đẩy các ảnh chưa bắt đầu tải lên đầu hàng đợi (dùng khi vào trận).
+ *  - evictOthers=true: dọn sạch ảnh của các chủ đề trước đó khỏi window.__imageCache để tiết kiệm RAM.
+ */
+export function preloadImages(urls, { priority = false, evictOthers = false } = {}) {
   const unique = [...new Set((urls || []).filter(Boolean))];
+  if (evictOthers) {
+    pruneCache(unique);
+  }
   const toQueue = unique.filter((u) => {
     const e = cache[u];
     return !e || (e.status === 'loading' && !e.img);

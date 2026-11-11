@@ -102,18 +102,49 @@
               </div>
             </div>
             <div class="divider"></div>
-            <div class="grid gap-3 md:grid-cols-[1fr_auto] items-end">
-              <label class="field-label">
-                <span class="eyebrow">🎵 Âm thanh chiến thắng (Tùy chọn)</span>
-                <input id="tVictoryAudio" class="input" placeholder="Dán link YouTube (youtube.com/watch?v=... / youtu.be/...), SoundCloud, hoặc link .mp3 / .wav / Google Drive audio" />
-              </label>
-              <div class="flex items-center gap-2">
-                <span id="victoryAudioBadge" class="chip">Mặc định</span>
-                <button id="btnTestVictoryAudio" type="button" class="btn btn-ghost btn-sm">▶ Nghe thử</button>
-                <button id="btnStopVictoryAudio" type="button" class="btn btn-ghost btn-sm hidden">⏹ Dừng</button>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <div class="eyebrow">🎧 Hệ thống Âm thanh Chiến thắng Kép (Dual Audio &amp; Auto-Ducking)</div>
+                  <p class="t-3 mt-0.5" style="font-size:11px">Tự động nạp sẵn bộ đệm (0ms) ở màn đếm ngược. Khi có cả file ghi âm &amp; nhạc nền ngoài, hệ thống tự động phát song song: giọng nói <b>100%</b> và hạ nhạc nền xuống <b>20%</b>.</p>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span id="dualAudioModeBadge" class="chip">Mặc định (Fanfare)</span>
+                  <button id="btnTestVictoryAudio" type="button" class="btn btn-gold btn-sm">▶ Nghe thử chiến thắng</button>
+                  <button id="btnStopVictoryAudio" type="button" class="btn btn-ghost btn-sm hidden">⏹ Dừng</button>
+                </div>
+              </div>
+
+              <div class="grid gap-3 lg:grid-cols-2">
+                <!-- Kênh 1: File âm thanh từ máy (IndexedDB + Base64) -->
+                <div class="surface-sub rounded-2xl p-3.5 space-y-2.5">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="eyebrow">🎙️ 1. File ghi âm / SFX từ máy (.mp3, .m4a, .wav)</span>
+                    <span id="voiceAudioBadge" class="chip">Chưa có file</span>
+                  </div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <button id="btnPickVoiceAudio" type="button" class="btn btn-ok btn-sm">⬆ Chọn file âm thanh…</button>
+                    <input id="fileVoiceAudio" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.aac" class="hidden" />
+                    <button id="btnTestVoiceOnly" type="button" class="btn btn-ghost btn-sm hidden">▶ Nghe thử file</button>
+                    <button id="btnClearVoiceAudio" type="button" class="btn btn-pass btn-sm hidden" title="Xóa file âm thanh đã tải">✕ Xóa</button>
+                  </div>
+                  <div class="t-3" style="font-size:11px">Lưu trữ vào IndexedDB &amp; nén đồng bộ theo chủ đề. Âm lượng luôn ưu tiên <b>100%</b>.</div>
+                </div>
+
+                <!-- Kênh 2: Link nhạc ngoài -->
+                <div class="surface-sub rounded-2xl p-3.5 space-y-2.5">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="eyebrow">🎵 2. Link nhạc nền ngoài (YouTube / SoundCloud / MP3)</span>
+                    <span id="victoryAudioBadge" class="chip">Không dùng</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input id="tVictoryAudio" class="input flex-1" placeholder="Dán link YouTube, SoundCloud, hoặc link .mp3 / .wav / Google Drive" />
+                    <button id="btnTestExternalOnly" type="button" class="btn btn-ghost btn-sm">▶ Nghe thử link</button>
+                  </div>
+                  <div class="t-3" style="font-size:11px">Phát <b>100%</b> nếu đứng riêng, hoặc tự động ducking xuống <b>20%</b> làm nhạc nền khi có file ghi âm.</div>
+                </div>
               </div>
             </div>
-            <p class="t-3" style="font-size:11px">Nhạc sẽ được nạp sẵn (pre-buffer 0ms) ở màn đếm ngược trước trận và phát bùng nổ ngay khi có người chiến thắng. Để trống nếu dùng nhạc chiến thắng mặc định.</p>
           </div>
 
           <!-- Thêm ảnh -->

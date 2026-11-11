@@ -2,6 +2,7 @@ import { CATEGORIES } from './data.js';
 import {
   MAX_ITEMS, loadCustom, saveCustom, newId, loadDrive, saveDrive, driveThumb,
   normalizeImageUrl, parseVictoryAudio, normalizeVictoryAudioUrl,
+  saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
   sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
 import { Sfx } from './audio.js';
@@ -35,35 +36,77 @@ function esc(s) {
 function renderTopics() {
   const list = $('topicList');
   list.innerHTML = '';
-  if (!topics.length) list.innerHTML = '<div class="text-sm t-3 px-2 py-3">Chưa có chủ đề tự tạo.</div>';
-  topics.forEach((t) => {
-    const el = document.createElement('button');
-    el.className = `topic-item ${t.id === currentId ? 'active' : ''}`;
-    const musicDot = t.victoryAudioUrl ? '<span title="Có nhạc chiến thắng riêng">🎵</span>' : '';
-    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${musicDot}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_ITEMS}</span>`;
-    el.addEventListener('click', () => {
-      Sfx.stopVictory();
-      currentId = t.id;
-      render();
-    });
-    list.appendChild(el);
-  });
-}
-
-function renderVictoryBadge(url) {
-  const p = parseVictoryAudio(url);
-  const badge = $('victoryAudioBadge');
-  if (!badge) return;
-  if (!p) {
-    badge.textContent = 'Mặc định (Fanfare)';
+  if (!topics.length) {
+    list.innerHTML = '<div class="text-sm t-3 px-2 py-3">Chưa có chủ đề tự tạo.</div>';
     return;
   }
-  const map = {
-    youtube: 'YouTube',
-    soundcloud: 'SoundCloud',
-    direct: p.driveId ? 'Google Drive Audio' : 'Direct Audio',
-  };
-  badge.textContent = `✓ ${map[p.kind] || 'Tùy chỉnh'}`;
+  const frag = document.createDocumentFragment();
+  topics.forEach((t) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.dataset.topicId = t.id;
+    el.className = `topic-item ${t.id === currentId ? 'active' : ''}`;
+    const hasVoice = !!(t.victoryVoiceData || t.victoryVoiceName);
+    const hasMusic = !!t.victoryAudioUrl;
+    const audioDots = `${hasVoice ? '<span title="Có file ghi âm / SFX riêng">🎙️</span>' : ''}${hasMusic ? '<span title="Có link nhạc chiến thắng riêng">🎵</span>' : ''}`;
+    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${audioDots}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_ITEMS}</span>`;
+    frag.appendChild(el);
+  });
+  list.appendChild(frag);
+}
+
+async function hydrateTopicVoice(t) {
+  if (!t || t.victoryVoiceData) return;
+  try {
+    const rec = await loadTopicAudioIDB(t.id);
+    if (rec && rec.dataUrl) {
+      t.victoryVoiceData = rec.dataUrl;
+      if (!t.victoryVoiceName && rec.name) t.victoryVoiceName = rec.name;
+      renderAudioBadges(t);
+    }
+  } catch { /* ignore */ }
+}
+
+function renderAudioBadges(t) {
+  const extUrl = t ? t.victoryAudioUrl : '';
+  const hasVoice = !!(t && (t.victoryVoiceData || t.victoryVoiceName));
+  const p = parseVictoryAudio(extUrl);
+
+  const extBadge = $('victoryAudioBadge');
+  if (extBadge) {
+    if (!p) {
+      extBadge.textContent = 'Không dùng';
+    } else {
+      const map = {
+        youtube: 'YouTube',
+        soundcloud: 'SoundCloud',
+        direct: p.driveId ? 'Google Drive Audio' : 'Direct Audio',
+      };
+      extBadge.textContent = `✓ ${map[p.kind] || 'Tùy chỉnh'}`;
+    }
+  }
+
+  const voiceBadge = $('voiceAudioBadge');
+  if (voiceBadge) {
+    voiceBadge.textContent = hasVoice ? `✓ ${t.victoryVoiceName || 'File ghi âm đã lưu'}` : 'Chưa có file';
+  }
+  const testVoiceBtn = $('btnTestVoiceOnly');
+  if (testVoiceBtn) testVoiceBtn.classList.toggle('hidden', !hasVoice);
+  const clearVoiceBtn = $('btnClearVoiceAudio');
+  if (clearVoiceBtn) clearVoiceBtn.classList.toggle('hidden', !hasVoice);
+
+  const dualBadge = $('dualAudioModeBadge');
+  if (dualBadge) {
+    if (hasVoice && p) {
+      dualBadge.textContent = 'Kịch bản 1 · Kép (File 100% + Nhạc 20%)';
+    } else if (p) {
+      dualBadge.textContent = 'Kịch bản 2 · Nhạc ngoài (100%)';
+    } else if (hasVoice) {
+      dualBadge.textContent = 'Kịch bản 3 · File máy (100%) + Fanfare';
+    } else {
+      dualBadge.textContent = 'Mặc định (Fanfare)';
+    }
+  }
 }
 
 function render() {
@@ -72,17 +115,18 @@ function render() {
   $('emptyState').classList.toggle('hidden', !!t);
   $('editorBody').classList.toggle('hidden', !t);
   if (!t) return;
+  hydrateTopicVoice(t);
   if (document.activeElement !== $('tName')) $('tName').value = t.name;
   if (document.activeElement !== $('tIcon')) $('tIcon').value = t.icon;
   if (document.activeElement !== $('tVictoryAudio')) $('tVictoryAudio').value = t.victoryAudioUrl || '';
-  renderVictoryBadge(t.victoryAudioUrl);
+  renderAudioBadges(t);
   $('tShuffle').checked = !!t.shuffle;
   $('countNow').textContent = t.items.length;
   $('countMax').textContent = MAX_ITEMS;
   renderItems();
 }
 
-// ---------- Bảng ảnh ----------
+// ---------- Bảng ảnh (Event Delegation chống rò rỉ bộ nhớ) ----------
 let dragIndex = null;
 
 function renderItems() {
@@ -93,10 +137,12 @@ function renderItems() {
     box.innerHTML = '<div class="t-3 text-center py-10" style="grid-column:1/-1">Chưa có ảnh nào. Hãy tải ảnh lên hoặc dán link.</div>';
     return;
   }
+  const frag = document.createDocumentFragment();
   t.items.forEach((it, i) => {
     const card = document.createElement('div');
     card.className = 'photo-card';
     card.draggable = true;
+    card.dataset.idx = String(i);
     const art = it.type === 'emoji'
       ? `<div class="photo-emoji">${esc(it.emoji)}</div>`
       : `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(it.src)}" alt="">`;
@@ -105,9 +151,9 @@ function renderItems() {
         ${art}
         <span class="photo-num">${i + 1}</span>
         <div class="photo-actions">
-          <button data-a="up" title="Lên trước" ${i === 0 ? 'disabled' : ''}>‹</button>
-          <button data-a="down" title="Xuống sau" ${i === t.items.length - 1 ? 'disabled' : ''}>›</button>
-          <button data-a="del" class="danger" title="Xóa ảnh">✕</button>
+          <button type="button" data-a="up" title="Lên trước" ${i === 0 ? 'disabled' : ''}>‹</button>
+          <button type="button" data-a="down" title="Xuống sau" ${i === t.items.length - 1 ? 'disabled' : ''}>›</button>
+          <button type="button" data-a="del" class="danger" title="Xóa ảnh">✕</button>
         </div>
       </div>
       <input class="photo-input" data-f="answer" value="${esc(it.answer)}" maxlength="120" placeholder="Đáp án chuẩn" />
@@ -119,55 +165,11 @@ function renderItems() {
         img.replaceWith(Object.assign(document.createElement('div'), {
           className: 'photo-emoji', textContent: '⚠️', title: 'Ảnh lỗi / không tải được — hãy xóa hoặc thay link',
         }));
-      });
+      }, { once: true });
     }
-    card.querySelector('[data-f="answer"]').addEventListener('change', (e) => {
-      const v = e.target.value.trim();
-      if (!v) {
-        toast('Đáp án không được để trống.', true);
-        e.target.value = it.answer;
-        return;
-      }
-      it.answer = v;
-      persist();
-      toast('Đã lưu đáp án.');
-    });
-    card.querySelector('[data-f="aliases"]').addEventListener('change', (e) => {
-      it.aliases = e.target.value.split(',').map((x) => x.trim()).filter(Boolean);
-      persist();
-    });
-    card.querySelector('[data-a="up"]').addEventListener('click', () => move(i, i - 1));
-    card.querySelector('[data-a="down"]').addEventListener('click', () => move(i, i + 1));
-    card.querySelector('[data-a="del"]').addEventListener('click', () => {
-      t.items.splice(i, 1);
-      persist();
-      render();
-    });
-
-    card.addEventListener('dragstart', (e) => {
-      dragIndex = i;
-      card.classList.add('row-drag');
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(i));
-    });
-    card.addEventListener('dragend', () => {
-      dragIndex = null;
-      card.classList.remove('row-drag');
-    });
-    card.addEventListener('dragover', (e) => {
-      if (dragIndex === null) return;
-      e.preventDefault();
-      card.classList.add('row-over');
-    });
-    card.addEventListener('dragleave', () => card.classList.remove('row-over'));
-    card.addEventListener('drop', (e) => {
-      if (dragIndex === null) return;
-      e.preventDefault();
-      e.stopPropagation();
-      move(dragIndex, i);
-    });
-    box.appendChild(card);
+    frag.appendChild(card);
   });
+  box.appendChild(frag);
 }
 
 function move(from, to) {
@@ -384,6 +386,9 @@ function importFile(file) {
       incoming.forEach((t) => {
         if (used.has(t.id)) t.id = newId();
         used.add(t.id);
+        if (t.victoryVoiceData) {
+          saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '');
+        }
         topics.push(t);
       });
       currentId = incoming[0].id;
@@ -411,8 +416,103 @@ function showPreview() {
   $('pvIdx').textContent = `${pvI + 1}/${t.items.length}`;
 }
 
+function topicAudioSpec(t) {
+  if (!t) return { url: '', topicId: '', voiceData: '', voiceName: '' };
+  return {
+    url: t.victoryAudioUrl || '',
+    topicId: t.id || '',
+    voiceData: t.victoryVoiceData || '',
+    voiceName: t.victoryVoiceName || '',
+  };
+}
+
 // ---------- Gắn sự kiện ----------
 function bind() {
+  // Event delegation cho danh sách chủ đề
+  $('topicList').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-topic-id]');
+    if (!btn) return;
+    Sfx.stopVictory();
+    currentId = btn.dataset.topicId;
+    render();
+  });
+
+  // Event delegation cho bảng ảnh (tránh gắn nhiều listener gây rò rỉ bộ nhớ)
+  const box = $('itemList');
+  box.addEventListener('change', (e) => {
+    const card = e.target.closest('.photo-card');
+    const t = cur();
+    if (!card || !t) return;
+    const i = Number(card.dataset.idx);
+    const it = t.items[i];
+    if (!it) return;
+    const f = e.target.dataset.f;
+    if (f === 'answer') {
+      const v = e.target.value.trim();
+      if (!v) {
+        toast('Đáp án không được để trống.', true);
+        e.target.value = it.answer;
+        return;
+      }
+      it.answer = v;
+      persist();
+      toast('Đã lưu đáp án.');
+    } else if (f === 'aliases') {
+      it.aliases = e.target.value.split(',').map((x) => x.trim()).filter(Boolean);
+      persist();
+    }
+  });
+  box.addEventListener('click', (e) => {
+    const actBtn = e.target.closest('[data-a]');
+    if (!actBtn) return;
+    const card = actBtn.closest('.photo-card');
+    const t = cur();
+    if (!card || !t) return;
+    const i = Number(card.dataset.idx);
+    const a = actBtn.dataset.a;
+    if (a === 'up') move(i, i - 1);
+    else if (a === 'down') move(i, i + 1);
+    else if (a === 'del') {
+      t.items.splice(i, 1);
+      persist();
+      render();
+    }
+  });
+  box.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.photo-card');
+    if (!card) return;
+    dragIndex = Number(card.dataset.idx);
+    card.classList.add('row-drag');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(dragIndex));
+  });
+  box.addEventListener('dragend', (e) => {
+    const card = e.target.closest('.photo-card');
+    dragIndex = null;
+    if (card) card.classList.remove('row-drag');
+    box.querySelectorAll('.row-over').forEach((el) => el.classList.remove('row-over'));
+  });
+  box.addEventListener('dragover', (e) => {
+    if (dragIndex === null) return;
+    const card = e.target.closest('.photo-card');
+    if (!card) return;
+    e.preventDefault();
+    card.classList.add('row-over');
+  });
+  box.addEventListener('dragleave', (e) => {
+    const card = e.target.closest('.photo-card');
+    if (card) card.classList.remove('row-over');
+  });
+  box.addEventListener('drop', (e) => {
+    if (dragIndex === null) return;
+    const card = e.target.closest('.photo-card');
+    if (!card) return;
+    e.preventDefault();
+    e.stopPropagation();
+    card.classList.remove('row-over');
+    move(dragIndex, Number(card.dataset.idx));
+  });
+
   $('btnNew').addEventListener('click', () => {
     const name = prompt('Tên chủ đề mới (ví dụ: Cầu thủ bóng đá):');
     if (!name || !name.trim()) return;
@@ -461,6 +561,56 @@ function bind() {
     t.shuffle = $('tShuffle').checked;
     persist();
   });
+
+  // --- Kênh 1: Tải file âm thanh từ máy (.mp3, .m4a, .wav) ---
+  $('btnPickVoiceAudio').addEventListener('click', () => $('fileVoiceAudio').click());
+  $('fileVoiceAudio').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    const t = cur();
+    if (!file || !t) return;
+    try {
+      toast(`Đang xử lý & lưu file âm thanh “${file.name}”…`);
+      const { dataUrl, name } = await encodeAudioFile(file);
+      t.victoryVoiceData = dataUrl;
+      t.victoryVoiceName = name;
+      await saveTopicAudioIDB(t.id, dataUrl, name);
+      persist();
+      renderAudioBadges(t);
+      renderTopics();
+      await Sfx.preloadVictory(topicAudioSpec(t));
+      toast(`Đã lưu file âm thanh “${name}” vào IndexedDB & đồng bộ chủ đề.`);
+    } catch (err) {
+      toast(err.message || 'Không thể đọc file âm thanh.', true);
+    }
+  });
+
+  $('btnClearVoiceAudio').addEventListener('click', async () => {
+    const t = cur();
+    if (!t) return;
+    Sfx.stopVictory();
+    t.victoryVoiceData = '';
+    t.victoryVoiceName = '';
+    await deleteTopicAudioIDB(t.id);
+    persist();
+    renderAudioBadges(t);
+    renderTopics();
+    toast('Đã xóa file ghi âm khỏi chủ đề.');
+  });
+
+  $('btnTestVoiceOnly').addEventListener('click', async () => {
+    const t = cur();
+    if (!t || !(t.victoryVoiceData || t.victoryVoiceName)) {
+      toast('Chưa có file âm thanh từ máy.', true);
+      return;
+    }
+    Sfx.unlock();
+    toast(`Đang phát thử file “${t.victoryVoiceName || 'Ghi âm'}” (100% âm lượng)…`);
+    const ok = await Sfx.previewVoiceOnly(topicAudioSpec(t));
+    if (!ok) toast('Không phát được file âm thanh này.', true);
+  });
+
+  // --- Kênh 2: Link nhạc nền ngoài ---
   $('tVictoryAudio').addEventListener('change', () => {
     const t = cur();
     if (!t) return;
@@ -473,16 +623,41 @@ function bind() {
     t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
     $('tVictoryAudio').value = t.victoryAudioUrl;
     persist();
-    renderVictoryBadge(t.victoryAudioUrl);
+    renderAudioBadges(t);
     renderTopics();
-    if (t.victoryAudioUrl) {
-      Sfx.preloadVictory(t.victoryAudioUrl);
-      toast('Đã lưu âm thanh chiến thắng & nạp sẵn bộ đệm.');
+    if (t.victoryAudioUrl || t.victoryVoiceData) {
+      Sfx.preloadVictory(topicAudioSpec(t));
+      toast('Đã lưu cấu hình âm thanh chiến thắng & nạp sẵn bộ đệm.');
     } else {
       Sfx.stopVictory();
       toast('Đã đặt về âm thanh chiến thắng mặc định.');
     }
   });
+
+  $('btnTestExternalOnly').addEventListener('click', async () => {
+    const t = cur();
+    if (!t) return;
+    Sfx.unlock();
+    const raw = $('tVictoryAudio').value.trim();
+    if (raw && !parseVictoryAudio(raw)) {
+      toast('Link nhạc không hợp lệ.', true);
+      return;
+    }
+    if (raw !== (t.victoryAudioUrl || '')) {
+      t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
+      persist();
+      renderAudioBadges(t);
+      renderTopics();
+    }
+    if (!t.victoryAudioUrl) {
+      toast('Hãy dán link YouTube, SoundCloud hoặc MP3 trước.', true);
+      return;
+    }
+    toast('Đang nạp & phát thử link nhạc ngoài (100% âm lượng)…');
+    await Sfx.previewExternalOnly(t.victoryAudioUrl);
+  });
+
+  // --- Nghe thử tổng hợp (Dual Audio & Auto-Ducking) ---
   $('btnTestVictoryAudio').addEventListener('click', async () => {
     const t = cur();
     if (!t) return;
@@ -491,18 +666,25 @@ function bind() {
     if (raw !== (t.victoryAudioUrl || '')) {
       t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
       persist();
-      renderVictoryBadge(t.victoryAudioUrl);
+      renderAudioBadges(t);
       renderTopics();
     }
-    if (!t.victoryAudioUrl) {
-      Sfx.fanfare(0);
+    const spec = topicAudioSpec(t);
+    const hasVoice = !!(spec.voiceData || spec.voiceName);
+    const hasExt = !!spec.url;
+    if (hasVoice && hasExt) {
+      toast('Kịch bản 1: Phát song song — File ghi âm (100%) + Nhạc nền ngoài (20% Auto-Ducking)!');
+    } else if (hasExt) {
+      toast('Kịch bản 2: Phát nhạc ngoài với âm lượng tối đa (100%)!');
+    } else if (hasVoice) {
+      toast('Kịch bản 3: Phát file ghi âm (100%) kết hợp hiệu ứng chiến thắng!');
+    } else {
       toast('Đang phát thử nhạc chiến thắng mặc định (Fanfare).');
-      return;
     }
-    toast('Đang nạp & phát thử nhạc chiến thắng...');
-    await Sfx.preloadVictory(t.victoryAudioUrl);
-    setTimeout(() => Sfx.replayVictory(), 250);
+    await Sfx.preloadVictory(spec);
+    Sfx.finishSequence(spec);
   });
+
   $('btnStopVictoryAudio').addEventListener('click', () => {
     Sfx.stopVictory();
   });
@@ -510,9 +692,11 @@ function bind() {
     const stopBtn = $('btnStopVictoryAudio');
     if (stopBtn) stopBtn.classList.toggle('hidden', !st.playing);
   });
-  $('btnDeleteTopic').addEventListener('click', () => {
+  $('btnDeleteTopic').addEventListener('click', async () => {
     const t = cur();
     if (!t || !confirm(`Xóa chủ đề “${t.name}” cùng ${t.items.length} ảnh? (Ảnh trên Drive không bị xóa)`)) return;
+    Sfx.stopVictory();
+    await deleteTopicAudioIDB(t.id);
     topics = topics.filter((x) => x.id !== t.id);
     currentId = topics[0] ? topics[0].id : null;
     persist();
