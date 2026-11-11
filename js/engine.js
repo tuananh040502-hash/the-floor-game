@@ -126,6 +126,7 @@ export function reduce(s, type, arg = {}, now) {
       const cat = getCategory(playerById(s, owner).categoryId);
       s.setup.catId = cat.id;
       s.setup.preloadUrls = extractImageUrls(cat.items);
+      s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
       return 'click';
     }
     case 'setChallenger':
@@ -135,7 +136,12 @@ export function reduce(s, type, arg = {}, now) {
     case 'setCategory': {
       if (s.phase !== 'floor' || !allCategories().some((c) => c.id === arg.id)) return false;
       const cat = getCategory(arg.id);
-      s.setup = { ...s.setup, catId: arg.id, preloadUrls: extractImageUrls(cat.items) };
+      s.setup = {
+        ...s.setup,
+        catId: arg.id,
+        preloadUrls: extractImageUrls(cat.items),
+        victoryAudioUrl: cat.victoryAudioUrl || '',
+      };
       return null;
     }
     case 'startDuel': {
@@ -143,12 +149,13 @@ export function reduce(s, type, arg = {}, now) {
       if (s.phase !== 'floor' || !chalId || !defId || !catId) return false;
       const cat = getCategory(catId);
       if (!cat || !cat.items.length) return false;
-      // Chụp lại bộ câu hỏi vào trận để mọi màn hình (kể cả máy không có chủ đề tự tạo) đều hiển thị được.
+      // Chụp lại bộ câu hỏi + nhạc chiến thắng vào trận để mọi màn hình đều đồng bộ.
       const order = cat.items.map((_, i) => i);
       s.duel = {
         items: cat.items.map((it) => ({ ...it, aliases: it.aliases || [] })),
         catName: cat.name,
         catIcon: cat.icon,
+        victoryAudioUrl: cat.victoryAudioUrl || '',
         aId: chalId,
         bId: defId,
         categoryId: catId,

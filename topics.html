@@ -87,18 +87,33 @@
 
         <div id="editorBody" class="hidden space-y-6 mx-auto" style="max-width:1100px">
           <!-- Thông tin chủ đề -->
-          <div class="group group-pad grid gap-4 md:grid-cols-[84px_1fr_auto] items-end">
-            <label class="field-label"><span class="eyebrow">Biểu tượng</span>
-              <input id="tIcon" class="input text-center" style="font-size:1.6rem;padding:6px" maxlength="4" />
-            </label>
-            <label class="field-label"><span class="eyebrow">Tên chủ đề</span>
-              <input id="tName" class="input" style="font-size:18px;font-weight:700" maxlength="60" />
-            </label>
-            <div class="flex items-center gap-4 flex-wrap">
-              <label class="flex items-center gap-2 text-sm t-2 font-semibold"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
-              <span class="font-display text-2xl"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">50</span></span></span>
-              <button id="btnDeleteTopic" class="btn btn-pass btn-sm">Xóa chủ đề</button>
+          <div class="group group-pad space-y-4">
+            <div class="grid gap-4 md:grid-cols-[84px_1fr_auto] items-end">
+              <label class="field-label"><span class="eyebrow">Biểu tượng</span>
+                <input id="tIcon" class="input text-center" style="font-size:1.6rem;padding:6px" maxlength="4" />
+              </label>
+              <label class="field-label"><span class="eyebrow">Tên chủ đề</span>
+                <input id="tName" class="input" style="font-size:18px;font-weight:700" maxlength="60" />
+              </label>
+              <div class="flex items-center gap-4 flex-wrap">
+                <label class="flex items-center gap-2 text-sm t-2 font-semibold"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
+                <span class="font-display text-2xl"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">50</span></span></span>
+                <button id="btnDeleteTopic" class="btn btn-pass btn-sm">Xóa chủ đề</button>
+              </div>
             </div>
+            <div class="divider"></div>
+            <div class="grid gap-3 md:grid-cols-[1fr_auto] items-end">
+              <label class="field-label">
+                <span class="eyebrow">🎵 Âm thanh chiến thắng (Tùy chọn)</span>
+                <input id="tVictoryAudio" class="input" placeholder="Dán link YouTube (youtube.com/watch?v=... / youtu.be/...), SoundCloud, hoặc link .mp3 / .wav / Google Drive audio" />
+              </label>
+              <div class="flex items-center gap-2">
+                <span id="victoryAudioBadge" class="chip">Mặc định</span>
+                <button id="btnTestVictoryAudio" type="button" class="btn btn-ghost btn-sm">▶ Nghe thử</button>
+                <button id="btnStopVictoryAudio" type="button" class="btn btn-ghost btn-sm hidden">⏹ Dừng</button>
+              </div>
+            </div>
+            <p class="t-3" style="font-size:11px">Nhạc sẽ được nạp sẵn (pre-buffer 0ms) ở màn đếm ngược trước trận và phát bùng nổ ngay khi có người chiến thắng. Để trống nếu dùng nhạc chiến thắng mặc định.</p>
           </div>
 
           <!-- Thêm ảnh -->

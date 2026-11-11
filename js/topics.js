@@ -1,12 +1,30 @@
 /**
  * Kho chủ đề: chủ đề có sẵn (data.js) + chủ đề tự tạo của Host (localStorage).
- * Chủ đề tự tạo: { id, name, icon, shuffle, custom:true, items:[{type,src|emoji,answer,aliases}] }
+ * Chủ đề tự tạo: { id, name, icon, shuffle, victoryAudioUrl, custom:true, items:[{type,src|emoji,answer,aliases}] }
  */
 import { CATEGORIES as BUILTIN } from './data.js';
 
 export const MAX_ITEMS = 50;
 export const TOPICS_KEY = 'thefloor:topics';
 const DRIVE_KEY = 'thefloor:drive';
+const AUDIO_OV_KEY = 'thefloor:victoryOverrides';
+
+export function loadVictoryOverrides() {
+  try {
+    const obj = JSON.parse(localStorage.getItem(AUDIO_OV_KEY));
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveVictoryOverride(topicId, url) {
+  const ov = loadVictoryOverrides();
+  const clean = normalizeVictoryAudioUrl(url);
+  if (clean) ov[topicId] = clean;
+  else delete ov[topicId];
+  localStorage.setItem(AUDIO_OV_KEY, JSON.stringify(ov));
+}
 
 export function loadCustom() {
   try {
@@ -22,7 +40,9 @@ export function saveCustom(list) {
 }
 
 export function allCategories() {
-  return [...BUILTIN, ...loadCustom()];
+  const ov = loadVictoryOverrides();
+  const builtin = BUILTIN.map((c) => ({ ...c, victoryAudioUrl: ov[c.id] || c.victoryAudioUrl || '' }));
+  return [...builtin, ...loadCustom()];
 }
 
 export function getCategory(id) {
@@ -63,6 +83,67 @@ export function normalizeImageUrl(input) {
   return raw;
 }
 
+/**
+ * Phân tích & chuẩn hóa URL âm thanh chiến thắng (YouTube, SoundCloud, Google Drive audio, hoặc link .mp3/.wav trực tiếp).
+ * Trả về:
+ *  - null nếu rỗng/không hợp lệ
+ *  - { kind: 'youtube'|'soundcloud'|'direct', raw: string, playUrl: string, videoId?: string, startSec?: number }
+ */
+export function parseVictoryAudio(input) {
+  const raw = (input || '').trim();
+  if (!raw || !/^https?:\/\//i.test(raw)) return null;
+
+  // 1. YouTube (youtube.com/watch?v=, youtu.be/, youtube.com/shorts/, youtube.com/embed/)
+  const ytMatch =
+    raw.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  if (ytMatch) {
+    const tMatch = raw.match(/[?&](?:t|start)=(\d+)/);
+    return {
+      kind: 'youtube',
+      raw,
+      videoId: ytMatch[1],
+      startSec: tMatch ? Number(tMatch[1]) || 0 : 0,
+      playUrl: `https://www.youtube.com/watch?v=${ytMatch[1]}`,
+    };
+  }
+
+  // 2. SoundCloud
+  if (/(?:^https?:\/\/)?(?:www\.|m\.|on\.)?soundcloud\.com\//i.test(raw)) {
+    return {
+      kind: 'soundcloud',
+      raw,
+      playUrl: raw.split('#')[0],
+    };
+  }
+
+  // 3. Google Drive chứa file audio → đổi sang direct stream URL
+  const driveMatch =
+    raw.match(/drive\.google\.com\/file\/d\/([\w-]+)/) ||
+    raw.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?(?:[^#]*&)?id=([\w-]+)/) ||
+    raw.match(/docs\.google\.com\/uc\?(?:[^#]*&)?id=([\w-]+)/);
+  if (driveMatch) {
+    const id = driveMatch[1];
+    return {
+      kind: 'direct',
+      raw,
+      driveId: id,
+      playUrl: `https://docs.google.com/uc?export=download&id=${id}`,
+    };
+  }
+
+  // 4. Link âm thanh trực tiếp (.mp3, .wav, .ogg, .m4a, CDN...)
+  return {
+    kind: 'direct',
+    raw,
+    playUrl: raw,
+  };
+}
+
+export function normalizeVictoryAudioUrl(input) {
+  const p = parseVictoryAudio(input);
+  return p ? p.raw.slice(0, 500) : '';
+}
+
 // ---------- Làm sạch dữ liệu ----------
 function str(v, max) {
   return typeof v === 'string' ? v.trim().slice(0, max) : '';
@@ -91,6 +172,7 @@ export function sanitizeTopic(t) {
     name,
     icon: str(t.icon, 8) || '🖼️',
     shuffle: t.shuffle === true,
+    victoryAudioUrl: normalizeVictoryAudioUrl(t.victoryAudioUrl),
     custom: true,
     items,
   };
@@ -102,7 +184,14 @@ export function exportPayload(topics) {
     app: 'the-floor',
     version: 1,
     exportedAt: new Date().toISOString(),
-    topics: topics.map((t) => ({ id: t.id, name: t.name, icon: t.icon, shuffle: !!t.shuffle, items: t.items })),
+    topics: topics.map((t) => ({
+      id: t.id,
+      name: t.name,
+      icon: t.icon,
+      shuffle: !!t.shuffle,
+      victoryAudioUrl: t.victoryAudioUrl || '',
+      items: t.items,
+    })),
   };
 }
 

@@ -37,6 +37,7 @@ let goPending = false;
 let lastCdSec = -1;
 let cdDurationMs = Number(localStorage.getItem('thefloor:cdMs')) || COUNTDOWN_MS;
 let lastPreloadSig = '';
+let lastVictoryUrl = '';
 let floorBuilt = false;
 let artKey = '';
 let fx = null;
@@ -118,14 +119,28 @@ function normalize(s) {
   s.floor = Array.from({ length: CELLS }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
   s.setup = s.setup || {};
   s.setup.preloadUrls = s.setup.preloadUrls || [];
+  s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
   if (s.duel) {
     s.duel.queue = s.duel.queue || [];
     s.duel.items = s.duel.items || [];
     s.duel.changed = s.duel.changed || [];
     s.duel.cdTotal = s.duel.cdTotal || COUNTDOWN_MS;
     s.duel.cdEnd = s.duel.cdEnd || 0;
+    s.duel.victoryAudioUrl = s.duel.victoryAudioUrl || '';
   }
   return s;
+}
+
+/** URL nhạc chiến thắng của chủ đề hiện tại (từ duel hoặc setup). */
+function activeVictoryUrl(s) {
+  if (!s) return '';
+  if (s.duel && typeof s.duel.victoryAudioUrl === 'string') return s.duel.victoryAudioUrl;
+  if (s.setup && typeof s.setup.victoryAudioUrl === 'string' && s.setup.victoryAudioUrl) return s.setup.victoryAudioUrl;
+  if (s.setup && s.setup.catId) {
+    const cat = allCategories().find((c) => c.id === s.setup.catId);
+    if (cat && cat.victoryAudioUrl) return cat.victoryAudioUrl;
+  }
+  return '';
 }
 
 /** Danh sách URL ảnh cần tải ngầm của trạng thái hiện tại (ưu tiên ảnh theo thứ tự ra câu hỏi). */
@@ -144,15 +159,21 @@ function activeUrls(s) {
   return [];
 }
 
-/** Giai đoạn 1 & 2: tự động kích hoạt preload ngầm trên cả máy Host và máy Xem. */
+/** Giai đoạn 1 & 2: tự động kích hoạt preload ngầm ảnh + nhạc chiến thắng trên cả máy Host và máy Xem. */
 function syncPreload(s) {
   const urls = activeUrls(s);
-  if (!urls.length) return;
-  const inArena = s.phase !== 'floor';
-  const sig = `${inArena ? 'P' : 'S'}:${urls.join('|')}`;
-  if (sig !== lastPreloadSig) {
-    lastPreloadSig = sig;
-    preloadImages(urls, { priority: inArena });
+  if (urls.length) {
+    const inArena = s.phase !== 'floor';
+    const sig = `${inArena ? 'P' : 'S'}:${urls.join('|')}`;
+    if (sig !== lastPreloadSig) {
+      lastPreloadSig = sig;
+      preloadImages(urls, { priority: inArena });
+    }
+  }
+  const vicUrl = activeVictoryUrl(s);
+  if (vicUrl !== lastVictoryUrl) {
+    lastVictoryUrl = vicUrl;
+    Sfx.preloadVictory(vicUrl);
   }
 }
 
@@ -261,7 +282,7 @@ function playEvent(type) {
     case 'countdown': Sfx.ready(); break;
     case 'pause':
     case 'click': Sfx.click(); break;
-    case 'finish': Sfx.finishSequence(); break;
+    case 'finish': Sfx.finishSequence(activeVictoryUrl(state)); break;
     default: break;
   }
 }
@@ -497,11 +518,21 @@ function renderArena(s) {
 
   const fin = s.phase === 'finished';
   $('resultOverlay').classList.toggle('hidden', !fin);
+  const vicCtrl = $('victoryAudioControls');
+  if (vicCtrl) vicCtrl.classList.toggle('hidden', !(fin && controller));
   if (fin) {
     const w = playerById(s, d.winnerId);
     $('resultName').textContent = `${w.avatar} ${w.name.toUpperCase()}`;
     $('resultSub').textContent = `Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w.id)} ô`;
+    paintVictoryButtons();
   }
+}
+
+function paintVictoryButtons() {
+  const btn = $('btnVicToggle');
+  if (!btn) return;
+  const st = Sfx.getVictoryState();
+  btn.textContent = st.playing ? '⏸ Tạm dừng nhạc' : '▶ Phát tiếp nhạc';
 }
 
 function buildArt(q) {
@@ -588,7 +619,7 @@ function renderFireworks(s) {
   } else if (fxKey) {
     fxKey = '';
     fx.stop();
-    Sfx.stopSiren();
+    Sfx.stopVictory();
   }
 }
 
@@ -696,6 +727,27 @@ function bindStaticUi() {
   });
 
   onPreloadProgress(updatePreloadBadges);
+  Sfx.onVictoryAudioChange(paintVictoryButtons);
+
+  // Mở khóa AudioContext & phần tử media tùy chỉnh ngay khi người dùng tương tác
+  ['click', 'keydown'].forEach((ev) => {
+    window.addEventListener(ev, () => Sfx.unlock(), { passive: true });
+  });
+
+  if ($('btnVicToggle')) {
+    $('btnVicToggle').addEventListener('click', (e) => {
+      e.stopPropagation();
+      Sfx.unlock();
+      Sfx.toggleVictory();
+    });
+  }
+  if ($('btnVicReplay')) {
+    $('btnVicReplay').addEventListener('click', (e) => {
+      e.stopPropagation();
+      Sfx.unlock();
+      Sfx.replayVictory();
+    });
+  }
 
   // Nút chọn thời lượng đếm ngược (5s / 10s)
   const syncCdButtons = () => {

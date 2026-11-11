@@ -1,8 +1,10 @@
 import { CATEGORIES } from './data.js';
 import {
   MAX_ITEMS, loadCustom, saveCustom, newId, loadDrive, saveDrive, driveThumb,
-  normalizeImageUrl, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
+  normalizeImageUrl, parseVictoryAudio, normalizeVictoryAudioUrl,
+  sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
+import { Sfx } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -37,13 +39,31 @@ function renderTopics() {
   topics.forEach((t) => {
     const el = document.createElement('button');
     el.className = `topic-item ${t.id === currentId ? 'active' : ''}`;
-    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span><span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_ITEMS}</span>`;
+    const musicDot = t.victoryAudioUrl ? '<span title="Có nhạc chiến thắng riêng">🎵</span>' : '';
+    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${musicDot}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_ITEMS}</span>`;
     el.addEventListener('click', () => {
+      Sfx.stopVictory();
       currentId = t.id;
       render();
     });
     list.appendChild(el);
   });
+}
+
+function renderVictoryBadge(url) {
+  const p = parseVictoryAudio(url);
+  const badge = $('victoryAudioBadge');
+  if (!badge) return;
+  if (!p) {
+    badge.textContent = 'Mặc định (Fanfare)';
+    return;
+  }
+  const map = {
+    youtube: 'YouTube',
+    soundcloud: 'SoundCloud',
+    direct: p.driveId ? 'Google Drive Audio' : 'Direct Audio',
+  };
+  badge.textContent = `✓ ${map[p.kind] || 'Tùy chỉnh'}`;
 }
 
 function render() {
@@ -54,6 +74,8 @@ function render() {
   if (!t) return;
   if (document.activeElement !== $('tName')) $('tName').value = t.name;
   if (document.activeElement !== $('tIcon')) $('tIcon').value = t.icon;
+  if (document.activeElement !== $('tVictoryAudio')) $('tVictoryAudio').value = t.victoryAudioUrl || '';
+  renderVictoryBadge(t.victoryAudioUrl);
   $('tShuffle').checked = !!t.shuffle;
   $('countNow').textContent = t.items.length;
   $('countMax').textContent = MAX_ITEMS;
@@ -438,6 +460,55 @@ function bind() {
     if (!t) return;
     t.shuffle = $('tShuffle').checked;
     persist();
+  });
+  $('tVictoryAudio').addEventListener('change', () => {
+    const t = cur();
+    if (!t) return;
+    const raw = $('tVictoryAudio').value.trim();
+    if (raw && !parseVictoryAudio(raw)) {
+      toast('Link âm thanh không hợp lệ (hãy nhập URL http/https).', true);
+      $('tVictoryAudio').value = t.victoryAudioUrl || '';
+      return;
+    }
+    t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
+    $('tVictoryAudio').value = t.victoryAudioUrl;
+    persist();
+    renderVictoryBadge(t.victoryAudioUrl);
+    renderTopics();
+    if (t.victoryAudioUrl) {
+      Sfx.preloadVictory(t.victoryAudioUrl);
+      toast('Đã lưu âm thanh chiến thắng & nạp sẵn bộ đệm.');
+    } else {
+      Sfx.stopVictory();
+      toast('Đã đặt về âm thanh chiến thắng mặc định.');
+    }
+  });
+  $('btnTestVictoryAudio').addEventListener('click', async () => {
+    const t = cur();
+    if (!t) return;
+    Sfx.unlock();
+    const raw = $('tVictoryAudio').value.trim();
+    if (raw !== (t.victoryAudioUrl || '')) {
+      t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
+      persist();
+      renderVictoryBadge(t.victoryAudioUrl);
+      renderTopics();
+    }
+    if (!t.victoryAudioUrl) {
+      Sfx.fanfare(0);
+      toast('Đang phát thử nhạc chiến thắng mặc định (Fanfare).');
+      return;
+    }
+    toast('Đang nạp & phát thử nhạc chiến thắng...');
+    await Sfx.preloadVictory(t.victoryAudioUrl);
+    setTimeout(() => Sfx.replayVictory(), 250);
+  });
+  $('btnStopVictoryAudio').addEventListener('click', () => {
+    Sfx.stopVictory();
+  });
+  Sfx.onVictoryAudioChange((st) => {
+    const stopBtn = $('btnStopVictoryAudio');
+    if (stopBtn) stopBtn.classList.toggle('hidden', !st.playing);
   });
   $('btnDeleteTopic').addEventListener('click', () => {
     const t = cur();
