@@ -4,7 +4,8 @@ import { createTransport } from './transport.js';
 import { allCategories, TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
-  playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, CELLS,
+  playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
+  clampPlayerCount, DEFAULT_PLAYER_COUNT,
 } from './engine.js';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
@@ -39,6 +40,8 @@ let cdDurationMs = Number(localStorage.getItem('thefloor:cdMs')) || COUNTDOWN_MS
 let lastPreloadSig = '';
 let lastVictoryUrl = '';
 let floorBuilt = false;
+let floorBuiltCount = 0;
+let uiTimer = null;
 let artKey = '';
 let fx = null;
 let fxKey = '';
@@ -58,7 +61,18 @@ async function init() {
     if (transport.fallbackReason) showConnError(`Firebase lỗi (${transport.fallbackReason}) — đang dùng chế độ cục bộ.`);
   }
   transport.subscribe(onSnapshot);
-  requestAnimationFrame(frame);
+  startUiTimer();
+}
+
+/** Đồng hồ giao diện: cập nhật DOM mỗi 100ms (10fps) thay vì 60-120fps để giảm tải CPU/nhiệt. */
+function startUiTimer() {
+  if (uiTimer) clearInterval(uiTimer);
+  uiTimer = setInterval(frame, 100);
+  window.addEventListener('pagehide', () => {
+    clearInterval(uiTimer);
+    if (fx) fx.destroy();
+    if (transport && transport.dispose) transport.dispose();
+  });
 }
 
 const conn = { base: '…', latency: '', error: '' };
@@ -85,7 +99,10 @@ function onConnStatus(ev) {
 function onSnapshot(remote) {
   if (!remote) {
     if (requestedHost && firstSnapshot) {
-      const fresh = createInitialState(sessionStorage.getItem(pinKey) || '');
+      const fresh = createInitialState(
+        sessionStorage.getItem(pinKey) || '',
+        clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
+      );
       role = 'host';
       controller = true;
       state = fresh;
@@ -116,7 +133,9 @@ function onSnapshot(remote) {
 /** Firebase bỏ mảng/object rỗng — khôi phục các trường bắt buộc. */
 function normalize(s) {
   s.players = s.players || [];
-  s.floor = Array.from({ length: CELLS }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
+  const cellTotal = Math.max(2, s.players.length);
+  s.floor = Array.from({ length: cellTotal }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
+  s.championId = s.championId || '';
   s.setup = s.setup || {};
   s.setup.preloadUrls = s.setup.preloadUrls || [];
   s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
@@ -387,11 +406,13 @@ function syncMusic(s) {
 }
 
 // ----- Sàn -----
-function buildFloor() {
+function buildFloor(count) {
   const grid = $('floorGrid');
   grid.innerHTML = '';
+  grid.dataset.count = String(count);
+  floorBuiltCount = count;
   const frag = document.createDocumentFragment();
-  for (let i = 0; i < CELLS; i++) {
+  for (let i = 0; i < count; i++) {
     const el = document.createElement('div');
     el.className = 'cell';
     el.dataset.i = String(i);
@@ -412,7 +433,7 @@ function buildFloor() {
 }
 
 function renderFloor(s) {
-  if (!floorBuilt) buildFloor();
+  if (!floorBuilt || floorBuiltCount !== s.floor.length) buildFloor(s.floor.length);
   const flipSet = new Set(prevPhase === 'finished' && s.phase === 'floor' && s.duel ? s.duel.changed : []);
   [...$('floorGrid').children].forEach((el, i) => {
     const owner = playerById(s, s.floor[i]);
@@ -431,9 +452,12 @@ function renderFloor(s) {
 
   const def = playerById(s, s.setup.defId);
   const chal = playerById(s, s.setup.chalId);
-  $('floorHint').textContent = def
-    ? `${chal ? chal.name : '???'}  vs  ${def.name}`
-    : role === 'host' ? 'Chọn một ô đất để thách đấu' : 'Chờ trận đấu kế tiếp';
+  const champ = playerById(s, s.championId);
+  $('floorHint').textContent = champ
+    ? `🏆 ${champ.name} vô địch The Floor!`
+    : def
+      ? `${chal ? chal.name : '???'}  vs  ${def.name}`
+      : role === 'host' ? 'Chọn một ô đất để thách đấu' : 'Chờ trận đấu kế tiếp';
 
   // Bảng xếp hạng
   const board = $('board');
@@ -449,7 +473,7 @@ function renderFloor(s) {
         <span class="flex-1 truncate t-1">${esc(p.name)}</span>
         <span style="color:${p.color}">${n}</span>
       </div>
-      <div class="h-1.5 rounded track overflow-hidden"><div style="width:${(n / CELLS) * 100}%;background:${p.color};border-radius:9999px;transition:width .6s" class="h-full"></div></div>`;
+      <div class="h-1.5 rounded track overflow-hidden"><div style="width:${(n / s.floor.length) * 100}%;background:${p.color};border-radius:9999px;transition:width .6s" class="h-full"></div></div>`;
     frag.appendChild(row);
   });
   board.appendChild(frag);
@@ -467,11 +491,12 @@ function renderSetup(s) {
   $('setupDef').textContent = def ? `${def.avatar} ${def.name} (${cellCount(s, def.id)} ô)` : '—';
 
   const chalSel = $('selChal');
-  const chalSig = JSON.stringify([s.players.map((p) => [p.id, p.name, p.avatar]), s.setup.defId]);
+  const aliveIds = new Set(alivePlayers(s).map((p) => p.id));
+  const chalSig = JSON.stringify([s.players.map((p) => [p.id, p.name, p.avatar, aliveIds.has(p.id)]), s.setup.defId]);
   if (chalSel.dataset.sig !== chalSig) {
     chalSel.dataset.sig = chalSig;
     chalSel.innerHTML = '<option value="">— Chọn người thách đấu —</option>' +
-      s.players.filter((p) => p.id !== s.setup.defId)
+      s.players.filter((p) => p.id !== s.setup.defId && aliveIds.has(p.id))
         .map((p) => `<option value="${p.id}">${p.avatar} ${esc(p.name)}</option>`).join('');
   }
   chalSel.value = s.setup.chalId || '';
@@ -485,7 +510,10 @@ function renderSetup(s) {
   }
   catSel.value = s.setup.catId || cats[0].id;
   const chosen = cats.find((c) => c.id === catSel.value);
-  $('btnStartDuel').disabled = !(s.setup.defId && s.setup.chalId && chosen && chosen.items.length);
+  $('btnStartDuel').disabled = !(s.setup.defId && s.setup.chalId && chosen && chosen.items.length) || !!s.championId;
+  document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => {
+    b.classList.toggle('active', Number(b.dataset.pc) === s.players.length);
+  });
 
   // Roster editor (dùng event delegation trên #roster tránh gắn lại listener mỗi lần render)
   const roster = $('roster');
@@ -605,7 +633,9 @@ function renderArena(s) {
   if (fin) {
     const w = playerById(s, d.winnerId);
     $('resultName').textContent = `${w.avatar} ${w.name.toUpperCase()}`;
-    $('resultSub').textContent = `Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w.id)} ô`;
+    $('resultSub').textContent = s.championId
+      ? `🏆 VÔ ĐỊCH CHUNG CUỘC · sở hữu toàn bộ ${s.floor.length} ô`
+      : `Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w.id)}/${s.floor.length} ô`;
     paintVictoryButtons();
   }
 }
@@ -733,12 +763,14 @@ function renderFireworks(s) {
     fxKey = '';
     fx.stop();
     Sfx.stopVictory();
+    // Rời màn vinh danh: hủy iframe YouTube/SoundCloud ẩn, thu hồi Blob URL & AudioBuffer để giải phóng RAM
+    Sfx.releaseVictoryMedia();
+    lastVictoryUrl = '';
   }
 }
 
 // ---------- Vòng lặp đồng hồ (mượt, 60fps) ----------
 function frame() {
-  requestAnimationFrame(frame);
   if (!state || !state.duel || state.phase === 'floor') return;
   const d = state.duel;
   const now = transport.serverNow();
@@ -942,6 +974,14 @@ function bindStaticUi() {
   press('btnStartDuel', () => dispatch('startDuel'));
   press('btnShuffleFloor', () => { if (confirm('Chia lại toàn bộ sàn ngẫu nhiên?')) dispatch('shuffleFloor'); });
   press('btnResetAll', () => { if (confirm('Đặt lại thí sinh và sàn về mặc định?')) dispatch('resetAll'); });
+  document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const n = clampPlayerCount(b.dataset.pc);
+      localStorage.setItem('thefloor:playerCount', String(n));
+      dispatch('setPlayerCount', { count: n });
+      b.blur();
+    });
+  });
   $('selChal').addEventListener('change', (e) => e.target.value && dispatch('setChallenger', { id: e.target.value }));
   $('selCat').addEventListener('change', (e) => dispatch('setCategory', { id: e.target.value }));
 

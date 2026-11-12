@@ -2,14 +2,14 @@
 <html lang="vi" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>The Floor — Vào phòng</title>
   <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/style.css" />
 </head>
-<body class="min-h-screen">
+<body class="min-h-screen page-fill">
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
 
   <div class="fixed top-4 right-4 flex gap-2 z-10">
@@ -18,7 +18,7 @@
     <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
   </div>
 
-  <main class="min-h-screen grid place-items-center p-4">
+  <main class="page-fill grid place-items-center p-4">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
         <div class="eyebrow">Fox · Game show</div>
@@ -33,6 +33,15 @@
             <button id="btnRandom" class="btn btn-ghost btn-icon" title="Tạo mã ngẫu nhiên">🎲</button>
           </div>
         </label>
+        <div class="field-label"><span class="eyebrow">Số người chơi (2–6)</span>
+          <div id="playerCountSeg" class="seg w-full" role="group" aria-label="Số người chơi">
+            <button type="button" data-pc="2" class="flex-1">2</button>
+            <button type="button" data-pc="3" class="flex-1">3</button>
+            <button type="button" data-pc="4" class="flex-1">4</button>
+            <button type="button" data-pc="5" class="flex-1">5</button>
+            <button type="button" data-pc="6" class="flex-1">6</button>
+          </div>
+        </div>
         <label class="field-label"><span class="eyebrow">Mật khẩu Host</span>
           <input id="pin" type="password" class="input" placeholder="Đặt khi tạo phòng · dùng để mở khóa điều khiển" />
         </label>
@@ -71,6 +80,14 @@
       }
       location.href = `game.html?role=${role}&room=${room}`;
     };
+    let pc = Math.max(2, Math.min(6, parseInt(localStorage.getItem('thefloor:playerCount'), 10) || 4));
+    const paintPc = () => document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => b.classList.toggle('active', Number(b.dataset.pc) === pc));
+    document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => b.addEventListener('click', () => {
+      pc = Number(b.dataset.pc);
+      localStorage.setItem('thefloor:playerCount', String(pc));
+      paintPc();
+    }));
+    paintPc();
     $('goHost').onclick = () => go('host');
     $('goView').onclick = () => go('view');
   </script>

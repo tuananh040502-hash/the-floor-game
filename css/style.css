@@ -541,3 +541,130 @@ details.group[open] > summary::after { transform: rotate(90deg); }
   .window-main { padding: 18px 14px 40px; }
   .island { border-radius: 28px; }
 }
+
+
+/* =====================================================================
+   PERFORMANCE · SMART TV · RESPONSIVE OVERRIDES (đặt cuối để ghi đè)
+   - blur nhẹ (≤12px), mỗi vùng chỉ 1 lớp backdrop-filter, không lồng nhau
+   - nền đặc dự phòng khi trình duyệt không hỗ trợ blur / color-mix
+   - bỏ animation vô tận & box-shadow nhiều tầng trên phần tử tĩnh
+   ===================================================================== */
+:root { --glass-solid: rgba(20, 24, 38, 0.88); }
+html[data-theme='light'] { --glass-solid: rgba(255, 255, 255, 0.92); }
+
+/* Chiều cao khung: 100vh dự phòng + 100dvh (tránh thanh địa chỉ Safari iPad) */
+html, body { height: auto; min-height: 100vh; min-height: 100dvh; }
+.page-fill { min-height: 100vh; min-height: 100dvh; }
+.ambient, #fx { top: 0; left: 0; right: 0; bottom: 0; }
+
+/* Kính mờ: nền đặc trước, chỉ bật blur khi trình duyệt hỗ trợ */
+.glass, .panel, .side-card, .floor-grid, .appbar {
+  background: var(--glass-solid);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  box-shadow: var(--shadow-sm);
+  will-change: auto;
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .glass, .panel, .side-card, .floor-grid, .appbar {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  }
+}
+/* Phần tử con nằm trong thẻ kính: KHÔNG lồng thêm backdrop-filter */
+.btn-ghost, .btn-pass, .turn-banner, .answer-pill, .photo-num, .photo-actions button, .vic-mixer {
+  -webkit-backdrop-filter: none; backdrop-filter: none; will-change: auto;
+}
+.overlay-glass {
+  background: rgba(6, 8, 13, 0.72);
+  -webkit-backdrop-filter: none; backdrop-filter: none; will-change: auto;
+}
+.scrim { background: rgba(0, 0, 0, 0.62); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.island { background: rgba(20, 22, 30, 0.94); bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); will-change: auto;
+  -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45); }
+.btn, .cell, .side-card, .q-wrap, .photo-card, .q-img, .q-emoji, .q-inner, #toast, .floor-grid { will-change: auto; }
+.btn { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28); }
+.btn-pass, .btn-ghost { box-shadow: none; }
+
+/* Bỏ animation vô tận / shadow nhiều tầng trên phần tử tĩnh */
+.ambient i, .ambient b { animation: none !important; filter: blur(70px); will-change: auto; }
+.cell { box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25); }
+.cell.is-chal, .cell.is-def { animation: none; box-shadow: 0 0 0 2px var(--c), 0 6px 14px rgba(0, 0, 0, 0.25); }
+.cell.is-sel { box-shadow: 0 0 26px 2px var(--c); }
+.side-card.active { box-shadow: 0 0 34px var(--sc); }
+.side-card.win { animation: none; box-shadow: 0 0 44px var(--sc); }
+.q-wrap { box-shadow: var(--shadow-sm); }
+.cd-dot { animation: none; }
+.q-img, .q-emoji { animation: pop 0.4s var(--spring); }
+.floor-grid { box-shadow: 0 18px 36px rgba(0, 0, 0, 0.3); }
+.result-title { filter: none; }
+.ring-fill, .ring-fill.danger, .cd-ring-fill, .cd-ring-fill.final { filter: none; }
+
+/* Đồng hồ cập nhật 10fps: làm mượt bằng transition ngắn */
+.capsule-fill, .led-fill { transition: width 0.1s linear, background 0.4s; }
+.ring-fill { transition: stroke-dashoffset 0.1s linear, stroke 0.4s; }
+
+/* ---------- Sàn The Floor: bố cục theo số người chơi (2–6) ---------- */
+.floor-grid {
+  width: 92vw; max-width: 860px;
+  width: min(94vw, 900px, calc((100vh - 240px) * 1.8));
+  width: min(94vw, 900px, calc((100dvh - 240px) * 1.8));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  transform: rotateX(18deg);
+}
+.floor-grid > .cell { grid-column: span 2; aspect-ratio: auto; min-height: 100px; min-height: clamp(96px, 20dvh, 200px); }
+.floor-grid[data-count='2'] > .cell,
+.floor-grid[data-count='4'] > .cell { grid-column: span 3; min-height: 150px; min-height: clamp(130px, 28dvh, 300px); }
+.floor-grid[data-count='3'] > .cell { min-height: 140px; min-height: clamp(130px, 30dvh, 300px); }
+.floor-grid[data-count='5'] > .cell:nth-child(4) { grid-column: 2 / span 2; }
+.floor-grid[data-count='5'] > .cell:nth-child(5) { grid-column: 4 / span 2; }
+.floor-grid[data-count='2'] .cell-avatar,
+.floor-grid[data-count='3'] .cell-avatar,
+.floor-grid[data-count='4'] .cell-avatar { font-size: clamp(2.6rem, 8vw, 5rem); }
+.floor-grid[data-count='2'] .cell-name,
+.floor-grid[data-count='3'] .cell-name,
+.floor-grid[data-count='4'] .cell-name { font-size: clamp(0.9rem, 2vw, 1.3rem); }
+@media (orientation: portrait) {
+  .floor-grid[data-count='3'] > .cell:nth-child(-n + 2) { grid-column: span 3; }
+  .floor-grid[data-count='3'] > .cell:nth-child(3) { grid-column: 2 / span 4; }
+  .floor-grid[data-count='6'] > .cell { grid-column: span 3; }
+  .floor-grid { width: 94vw; max-width: 760px; width: min(94vw, 760px); }
+}
+
+/* ---------- Khung ảnh câu hỏi: contain, chiều cao linh hoạt ---------- */
+.q-inner { min-height: 200px; max-height: calc(100vh - 290px); max-height: calc(100dvh - 290px); }
+.q-img { object-fit: contain; max-width: 100%; max-width: 92cqw; max-height: 90%; max-height: 90cqh; }
+
+/* MacBook / Laptop (ngang): zero-scroll, ring & avatar co theo chiều cao */
+@media (min-width: 1024px) and (min-aspect-ratio: 5/4) {
+  .ring-wrap { --ring: clamp(120px, 15vw, 230px); --ring: clamp(120px, min(15vw, 26dvh), 230px); margin: 2px auto 8px; }
+  .avatar { width: clamp(56px, 7vw, 96px); height: clamp(56px, 7vw, 96px); width: clamp(56px, min(7vw, 11dvh), 96px); height: clamp(56px, min(7vw, 11dvh), 96px); margin: 6px auto; }
+  .side-card { padding: 14px 12px; }
+  main.app-main.pb-40 { padding-bottom: 110px; }
+}
+/* iPad dọc 3:4 / ngang 4:3 */
+@media (min-width: 700px) and (max-width: 1100px) {
+  .ring-wrap { --ring: clamp(130px, 22vw, 210px); }
+  .q-inner { max-height: calc(100vh - 360px); max-height: calc(100dvh - 360px); }
+}
+
+/* Vùng chạm tối thiểu 48px */
+.ctrl-bar .btn, .mini-panel .btn, .seg button, .btn-icon { min-height: 48px; }
+.btn-icon { min-width: 48px; }
+.seg button { min-width: 48px; }
+.island .btn-ghost { background: rgba(255, 255, 255, 0.12); }
+.window { min-height: calc(100vh - 110px); min-height: calc(100dvh - 110px); }
+
+/* ---------- Dự phòng khi trình duyệt (Smart TV cũ) chưa có color-mix ---------- */
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .cell { background: var(--c); border: 1px solid rgba(255, 255, 255, 0.25); }
+  .cell .cell-name { color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+  .cell.is-sel { border-color: #fff; }
+  .side-card.active, .side-card.win { border-color: var(--sapphire); }
+  .q-wrap { border: 1px solid var(--glass-border); }
+  .turn-banner { background: var(--glass-strong); border: 1px solid var(--glass-border); }
+  .btn-pass { background: rgba(255, 69, 58, 0.28); color: #ff8a82; border-color: rgba(255, 69, 58, 0.5); }
+  .topic-item.active { box-shadow: none; }
+  .q-inner { background: var(--stage); }
+  .avatar { background: #2a2d38; border: 3px solid #cfd0d6; }
+  .capsule-fill, .led-fill { background: var(--sc); }
+}

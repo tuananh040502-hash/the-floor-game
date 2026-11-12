@@ -8,8 +8,9 @@ import { allCategories, getCategory, clampVolume01 } from './topics.js';
 export const DUEL_MS = 60000;
 export const PENALTY_MS = 2000;
 export const COUNTDOWN_MS = 10000;
-export const GRID_SIZE = 5;
-export const CELLS = GRID_SIZE * GRID_SIZE;
+export const MIN_PLAYERS = 2;
+export const MAX_PLAYERS = 6;
+export const DEFAULT_PLAYER_COUNT = 4;
 
 const DEFAULT_PLAYERS = [
   { id: 'p1', name: 'Minh', avatar: '🦁', color: '#06b6d4', categoryId: 'flags' },
@@ -20,6 +21,12 @@ const DEFAULT_PLAYERS = [
   { id: 'p6', name: 'Vy', avatar: '🐲', color: '#f97316', categoryId: 'nature' },
 ];
 
+export function clampPlayerCount(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return DEFAULT_PLAYER_COUNT;
+  return Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, v));
+}
+
 export function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -29,14 +36,14 @@ export function shuffle(arr) {
   return a;
 }
 
+/** Mỗi người chơi sở hữu đúng 1 ô lúc đầu: số ô của sàn = số người chơi (2..6). */
 function dealFloor(players) {
-  const ids = [];
-  for (let i = 0; i < CELLS; i++) ids.push(players[i % players.length].id);
-  return shuffle(ids);
+  return shuffle(players.map((p) => p.id));
 }
 
-export function createInitialState(pin) {
-  const players = DEFAULT_PLAYERS.map((p) => ({ ...p }));
+export function createInitialState(pin, playerCount = DEFAULT_PLAYER_COUNT) {
+  const n = clampPlayerCount(playerCount);
+  const players = DEFAULT_PLAYERS.slice(0, n).map((p) => ({ ...p }));
   return {
     pin: pin || '',
     phase: 'floor', // floor | ready | countdown | playing | paused | finished
@@ -44,6 +51,7 @@ export function createInitialState(pin) {
     floor: dealFloor(players),
     setup: {},
     duel: null,
+    championId: '',
     event: null,
   };
 }
@@ -54,6 +62,17 @@ export function playerById(state, id) {
 
 export function cellCount(state, id) {
   return state.floor.reduce((n, o) => n + (o === id ? 1 : 0), 0);
+}
+
+/** Người chơi còn sở hữu ít nhất 1 ô (còn trong cuộc). */
+export function alivePlayers(state) {
+  return state.players.filter((p) => cellCount(state, p.id) > 0);
+}
+
+/** Id người vô địch nếu một người đã sở hữu toàn bộ sàn; ngược lại ''. */
+export function findChampion(state) {
+  const first = state.floor[0];
+  return first && state.floor.every((o) => o === first) ? first : '';
 }
 
 /** Trích xuất danh sách URL ảnh từ bộ items (theo thứ tự hàng đợi nếu có). */
@@ -104,6 +123,7 @@ function finish(s, loserSide) {
     }
     return owner;
   });
+  s.championId = findChampion(s);
   s.phase = 'finished';
   return 'finish';
 }
@@ -118,7 +138,7 @@ export function reduce(s, type, arg = {}, now) {
   const d = s.duel;
   switch (type) {
     case 'selectCell': {
-      if (s.phase !== 'floor') return false;
+      if (s.phase !== 'floor' || s.championId) return false;
       const owner = s.floor[arg.cell];
       if (!owner) return false;
       s.setup = { ...s.setup, cell: arg.cell, defId: owner };
@@ -135,6 +155,7 @@ export function reduce(s, type, arg = {}, now) {
     }
     case 'setChallenger':
       if (s.phase !== 'floor' || arg.id === s.setup.defId) return false;
+      if (!playerById(s, arg.id) || cellCount(s, arg.id) < 1) return false; // người đã mất hết ô không thể thách đấu
       s.setup = { ...s.setup, chalId: arg.id };
       return 'click';
     case 'setCategory': {
@@ -154,7 +175,8 @@ export function reduce(s, type, arg = {}, now) {
     }
     case 'startDuel': {
       const { chalId, defId, catId } = s.setup;
-      if (s.phase !== 'floor' || !chalId || !defId || !catId) return false;
+      if (s.phase !== 'floor' || s.championId || !chalId || !defId || !catId) return false;
+      if (chalId === defId || cellCount(s, chalId) < 1 || cellCount(s, defId) < 1) return false;
       const cat = getCategory(catId);
       if (!cat || !cat.items.length) return false;
       // Chụp lại bộ câu hỏi + âm thanh chiến thắng kép vào trận để mọi màn hình đều đồng bộ.
@@ -269,9 +291,27 @@ export function reduce(s, type, arg = {}, now) {
       s.floor = dealFloor(s.players);
       s.setup = {};
       s.duel = null;
+      s.championId = '';
       return 'click';
+    case 'setPlayerCount': {
+      if (s.phase !== 'floor') return false;
+      const n = clampPlayerCount(arg.count);
+      if (n === s.players.length) return false;
+      const keep = s.players.slice(0, n);
+      for (let i = keep.length; i < n; i++) {
+        const base = DEFAULT_PLAYERS[i];
+        const usedCats = new Set(keep.map((p) => p.categoryId));
+        keep.push({ ...base, categoryId: usedCats.has(base.categoryId) ? s.players[0].categoryId : base.categoryId });
+      }
+      s.players = keep;
+      s.floor = dealFloor(keep);
+      s.setup = {};
+      s.duel = null;
+      s.championId = '';
+      return 'click';
+    }
     case 'resetAll': {
-      const fresh = createInitialState(s.pin);
+      const fresh = createInitialState(s.pin, s.players.length);
       Object.keys(s).forEach((k) => delete s[k]);
       Object.assign(s, fresh);
       return 'click';

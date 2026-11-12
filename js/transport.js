@@ -71,16 +71,21 @@ async function firebaseTransport(room, config) {
   const listeners = [];
   const emit = (ev) => listeners.forEach((cb) => cb(ev));
 
-  db.onValue(db.ref(database, '.info/serverTimeOffset'), (snap) => {
+  // Mọi listener đều lưu hàm hủy (off) để gỡ sạch trước khi gắn lại / khi đóng trang.
+  const unsubs = [];
+  let stateUnsub = null;
+  let disposed = false;
+  unsubs.push(db.onValue(db.ref(database, '.info/serverTimeOffset'), (snap) => {
     offset = snap.val() || 0;
-  });
-  db.onValue(db.ref(database, '.info/connected'), (snap) => {
+  }));
+  unsubs.push(db.onValue(db.ref(database, '.info/connected'), (snap) => {
     emit({ type: snap.val() ? 'online' : 'offline' });
-  });
+  }));
 
   // Đo độ trễ thật: get() trên đường dẫn không được lắng nghe buộc phải đi tới server.
   const rttRef = db.ref(database, `rooms/${room}/_rtt`);
   const measure = async () => {
+    if (disposed || document.visibilityState === 'hidden') return;
     const t0 = performance.now();
     try {
       await db.get(rttRef);
@@ -90,17 +95,31 @@ async function firebaseTransport(room, config) {
       emit({ type: 'error', message: err.message });
     }
   };
-  setTimeout(measure, 1500);
-  setInterval(measure, 5000);
+  const firstMeasure = setTimeout(measure, 1500);
+  const measureTimer = setInterval(measure, 5000);
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    clearTimeout(firstMeasure);
+    clearInterval(measureTimer);
+    if (stateUnsub) { try { stateUnsub(); } catch { /* ignore */ } stateUnsub = null; }
+    unsubs.splice(0).forEach((u) => { try { u(); } catch { /* ignore */ } });
+  };
+  window.addEventListener('pagehide', dispose);
 
   return {
     mode: 'firebase',
     serverNow: () => Date.now() + offset,
     subscribe(cb) {
-      db.onValue(stateRef, (snap) => cb(snap.val()), (err) => {
+      // Gỡ listener cũ (off) trước khi gắn listener mới → không nhân bản luồng xử lý ngầm.
+      if (stateUnsub) { try { stateUnsub(); } catch { /* ignore */ } stateUnsub = null; }
+      stateUnsub = db.onValue(stateRef, (snap) => {
+        try { cb(snap.val()); } catch (e) { console.error(e); }
+      }, (err) => {
         emit({ type: 'error', message: `Không đọc được dữ liệu: ${err.message}` });
       });
     },
+    dispose,
     write(state, prev) {
       const handle = (err) => emit({ type: 'error', message: `Không ghi được dữ liệu: ${err?.message || err}` });
       try {
@@ -163,6 +182,7 @@ function localTransport(room) {
   const key = `thefloor:${room}`;
   const channel = 'BroadcastChannel' in window ? new BroadcastChannel(key) : null;
   const listeners = [];
+  let storageHandler = null;
   const read = () => {
     try {
       return JSON.parse(localStorage.getItem(key));
@@ -176,9 +196,11 @@ function localTransport(room) {
     subscribe(cb) {
       const handler = () => cb(read());
       if (channel) channel.onmessage = handler;
-      window.addEventListener('storage', (e) => {
+      if (storageHandler) window.removeEventListener('storage', storageHandler);
+      storageHandler = (e) => {
         if (e.key === key) handler();
-      });
+      };
+      window.addEventListener('storage', storageHandler);
       setTimeout(handler, 0);
       setTimeout(() => listeners.forEach((s) => s({ type: 'local' })), 0);
     },

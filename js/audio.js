@@ -1192,6 +1192,35 @@ export const Sfx = {
     notifyVictory();
   },
 
+  /**
+   * Giải phóng RAM sau màn vinh danh: hủy player YouTube, gỡ iframe SoundCloud ẩn,
+   * thu hồi Blob URL, AudioBuffer và các phần tử <audio>. Lần chọn chủ đề kế tiếp sẽ nạp lại.
+   */
+  releaseVictoryMedia() {
+    this.stopSiren();
+    stopCustomMedia();
+    try { if (victory.ytPlayer && victory.ytPlayer.destroy) victory.ytPlayer.destroy(); } catch { /* ignore */ }
+    try { if (victory.scWidget) { victory.scWidget.unbind('ready'); victory.scWidget.unbind('play'); } } catch { /* ignore */ }
+    [victory.audioEl, victory.voiceEl].forEach((el) => {
+      if (el) {
+        try { el.pause(); el.removeAttribute('src'); el.load(); } catch { /* ignore */ }
+      }
+    });
+    if (victory.voiceBlobUrl) {
+      try { URL.revokeObjectURL(victory.voiceBlobUrl); } catch { /* ignore */ }
+    }
+    const host = document.getElementById('__victoryMediaHost');
+    if (host && host.parentNode) host.parentNode.removeChild(host);
+    Object.assign(victory, {
+      rawUrl: '', parsed: null, status: 'idle',
+      audioEl: null, ytPlayer: null, ytReady: false, scWidget: null, scIframe: null,
+      topicId: '', voiceSrc: '', voiceName: '', voiceStatus: 'idle',
+      voiceEl: null, voiceBuf: null, voiceNode: null, voiceGain: null, voiceBlobUrl: '',
+      playing: false, usingFallback: false,
+    });
+    notifyVictory();
+  },
+
   boom() {
     tone({ freq: 160, type: 'sine', dur: 0.35, vol: 0.25, slideTo: 40 });
   },
