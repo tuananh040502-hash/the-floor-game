@@ -63,13 +63,35 @@
           <!-- Chuẩn bị trận (chỉ Host) -->
           <div id="setupPanel" class="panel p-5 hidden space-y-4">
             <div>
-              <div class="eyebrow">Chọn cặp đấu</div>
-              <p class="t-3 text-xs mt-1">Chạm một ô trên sàn để chọn người bị thách đấu (chủ ô).</p>
+              <div class="eyebrow">Cặp đấu hiện tại</div>
+              <p class="t-3 text-xs mt-1">Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.</p>
             </div>
-            <div class="surface-sub rounded-2xl px-4 py-3 flex items-center justify-between">
-              <span class="t-2 text-sm">Người bị thách</span>
-              <b id="setupDef" class="t-warn text-sm">—</b>
+
+            <!-- Cặp đấu trực quan: Thách đấu ⚔️ Bị thách -->
+            <div id="pairCard" class="surface-sub rounded-2xl p-3.5 space-y-2.5 border border-white/5">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <div class="eyebrow text-[10px] text-[#0a84ff] font-bold tracking-wider">⚔️ THÁCH ĐẤU</div>
+                  <div id="pairChalName" class="font-display text-sm md:text-base truncate t-1 font-bold mt-0.5">
+                    <span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>
+                  </div>
+                </div>
+                <button id="btnSwapPair" type="button" class="btn btn-ghost btn-sm !px-2.5 !py-1 text-xs shrink-0 rounded-xl" title="Đổi vai Thách đấu / Bị thách" disabled>
+                  ⇄ Đổi vai
+                </button>
+                <div class="flex-1 min-w-0 text-right">
+                  <div class="eyebrow text-[10px] text-[#ff7a59] font-bold tracking-wider">🛡️ BỊ THÁCH</div>
+                  <div id="pairDefName" class="font-display text-sm md:text-base truncate t-1 font-bold mt-0.5">
+                    <span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>
+                  </div>
+                </div>
+              </div>
+              <div id="pairVsRow" class="hidden pt-2 border-t border-white/5 text-center">
+                <span class="text-xs font-semibold t-3">Đối đầu:</span>
+                <span id="pairVsText" class="text-xs font-bold t-1 ml-1.5"></span>
+              </div>
             </div>
+
             <div class="field-label"><span class="eyebrow">Số người chơi (2–6)</span>
               <div id="playerCountSeg" class="seg w-full" role="group" aria-label="Số người chơi">
                 <button type="button" data-pc="2" class="flex-1">2</button>
@@ -79,10 +101,7 @@
                 <button type="button" data-pc="6" class="flex-1">6</button>
               </div>
             </div>
-            <label class="field-label"><span class="eyebrow">Người thách đấu</span>
-              <select id="selChal" class="input"></select>
-            </label>
-            <label class="field-label"><span class="eyebrow">Chủ đề</span>
+            <label class="field-label"><span class="eyebrow">Chủ đề thi đấu</span>
               <select id="selCat" class="input"></select>
             </label>
             <div id="setupPreload" class="hidden surface-sub rounded-2xl px-3.5 py-2.5 space-y-1.5">
@@ -92,7 +111,7 @@
               </div>
               <div class="progress"><div id="setupPreloadBar" class="progress-fill"></div></div>
             </div>
-            <button id="btnStartDuel" class="btn btn-ok btn-lg w-full">Vào đấu trường</button>
+            <button id="btnStartDuel" class="btn btn-ok btn-lg w-full" disabled>Bắt đầu trận</button>
             <details class="text-sm" open>
               <summary class="cursor-pointer t-2 font-semibold">Tên, biểu tượng &amp; chủ đề khởi đầu</summary>
               <div id="roster" class="space-y-2 mt-3"></div>

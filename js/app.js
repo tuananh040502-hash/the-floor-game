@@ -296,10 +296,64 @@ function makeEvent(next, type) {
   return { id, type };
 }
 
+/** Gán thông tin chủ đề, danh sách preload ảnh và âm thanh chiến thắng vào setup */
+function applyCategoryToSetup(setup, catId) {
+  setup.catId = catId;
+  const cats = allCategories();
+  const cat = cats.find((c) => c.id === catId);
+  if (cat) {
+    setup.preloadUrls = extractImageUrls(cat.items);
+    setup.victoryAudioUrl = cat.victoryAudioUrl || '';
+    setup.victoryVoiceData = cat.victoryVoiceData || '';
+    setup.victoryVoiceName = cat.victoryVoiceName || '';
+    setup.localAudioVolume = clampVolume01(cat.localAudioVolume, 1.0);
+    setup.onlineAudioVolume = clampVolume01(cat.onlineAudioVolume, 1.0);
+  }
+}
+
 function dispatch(type, arg) {
   if (!controller || !state) return;
   const prev = state;
   const next = structuredClone(state);
+
+  if (type === 'setPair') {
+    next.setup = next.setup || {};
+    next.setup.chalId = arg.chalId || null;
+    next.setup.defId = arg.defId || null;
+    if (arg.cell !== undefined) next.setup.cell = arg.cell;
+    const catToUse = arg.catId || next.setup.catId;
+    if (catToUse) applyCategoryToSetup(next.setup, catToUse);
+    state = normalize(next);
+    applyState(state, true);
+    transport.write(state, prev);
+    return;
+  }
+  if (type === 'swapPair') {
+    next.setup = next.setup || {};
+    const oldChal = next.setup.chalId;
+    const oldDef = next.setup.defId;
+    next.setup.chalId = oldDef || null;
+    next.setup.defId = oldChal || null;
+    if (next.setup.defId) {
+      const newDef = playerById(next, next.setup.defId);
+      if (newDef && newDef.categoryId) {
+        applyCategoryToSetup(next.setup, newDef.categoryId);
+      }
+    }
+    state = normalize(next);
+    applyState(state, true);
+    transport.write(state, prev);
+    return;
+  }
+  if (type === 'setCategory') {
+    next.setup = next.setup || {};
+    applyCategoryToSetup(next.setup, arg.id);
+    state = normalize(next);
+    applyState(state, true);
+    transport.write(state, prev);
+    return;
+  }
+
   const ev = reduce(next, type, arg, transport.serverNow());
   if (ev === false) return;
   if (ev) next.event = makeEvent(next, ev);
@@ -406,6 +460,48 @@ function syncMusic(s) {
 }
 
 // ----- Sàn -----
+function handleFloorCellClick(cellIndex) {
+  if (role !== 'host' || !state || state.phase !== 'floor') return;
+  const ownerId = state.floor[cellIndex];
+  if (!ownerId) return;
+
+  // Người chơi đã bị loại (0 ô chiếm) thì bị vô hiệu hóa
+  if (cellCount(state, ownerId) <= 0) return;
+
+  let chalId = state.setup?.chalId || null;
+  let defId = state.setup?.defId || null;
+
+  if (ownerId === chalId) {
+    // Click vào ô Người thách đấu -> Hủy chọn; đẩy Người bị thách lên làm Người thách đấu
+    chalId = defId;
+    defId = null;
+  } else if (ownerId === defId) {
+    // Click vào ô Người bị thách đấu -> Hủy chọn Người bị thách đấu
+    defId = null;
+  } else if (!chalId) {
+    // Click 1 (chưa có ai được chọn): Gán làm Người thách đấu
+    chalId = ownerId;
+  } else {
+    // Click 2 (đã có Người thách đấu, click người khác) hoặc bấm người thứ 3:
+    // Gán / Thay thế Người bị thách đấu
+    defId = ownerId;
+  }
+
+  // Tự động chọn sẵn chủ đề của Người bị thách đấu (theo luật The Floor)
+  let catId = state.setup?.catId;
+  if (defId) {
+    const defP = playerById(state, defId);
+    if (defP && defP.categoryId) {
+      const cats = allCategories();
+      if (cats.some((c) => c.id === defP.categoryId && c.items.length > 0)) {
+        catId = defP.categoryId;
+      }
+    }
+  }
+
+  dispatch('setPair', { chalId, defId, cell: cellIndex, catId });
+}
+
 function buildFloor(count) {
   const grid = $('floorGrid');
   grid.innerHTML = '';
@@ -426,7 +522,7 @@ function buildFloor(count) {
       if (role !== 'host') return;
       const cell = e.target.closest('.cell');
       if (!cell) return;
-      dispatch('selectCell', { cell: Number(cell.dataset.i) });
+      handleFloorCellClick(Number(cell.dataset.i));
     });
   }
   floorBuilt = true;
@@ -438,12 +534,14 @@ function renderFloor(s) {
   [...$('floorGrid').children].forEach((el, i) => {
     const owner = playerById(s, s.floor[i]);
     if (!owner) return;
+    const isElim = cellCount(s, owner.id) <= 0;
     el.style.setProperty('--c', owner.color);
     el.firstChild.textContent = owner.avatar;
     el.lastChild.textContent = owner.name;
+    el.classList.toggle('is-eliminated', isElim);
     el.classList.toggle('is-sel', s.setup.cell === i);
-    el.classList.toggle('is-def', !!s.setup.defId && owner.id === s.setup.defId);
-    el.classList.toggle('is-chal', !!s.setup.chalId && owner.id === s.setup.chalId);
+    el.classList.toggle('is-def', !isElim && !!s.setup.defId && owner.id === s.setup.defId);
+    el.classList.toggle('is-chal', !isElim && !!s.setup.chalId && owner.id === s.setup.chalId);
     if (flipSet.has(i)) {
       el.classList.add('is-flip');
       setTimeout(() => el.classList.remove('is-flip'), 3300);
@@ -455,9 +553,15 @@ function renderFloor(s) {
   const champ = playerById(s, s.championId);
   $('floorHint').textContent = champ
     ? `🏆 ${champ.name} vô địch The Floor!`
-    : def
-      ? `${chal ? chal.name : '???'}  vs  ${def.name}`
-      : role === 'host' ? 'Chọn một ô đất để thách đấu' : 'Chờ trận đấu kế tiếp';
+    : chal && def
+      ? `${chal.name}  ⚔️  ${def.name}`
+      : chal
+        ? `${chal.name} đang chọn đối thủ…`
+        : def
+          ? `Chờ chọn người thách đấu vs ${def.name}`
+          : role === 'host'
+            ? 'Chạm 2 ô trên sàn để chọn cặp đấu'
+            : 'Chờ trận đấu kế tiếp';
 
   // Bảng xếp hạng
   const board = $('board');
@@ -487,19 +591,38 @@ function renderSetup(s) {
   panel.classList.toggle('hidden', !show);
   if (!show) return;
 
+  const chal = playerById(s, s.setup.chalId);
   const def = playerById(s, s.setup.defId);
-  $('setupDef').textContent = def ? `${def.avatar} ${def.name} (${cellCount(s, def.id)} ô)` : '—';
+  const chalAlive = chal && cellCount(s, chal.id) > 0;
+  const defAlive = def && cellCount(s, def.id) > 0;
+  const validChal = chalAlive ? chal : null;
+  const validDef = defAlive ? def : null;
 
-  const chalSel = $('selChal');
-  const aliveIds = new Set(alivePlayers(s).map((p) => p.id));
-  const chalSig = JSON.stringify([s.players.map((p) => [p.id, p.name, p.avatar, aliveIds.has(p.id)]), s.setup.defId]);
-  if (chalSel.dataset.sig !== chalSig) {
-    chalSel.dataset.sig = chalSig;
-    chalSel.innerHTML = '<option value="">— Chọn người thách đấu —</option>' +
-      s.players.filter((p) => p.id !== s.setup.defId && aliveIds.has(p.id))
-        .map((p) => `<option value="${p.id}">${p.avatar} ${esc(p.name)}</option>`).join('');
+  const chalNameEl = $('pairChalName');
+  if (chalNameEl) {
+    chalNameEl.innerHTML = validChal
+      ? `<span class="mr-1">${validChal.avatar}</span><span style="color:${validChal.color}">${esc(validChal.name)}</span>`
+      : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
   }
-  chalSel.value = s.setup.chalId || '';
+  const defNameEl = $('pairDefName');
+  if (defNameEl) {
+    defNameEl.innerHTML = validDef
+      ? `<span class="mr-1">${validDef.avatar}</span><span style="color:${validDef.color}">${esc(validDef.name)}</span>`
+      : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
+  }
+  const swapBtn = $('btnSwapPair');
+  if (swapBtn) {
+    swapBtn.disabled = !(validChal && validDef);
+  }
+  const vsRow = $('pairVsRow');
+  const vsText = $('pairVsText');
+  if (vsRow && vsText) {
+    const hasBoth = !!(validChal && validDef);
+    vsRow.classList.toggle('hidden', !hasBoth);
+    if (hasBoth) {
+      vsText.textContent = `${validChal.name} ⚔️ ${validDef.name}`;
+    }
+  }
 
   const cats = allCategories();
   const catSel = $('selCat');
@@ -508,9 +631,9 @@ function renderSetup(s) {
     catSel.dataset.sig = catSig;
     catSel.innerHTML = cats.map((c) => `<option value="${c.id}" ${c.items.length ? '' : 'disabled'}>${c.icon} ${esc(c.name)} (${c.items.length})</option>`).join('');
   }
-  catSel.value = s.setup.catId || cats[0].id;
+  catSel.value = s.setup.catId || (cats[0] ? cats[0].id : '');
   const chosen = cats.find((c) => c.id === catSel.value);
-  $('btnStartDuel').disabled = !(s.setup.defId && s.setup.chalId && chosen && chosen.items.length) || !!s.championId;
+  $('btnStartDuel').disabled = !(validChal && validDef && chosen && chosen.items.length) || !!s.championId;
   document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => {
     b.classList.toggle('active', Number(b.dataset.pc) === s.players.length);
   });
@@ -982,8 +1105,9 @@ function bindStaticUi() {
       b.blur();
     });
   });
-  $('selChal').addEventListener('change', (e) => e.target.value && dispatch('setChallenger', { id: e.target.value }));
-  $('selCat').addEventListener('change', (e) => dispatch('setCategory', { id: e.target.value }));
+  if ($('btnSwapPair')) $('btnSwapPair').addEventListener('click', () => dispatch('swapPair'));
+  if ($('selChal')) $('selChal').addEventListener('change', (e) => e.target.value && dispatch('setChallenger', { id: e.target.value }));
+  if ($('selCat')) $('selCat').addEventListener('change', (e) => dispatch('setCategory', { id: e.target.value }));
 
   // Mini panel
   $('miniToggle').addEventListener('click', () => {
