@@ -5,7 +5,7 @@ import { allCategories, TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './t
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
-  clampPlayerCount, DEFAULT_PLAYER_COUNT,
+  clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
 } from './engine.js';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
@@ -34,6 +34,7 @@ let firstSnapshot = true;
 let lastEventId = null;
 let prevPhase = null;
 let tickPending = false;
+let passCompletePending = false;
 let goPending = false;
 let lastCdSec = -1;
 let cdDurationMs = Number(localStorage.getItem('thefloor:cdMs')) || COUNTDOWN_MS;
@@ -132,7 +133,10 @@ function onSnapshot(remote) {
 
 /** Firebase bỏ mảng/object rỗng — khôi phục các trường bắt buộc. */
 function normalize(s) {
-  s.players = s.players || [];
+  s.players = (s.players || []).map((p) => ({
+    ...p,
+    durationSec: clampDurationSec(p.durationSec),
+  }));
   const cellTotal = Math.max(2, s.players.length);
   s.floor = Array.from({ length: cellTotal }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
   s.championId = s.championId || '';
@@ -147,6 +151,11 @@ function normalize(s) {
     s.duel.queue = s.duel.queue || [];
     s.duel.items = s.duel.items || [];
     s.duel.changed = s.duel.changed || [];
+    s.duel.totalA = s.duel.totalA || DUEL_MS;
+    s.duel.totalB = s.duel.totalB || DUEL_MS;
+    s.duel.passUntil = s.duel.passUntil || 0;
+    s.duel.passRem = s.duel.passRem || 0;
+    s.duel.passAnswer = s.duel.passAnswer || '';
     s.duel.cdTotal = s.duel.cdTotal || COUNTDOWN_MS;
     s.duel.cdEnd = s.duel.cdEnd || 0;
     s.duel.victoryAudioUrl = s.duel.victoryAudioUrl || '';
@@ -380,6 +389,29 @@ function handleTimeUp() {
   applyState(state, true);
 }
 
+/** Kết thúc 2 giây hiện đáp án khi Bỏ qua: chuyển sang câu tiếp theo và mở khóa nút. */
+function handlePassComplete() {
+  if (controller) {
+    dispatch('passComplete');
+    return;
+  }
+  const next = structuredClone(state);
+  const ev = reduce(next, 'passComplete', {}, transport.serverNow());
+  if (ev === false) return;
+  if (ev) next.event = makeEvent(next, ev);
+  state = normalize(next);
+  applyState(state, true);
+}
+
+/** Kiểm tra xem trận đấu có đang trong 2 giây chờ hiển thị đáp án Bỏ qua hay không. */
+function isPassWaiting(s, now = transport ? transport.serverNow() : Date.now()) {
+  if (!s || !s.duel) return false;
+  const d = s.duel;
+  if (s.phase === 'playing' && d.passUntil && now < d.passUntil) return true;
+  if (s.phase === 'paused' && d.passRem && d.passRem > 0) return true;
+  return false;
+}
+
 // ---------- Áp dụng trạng thái ----------
 function applyState(s, allowEvents = true) {
   $('waiting').classList.add('hidden');
@@ -395,6 +427,7 @@ function applyState(s, allowEvents = true) {
   }
 
   tickPending = false;
+  passCompletePending = false;
   if (s.phase !== 'countdown') {
     goPending = false;
     lastCdSec = -1;
@@ -604,12 +637,30 @@ function renderSetup(s) {
       ? `<span class="mr-1">${validChal.avatar}</span><span style="color:${validChal.color}">${esc(validChal.name)}</span>`
       : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
   }
+  const chalTimeWrap = $('pairChalTimeWrap');
+  const chalSecInp = $('pairChalSec');
+  if (chalTimeWrap && chalSecInp) {
+    chalTimeWrap.classList.toggle('hidden', !validChal);
+    if (validChal && document.activeElement !== chalSecInp) {
+      chalSecInp.value = String(clampDurationSec(validChal.durationSec));
+    }
+  }
+
   const defNameEl = $('pairDefName');
   if (defNameEl) {
     defNameEl.innerHTML = validDef
       ? `<span class="mr-1">${validDef.avatar}</span><span style="color:${validDef.color}">${esc(validDef.name)}</span>`
       : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
   }
+  const defTimeWrap = $('pairDefTimeWrap');
+  const defSecInp = $('pairDefSec');
+  if (defTimeWrap && defSecInp) {
+    defTimeWrap.classList.toggle('hidden', !validDef);
+    if (validDef && document.activeElement !== defSecInp) {
+      defSecInp.value = String(clampDurationSec(validDef.durationSec));
+    }
+  }
+
   const swapBtn = $('btnSwapPair');
   if (swapBtn) {
     swapBtn.disabled = !(validChal && validDef);
@@ -620,7 +671,7 @@ function renderSetup(s) {
     const hasBoth = !!(validChal && validDef);
     vsRow.classList.toggle('hidden', !hasBoth);
     if (hasBoth) {
-      vsText.textContent = `${validChal.name} ⚔️ ${validDef.name}`;
+      vsText.textContent = `${validChal.name} (${clampDurationSec(validChal.durationSec)}s) ⚔️ ${validDef.name} (${clampDurationSec(validDef.durationSec)}s)`;
     }
   }
 
@@ -646,9 +697,12 @@ function renderSetup(s) {
       const inp = e.target.closest('[data-f]');
       const row = e.target.closest('[data-pid]');
       if (!inp || !row) return;
-      const v = inp.value.trim();
-      if (!v) return;
-      dispatch('updatePlayer', { id: row.dataset.pid, patch: { [inp.dataset.f]: v } });
+      const field = inp.dataset.f;
+      const raw = inp.value.trim();
+      if (!raw) return;
+      const val = field === 'durationSec' ? clampDurationSec(raw) : raw;
+      if (field === 'durationSec') inp.value = String(val);
+      dispatch('updatePlayer', { id: row.dataset.pid, patch: { [field]: val } });
     });
   }
   const sig = JSON.stringify([s.players, cats.map((c) => c.id + c.name)]);
@@ -659,12 +713,13 @@ function renderSetup(s) {
     s.players.forEach((p) => {
       const row = document.createElement('div');
       row.dataset.pid = p.id;
-      row.className = 'grid grid-cols-[2.2rem_1fr_2.2rem_1.7fr] gap-1 items-center';
+      row.className = 'grid grid-cols-[2.1rem_1fr_2rem_1.35fr_3.6rem] gap-1 items-center';
       row.innerHTML = `
-        <input class="input !p-1 text-center" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" />
-        <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" />
-        <input type="color" data-f="color" value="${p.color}" class="w-8 h-8 bg-transparent" />
-        <select class="input" data-f="categoryId">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>`;
+        <input class="input !p-1 text-center" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" title="Biểu tượng" />
+        <input class="input !px-2" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" />
+        <input type="color" data-f="color" value="${p.color}" class="w-7 h-8 bg-transparent" title="Màu đại diện" />
+        <select class="input !px-1.5 text-xs" data-f="categoryId" title="Chủ đề khởi đầu">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>
+        <input type="number" min="10" max="600" step="5" class="input !px-1 text-center font-num text-xs" data-f="durationSec" value="${clampDurationSec(p.durationSec)}" title="Thời gian thi đấu (giây)" />`;
       rFrag.appendChild(row);
     });
     roster.appendChild(rFrag);
@@ -822,10 +877,30 @@ function buildArt(q) {
 }
 
 // ----- Điều khiển -----
+function syncPassUi(s, now = transport ? transport.serverNow() : Date.now()) {
+  const d = s && s.duel;
+  const waiting = isPassWaiting(s, now);
+  const box = $('passRevealBox');
+  const txt = $('passRevealText');
+  if (box && txt) {
+    box.classList.toggle('hidden', !waiting);
+    if (waiting && d) {
+      const q = currentQuestion(d);
+      const ans = d.passAnswer || (q ? q.answer : '');
+      if (txt.textContent !== ans) txt.textContent = ans;
+    }
+  }
+  const canAct = Boolean(s && s.phase === 'playing' && !waiting);
+  if ($('cOk')) $('cOk').disabled = !canAct;
+  if ($('cPass')) $('cPass').disabled = !canAct;
+}
+
 function renderControls(s) {
   const phase = s.phase;
   const inDuel = phase !== 'floor';
   const isHostScreen = role === 'host';
+  const now = transport ? transport.serverNow() : Date.now();
+  const passWaiting = isPassWaiting(s, now);
 
   // Dock (host) hoặc mini panel (xem)
   $('dock').classList.toggle('hidden', !(isHostScreen && inDuel));
@@ -846,8 +921,8 @@ function renderControls(s) {
   $('cOk').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
   $('cPass').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
   $('cPause').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
-  $('cOk').disabled = phase !== 'playing';
-  $('cPass').disabled = phase !== 'playing';
+  $('cOk').disabled = phase !== 'playing' || passWaiting;
+  $('cPass').disabled = phase !== 'playing' || passWaiting;
   $('cPause').innerHTML = phase === 'paused' ? `${ICONS.play} Tiếp tục <kbd>T</kbd>` : `${ICONS.pause} Tạm dừng <kbd>T</kbd>`;
   $('cBack').classList.toggle('hidden', phase !== 'finished');
   $('cAbort').classList.toggle('hidden', phase === 'finished' || phase === 'floor');
@@ -859,6 +934,8 @@ function renderControls(s) {
   $('answerText').textContent = q ? q.answer : '';
   $('answerAlias').textContent = q && q.aliases && q.aliases.length ? `(${q.aliases.join(' / ')})` : '';
   $('miniAnswer').textContent = q ? `Đáp án: ${q.answer}${q.aliases && q.aliases.length ? ' (' + q.aliases.join(' / ') + ')' : ''}` : '';
+
+  syncPassUi(s, now);
 }
 
 // ----- Pháo hoa liên tục (Continuous Fireworks Loop) -----
@@ -892,7 +969,7 @@ function renderFireworks(s) {
   }
 }
 
-// ---------- Vòng lặp đồng hồ (mượt, 60fps) ----------
+// ---------- Vòng lặp đồng hồ (mượt, 10fps) ----------
 function frame() {
   if (!state || !state.duel || state.phase === 'floor') return;
   const d = state.duel;
@@ -901,6 +978,8 @@ function frame() {
 
   ['A', 'B'].forEach((side) => {
     const ms = rem[side];
+    const totalMs = (side === 'A' ? d.totalA : d.totalB) || DUEL_MS;
+    const ratio = Math.max(0, Math.min(1, ms / totalMs));
     const clock = $(`clock${side}`);
     const bar = $(`bar${side}`);
     const text = (ms / 1000).toFixed(1).padStart(4, '0');
@@ -909,9 +988,9 @@ function frame() {
     clock.classList.toggle('danger', danger && d.turn === side && state.phase === 'playing');
     clock.classList.toggle('zero', ms <= 0);
     bar.classList.toggle('danger', danger);
-    bar.style.width = `${(ms / DUEL_MS) * 100}%`;
+    bar.style.width = `${ratio * 100}%`;
     const ring = $(`ring${side}`);
-    ring.style.strokeDashoffset = String(RING_LEN * (1 - ms / DUEL_MS));
+    ring.style.strokeDashoffset = String(RING_LEN * (1 - ratio));
     ring.classList.toggle('danger', danger);
   });
 
@@ -966,7 +1045,14 @@ function frame() {
     if (cur <= 0 && !tickPending) {
       tickPending = true;
       handleTimeUp();
+      return;
     }
+    if (d.passUntil && now >= d.passUntil && !passCompletePending) {
+      passCompletePending = true;
+      handlePassComplete();
+      return;
+    }
+    syncPassUi(state, now);
   }
 }
 
@@ -1106,6 +1192,38 @@ function bindStaticUi() {
     });
   });
   if ($('btnSwapPair')) $('btnSwapPair').addEventListener('click', () => dispatch('swapPair'));
+  if ($('pairChalSec')) {
+    $('pairChalSec').addEventListener('change', (e) => {
+      if (!state || !state.setup || !state.setup.chalId) return;
+      const sec = clampDurationSec(e.target.value);
+      e.target.value = String(sec);
+      dispatch('updatePlayer', { id: state.setup.chalId, patch: { durationSec: sec } });
+    });
+  }
+  if ($('pairDefSec')) {
+    $('pairDefSec').addEventListener('change', (e) => {
+      if (!state || !state.setup || !state.setup.defId) return;
+      const sec = clampDurationSec(e.target.value);
+      e.target.value = String(sec);
+      dispatch('updatePlayer', { id: state.setup.defId, patch: { durationSec: sec } });
+    });
+  }
+  const applyBulkTime = () => {
+    const inp = $('bulkTimeInput');
+    if (!inp) return;
+    const sec = clampDurationSec(inp.value);
+    inp.value = String(sec);
+    dispatch('setAllPlayerTime', { durationSec: sec });
+  };
+  if ($('btnBulkTime')) $('btnBulkTime').addEventListener('click', applyBulkTime);
+  if ($('bulkTimeInput')) {
+    $('bulkTimeInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyBulkTime();
+      }
+    });
+  }
   if ($('selChal')) $('selChal').addEventListener('change', (e) => e.target.value && dispatch('setChallenger', { id: e.target.value }));
   if ($('selCat')) $('selCat').addEventListener('change', (e) => dispatch('setCategory', { id: e.target.value }));
 
@@ -1135,15 +1253,16 @@ function bindStaticUi() {
     if (['input', 'select', 'textarea'].includes(tag)) return;
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
+    const passWaiting = isPassWaiting(state);
     if (state.phase === 'ready' && (k === ' ' || k === 'Enter')) {
       e.preventDefault();
       pulse('cBegin');
       dispatch('begin', { durationMs: cdDurationMs });
-    } else if (state.phase === 'playing' && (k === ' ' || k === 'Enter')) {
+    } else if (state.phase === 'playing' && !passWaiting && (k === ' ' || k === 'Enter')) {
       e.preventDefault();
       pulse('cOk');
       dispatch('correct');
-    } else if (state.phase === 'playing' && (k === 'p' || k === 'P' || k === 'ArrowDown')) {
+    } else if (state.phase === 'playing' && !passWaiting && (k === 'p' || k === 'P' || k === 'ArrowDown')) {
       e.preventDefault();
       pulse('cPass');
       dispatch('pass');

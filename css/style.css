@@ -722,21 +722,206 @@ html, body { height: auto; min-height: 100vh; min-height: 100dvh; }
   .floor-grid { width: 94vw; max-width: 760px; width: min(94vw, 760px); }
 }
 
-/* ---------- Khung ảnh câu hỏi: contain, chiều cao linh hoạt ---------- */
-.q-inner { min-height: 200px; max-height: calc(100vh - 290px); max-height: calc(100dvh - 290px); }
-.q-img { object-fit: contain; max-width: 100%; max-width: 92cqw; max-height: 90%; max-height: 90cqh; }
-
-/* MacBook / Laptop (ngang): zero-scroll, ring & avatar co theo chiều cao */
-@media (min-width: 1024px) and (min-aspect-ratio: 5/4) {
-  .ring-wrap { --ring: clamp(120px, 15vw, 230px); --ring: clamp(120px, min(15vw, 26dvh), 230px); margin: 2px auto 8px; }
-  .avatar { width: clamp(56px, 7vw, 96px); height: clamp(56px, 7vw, 96px); width: clamp(56px, min(7vw, 11dvh), 96px); height: clamp(56px, min(7vw, 11dvh), 96px); margin: 6px auto; }
-  .side-card { padding: 14px 12px; }
-  main.app-main.pb-40 { padding-bottom: 110px; }
+/* ---------- Đấu trường (Arena): Ưu tiên ảnh trung tâm 75%–82% 100dvh & 2 HUD góc dưới ---------- */
+.arena-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
+  gap: 8px;
 }
-/* iPad dọc 3:4 / ngang 4:3 */
-@media (min-width: 700px) and (max-width: 1100px) {
-  .ring-wrap { --ring: clamp(130px, 22vw, 210px); }
-  .q-inner { max-height: calc(100vh - 360px); max-height: calc(100dvh - 360px); }
+.arena-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 0 4px;
+}
+.arena-top-bar .answer-pill {
+  padding: 5px 14px;
+  gap: 10px;
+}
+#viewArena .q-wrap {
+  width: 100%;
+  border-radius: 26px;
+}
+#viewArena .q-inner {
+  aspect-ratio: auto;
+  width: 100%;
+  height: 78vh;
+  height: clamp(340px, 78dvh, calc(100dvh - 145px));
+  min-height: 320px;
+  max-height: 82dvh;
+  padding: 10px;
+}
+#qContent {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.q-img {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  max-width: 96cqw;
+  max-height: 94cqh;
+  border-radius: 14px;
+}
+
+/* 2 thẻ người chơi thu gọn (Compact HUD Cards) cố định ở bottom-left & bottom-right */
+.side-card.hud-card {
+  position: fixed;
+  bottom: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  z-index: 42;
+  width: clamp(220px, 24vw, 330px);
+  padding: 10px 14px 9px;
+  border-radius: 22px;
+  text-align: left;
+  background: rgba(16, 19, 28, 0.92);
+  border: 1.5px solid var(--glass-border);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), inset 0 1px 1px var(--specular);
+}
+html[data-theme='light'] .side-card.hud-card {
+  background: rgba(255, 255, 255, 0.94);
+}
+.side-card.hud-left { left: 16px; }
+.side-card.hud-right { right: 16px; }
+
+.side-card.hud-card.active {
+  transform: translateY(-3px) scale(1.02);
+  border-color: var(--sc) !important;
+  box-shadow: 0 0 0 2px var(--sc), 0 0 38px color-mix(in srgb, var(--sc) 68%, transparent), 0 14px 32px rgba(0, 0, 0, 0.55) !important;
+  opacity: 1;
+}
+.side-card.hud-card.idle {
+  opacity: 0.68;
+}
+.side-card.hud-card.win {
+  border-color: var(--sc) !important;
+  box-shadow: 0 0 0 2px var(--sc), 0 0 46px var(--sc) !important;
+}
+
+.hud-card-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.hud-card .avatar {
+  width: clamp(40px, 4vw, 52px);
+  height: clamp(40px, 4vw, 52px);
+  margin: 0;
+  font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+  border-width: 2px;
+  flex-shrink: 0;
+}
+.hud-info {
+  flex: 1;
+  min-width: 0;
+}
+.hud-role {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+.hud-name {
+  font-size: clamp(0.95rem, 1.5vw, 1.25rem);
+  font-weight: 800;
+  color: var(--t1);
+  line-height: 1.15;
+}
+.hud-cells {
+  margin-top: 1px;
+}
+.hud-clock-wrap.ring-wrap {
+  --ring: auto;
+  width: auto;
+  height: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
+.hud-clock-wrap.ring-wrap svg {
+  display: none;
+}
+.hud-clock-wrap .clock {
+  position: static;
+  display: block;
+  font-size: clamp(1.85rem, 3.1vw, 2.75rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+}
+html[data-theme='light'] .hud-clock-wrap .clock {
+  color: #1c1c1e;
+  text-shadow: none;
+}
+.side-card.hud-card.active .hud-clock-wrap .clock {
+  color: color-mix(in srgb, var(--sc) 35%, #fff);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--sc) 75%, transparent);
+}
+.hud-clock-wrap .clock.danger {
+  color: #ff453a !important;
+  text-shadow: 0 0 20px rgba(255, 69, 58, 0.8) !important;
+}
+.hud-card .capsule {
+  height: 6px;
+}
+
+/* Khung hiển thị Đáp án công khai khi bấm Bỏ qua (ở khoảng trống giữa 2 thẻ người chơi dưới cùng) */
+.pass-reveal-box {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 44;
+  max-width: min(90vw, 560px);
+  pointer-events: none;
+}
+body.host .pass-reveal-box {
+  bottom: 86px;
+  bottom: calc(86px + env(safe-area-inset-bottom, 0px));
+}
+.pass-reveal-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px;
+  border-radius: 9999px;
+  background: rgba(20, 22, 32, 0.96);
+  border: 2px solid #ff9f0a;
+  box-shadow: 0 0 32px rgba(255, 159, 10, 0.55), 0 12px 28px rgba(0, 0, 0, 0.6);
+  animation: badgePop 0.25s var(--spring);
+}
+
+/* Khoảng trống dưới cùng cho 2 HUD cards + Dock không đè lên ảnh */
+main.app-main.pb-40 { padding-bottom: 104px; }
+
+/* iPad dọc 3:4 / màn hình nhỏ: thu gọn chiều ngang HUD card để chừa khoảng trống ở giữa */
+@media (max-width: 1024px) {
+  .side-card.hud-card {
+    width: clamp(165px, 28vw, 240px);
+    padding: 8px 10px 7px;
+  }
+  .hud-card .avatar {
+    width: 34px;
+    height: 34px;
+    font-size: 1.15rem;
+  }
+  .hud-clock-wrap .clock {
+    font-size: clamp(1.4rem, 3.4vw, 2rem);
+  }
+  #viewArena .q-inner {
+    height: clamp(320px, 75dvh, calc(100dvh - 165px));
+  }
 }
 
 /* Vùng chạm tối thiểu 48px */

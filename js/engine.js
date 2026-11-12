@@ -6,6 +6,7 @@
 import { allCategories, getCategory, clampVolume01 } from './topics.js';
 
 export const DUEL_MS = 60000;
+export const DEFAULT_DURATION_SEC = 60;
 export const PENALTY_MS = 2000;
 export const COUNTDOWN_MS = 10000;
 export const MIN_PLAYERS = 2;
@@ -13,13 +14,19 @@ export const MAX_PLAYERS = 6;
 export const DEFAULT_PLAYER_COUNT = 4;
 
 const DEFAULT_PLAYERS = [
-  { id: 'p1', name: 'Minh', avatar: '🦁', color: '#06b6d4', categoryId: 'flags' },
-  { id: 'p2', name: 'Lan', avatar: '🐯', color: '#eab308', categoryId: 'animals' },
-  { id: 'p3', name: 'Hùng', avatar: '🦊', color: '#a855f7', categoryId: 'food' },
-  { id: 'p4', name: 'Mai', avatar: '🐼', color: '#22c55e', categoryId: 'vehicles' },
-  { id: 'p5', name: 'Tuấn', avatar: '🦄', color: '#ec4899', categoryId: 'sports' },
-  { id: 'p6', name: 'Vy', avatar: '🐲', color: '#f97316', categoryId: 'nature' },
+  { id: 'p1', name: 'Minh', avatar: '🦁', color: '#06b6d4', categoryId: 'flags', durationSec: 60 },
+  { id: 'p2', name: 'Lan', avatar: '🐯', color: '#eab308', categoryId: 'animals', durationSec: 60 },
+  { id: 'p3', name: 'Hùng', avatar: '🦊', color: '#a855f7', categoryId: 'food', durationSec: 60 },
+  { id: 'p4', name: 'Mai', avatar: '🐼', color: '#22c55e', categoryId: 'vehicles', durationSec: 60 },
+  { id: 'p5', name: 'Tuấn', avatar: '🦄', color: '#ec4899', categoryId: 'sports', durationSec: 60 },
+  { id: 'p6', name: 'Vy', avatar: '🐲', color: '#f97316', categoryId: 'nature', durationSec: 60 },
 ];
+
+export function clampDurationSec(sec) {
+  const v = Math.round(Number(sec));
+  if (!Number.isFinite(v)) return DEFAULT_DURATION_SEC;
+  return Math.max(10, Math.min(600, v));
+}
 
 export function clampPlayerCount(n) {
   const v = Math.round(Number(n));
@@ -112,6 +119,9 @@ function finish(s, loserSide) {
   const winnerSide = loserSide === 'A' ? 'B' : 'A';
   setRem(d, loserSide, 0);
   d.running = false;
+  d.passUntil = 0;
+  d.passRem = 0;
+  d.passAnswer = '';
   d.loserSide = loserSide;
   d.winnerId = winnerSide === 'A' ? d.aId : d.bId;
   d.loserId = loserSide === 'A' ? d.aId : d.bId;
@@ -179,6 +189,10 @@ export function reduce(s, type, arg = {}, now) {
       if (chalId === defId || cellCount(s, chalId) < 1 || cellCount(s, defId) < 1) return false;
       const cat = getCategory(catId);
       if (!cat || !cat.items.length) return false;
+      const pA = playerById(s, chalId);
+      const pB = playerById(s, defId);
+      const durA = clampDurationSec(pA?.durationSec) * 1000;
+      const durB = clampDurationSec(pB?.durationSec) * 1000;
       // Chụp lại bộ câu hỏi + âm thanh chiến thắng kép vào trận để mọi màn hình đều đồng bộ.
       const order = cat.items.map((_, i) => i);
       s.duel = {
@@ -198,8 +212,13 @@ export function reduce(s, type, arg = {}, now) {
         turn: 'A',
         running: false,
         tStamp: 0,
-        remA: DUEL_MS,
-        remB: DUEL_MS,
+        totalA: durA,
+        totalB: durB,
+        remA: durA,
+        remB: durB,
+        passUntil: 0,
+        passRem: 0,
+        passAnswer: '',
         cdTotal: COUNTDOWN_MS,
         cdEnd: 0,
       };
@@ -230,30 +249,56 @@ export function reduce(s, type, arg = {}, now) {
       d.running = true;
       d.tStamp = now;
       d.cdEnd = 0;
+      d.passUntil = 0;
+      d.passRem = 0;
+      d.passAnswer = '';
       s.phase = 'playing';
       return 'start';
     case 'correct': {
       if (s.phase !== 'playing') return false;
+      if (d.passUntil && now < d.passUntil) return false;
       const cur = remainingOf(d, d.turn, now);
       if (cur <= 0) return finish(s, d.turn);
       setRem(d, d.turn, cur);
       d.turn = d.turn === 'A' ? 'B' : 'A';
       d.tStamp = now;
+      d.passUntil = 0;
+      d.passRem = 0;
+      d.passAnswer = '';
       d.qPos += 1;
       return 'ding';
     }
     case 'pass': {
       if (s.phase !== 'playing') return false;
-      const cur = remainingOf(d, d.turn, now) - PENALTY_MS;
+      if (d.passUntil && now < d.passUntil) return false;
+      const cur = remainingOf(d, d.turn, now);
       if (cur <= 0) return finish(s, d.turn);
-      setRem(d, d.turn, cur);
-      d.tStamp = now; // vẫn là lượt người đó
-      d.qPos += 1;
+      // Không trừ thẳng 2s: giữ nguyên đồng hồ chạy tự nhiên, mở đáp án trong 2 giây
+      const q = currentQuestion(d);
+      d.passUntil = now + PENALTY_MS;
+      d.passRem = 0;
+      d.passAnswer = q ? q.answer : '';
       return 'buzz';
+    }
+    case 'passComplete': {
+      if (s.phase !== 'playing' || !d || !d.passUntil) return false;
+      const cur = remainingOf(d, d.turn, now);
+      if (cur <= 0) return finish(s, d.turn);
+      d.passUntil = 0;
+      d.passRem = 0;
+      d.passAnswer = '';
+      d.qPos += 1;
+      return null;
     }
     case 'pause': {
       if (s.phase !== 'playing') return false;
       setRem(d, d.turn, remainingOf(d, d.turn, now));
+      if (d.passUntil && d.passUntil > now) {
+        d.passRem = d.passUntil - now;
+      } else {
+        d.passRem = 0;
+      }
+      d.passUntil = 0;
       d.running = false;
       s.phase = 'paused';
       return 'pause';
@@ -262,6 +307,10 @@ export function reduce(s, type, arg = {}, now) {
       if (s.phase !== 'paused') return false;
       d.running = true;
       d.tStamp = now;
+      if (d.passRem && d.passRem > 0) {
+        d.passUntil = now + d.passRem;
+        d.passRem = 0;
+      }
       s.phase = 'playing';
       return 'pause';
     case 'tick': {
@@ -282,8 +331,18 @@ export function reduce(s, type, arg = {}, now) {
       return 'click';
     case 'updatePlayer': {
       const p = playerById(s, arg.id);
-      if (!p) return false;
-      Object.assign(p, arg.patch);
+      if (!p || !arg.patch) return false;
+      const patch = { ...arg.patch };
+      if (patch.durationSec !== undefined) {
+        patch.durationSec = clampDurationSec(patch.durationSec);
+      }
+      Object.assign(p, patch);
+      return null;
+    }
+    case 'setAllPlayerTime': {
+      if (s.phase !== 'floor') return false;
+      const sec = clampDurationSec(arg.durationSec);
+      s.players.forEach((p) => { p.durationSec = sec; });
       return null;
     }
     case 'shuffleFloor':
@@ -301,7 +360,11 @@ export function reduce(s, type, arg = {}, now) {
       for (let i = keep.length; i < n; i++) {
         const base = DEFAULT_PLAYERS[i];
         const usedCats = new Set(keep.map((p) => p.categoryId));
-        keep.push({ ...base, categoryId: usedCats.has(base.categoryId) ? s.players[0].categoryId : base.categoryId });
+        keep.push({
+          ...base,
+          durationSec: clampDurationSec(s.players[0]?.durationSec ?? base.durationSec),
+          categoryId: usedCats.has(base.categoryId) ? s.players[0].categoryId : base.categoryId,
+        });
       }
       s.players = keep;
       s.floor = dealFloor(keep);
