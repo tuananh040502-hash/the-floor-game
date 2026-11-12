@@ -809,6 +809,8 @@ function renderArena(s) {
   const vicCtrl = $('victoryAudioControls');
   if (vicCtrl) vicCtrl.classList.toggle('hidden', !(fin && controller));
   if (fin) {
+    if ($('passOverlay')) $('passOverlay').classList.add('hidden');
+    if ($('passRevealBox')) $('passRevealBox').classList.add('hidden');
     const w = playerById(s, d.winnerId);
     $('resultName').textContent = `${w.avatar} ${w.name.toUpperCase()}`;
     $('resultSub').textContent = s.championId
@@ -880,16 +882,25 @@ function buildArt(q) {
 function syncPassUi(s, now = transport ? transport.serverNow() : Date.now()) {
   const d = s && s.duel;
   const waiting = isPassWaiting(s, now);
+  const ans = waiting && d ? (d.passAnswer || (currentQuestion(d) ? currentQuestion(d).answer : '')) : '';
+
+  const overlay = $('passOverlay');
+  const overlayAns = $('passOverlayAnswer');
+  if (overlay) {
+    overlay.classList.toggle('hidden', !waiting);
+    if (waiting && overlayAns && overlayAns.textContent !== ans) {
+      overlayAns.textContent = ans;
+    }
+  }
+
   const box = $('passRevealBox');
   const txt = $('passRevealText');
   if (box && txt) {
-    box.classList.toggle('hidden', !waiting);
-    if (waiting && d) {
-      const q = currentQuestion(d);
-      const ans = d.passAnswer || (q ? q.answer : '');
-      if (txt.textContent !== ans) txt.textContent = ans;
-    }
+    const showBottomBox = waiting && role !== 'host';
+    box.classList.toggle('hidden', !showBottomBox);
+    if (showBottomBox && txt.textContent !== ans) txt.textContent = ans;
   }
+
   const canAct = Boolean(s && s.phase === 'playing' && !waiting);
   if ($('cOk')) $('cOk').disabled = !canAct;
   if ($('cPass')) $('cPass').disabled = !canAct;
@@ -1044,11 +1055,15 @@ function frame() {
     const cur = rem[d.turn];
     if (cur <= 0 && !tickPending) {
       tickPending = true;
+      if ($('passOverlay')) $('passOverlay').classList.add('hidden');
+      if ($('passRevealBox')) $('passRevealBox').classList.add('hidden');
       handleTimeUp();
       return;
     }
     if (d.passUntil && now >= d.passUntil && !passCompletePending) {
       passCompletePending = true;
+      if ($('passOverlay')) $('passOverlay').classList.add('hidden');
+      if ($('passRevealBox')) $('passRevealBox').classList.add('hidden');
       handlePassComplete();
       return;
     }

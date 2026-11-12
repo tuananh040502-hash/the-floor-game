@@ -875,6 +875,74 @@ html[data-theme='light'] .hud-clock-wrap .clock {
   height: 6px;
 }
 
+/* Lớp phủ X đỏ & Đáp án giữa khung ảnh khi bấm Bỏ qua (không dùng backdrop-filter: blur) */
+.pass-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(10, 4, 6, 0.45);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  pointer-events: none;
+}
+.pass-overlay.hidden {
+  display: none !important;
+}
+.pass-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: clamp(18px, 3.2vw, 34px) clamp(28px, 5vw, 56px);
+  max-width: min(92%, 780px);
+  border-radius: 28px;
+  background: rgba(20, 8, 10, 0.84);
+  border: 3px solid #ef4444;
+  box-shadow: 0 0 36px rgba(239, 68, 68, 0.55), 0 16px 40px rgba(0, 0, 0, 0.65);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  animation: passPop 0.26s cubic-bezier(0.22, 1.28, 0.36, 1) both;
+}
+.pass-x-icon {
+  font-size: clamp(4.5rem, 13vw, 8rem);
+  font-weight: 900;
+  line-height: 0.95;
+  color: #ef4444;
+  text-shadow: 0 0 28px rgba(239, 68, 68, 0.75);
+  margin-bottom: 6px;
+}
+.pass-ans-label {
+  font-size: clamp(0.75rem, 1.4vw, 0.95rem);
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #fca5a5;
+  margin-top: 2px;
+}
+.pass-ans-text {
+  font-family: 'Plus Jakarta Sans', 'SF Pro Display', system-ui, sans-serif;
+  font-size: clamp(1.8rem, 4.5vw, 3.5rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: #ffffff;
+  margin-top: 4px;
+  word-break: break-word;
+}
+@keyframes passPop {
+  0% {
+    transform: scale(0.82);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 /* Khung hiển thị Đáp án công khai khi bấm Bỏ qua (ở khoảng trống giữa 2 thẻ người chơi dưới cùng) */
 .pass-reveal-box {
   position: fixed;

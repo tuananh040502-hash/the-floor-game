@@ -163,6 +163,14 @@
         <div id="qWrap" class="q-wrap">
           <div id="qInner" class="q-inner">
             <div id="qContent"></div>
+            <!-- Lớp phủ X đỏ & Đáp án giữa khung ảnh khi bấm Bỏ qua (2s) -->
+            <div id="passOverlay" class="pass-overlay hidden">
+              <div class="pass-overlay-card">
+                <div class="pass-x-icon" aria-hidden="true">✕</div>
+                <div class="pass-ans-label">ĐÁP ÁN</div>
+                <div id="passOverlayAnswer" class="pass-ans-text"></div>
+              </div>
+            </div>
             <div id="pauseOverlay" class="hidden overlay-glass">
               <div>
                 <div class="eyebrow">Trận đấu</div>
