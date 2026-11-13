@@ -9,6 +9,7 @@ export const DUEL_MS = 60000;
 export const DEFAULT_DURATION_SEC = 60;
 export const PENALTY_MS = 2000;
 export const COUNTDOWN_MS = 10000;
+export const PRELOAD_WINDOW = 8;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
 export const DEFAULT_PLAYER_COUNT = 4;
@@ -88,6 +89,57 @@ export function extractImageUrls(items = [], queue = null) {
   return ordered.filter((it) => it && it.type === 'img' && it.src).map((it) => it.src);
 }
 
+/**
+ * Cửa sổ trượt bộ nhớ đệm ảnh: chỉ giữ tối đa `windowSize` (mặc định 8) ảnh tiếp theo
+ * được giải mã sẵn trong RAM, đồng thời giải phóng tham chiếu các ảnh đã qua.
+ */
+export function preloadWindow(duel, windowSize = PRELOAD_WINDOW) {
+  const urls = [];
+  if (duel && Array.isArray(duel.items) && duel.items.length) {
+    const queue = Array.isArray(duel.queue) && duel.queue.length
+      ? duel.queue
+      : duel.items.map((_, i) => i);
+    const start = Math.max(0, Number(duel.qPos) || 0);
+    const limit = Math.min(windowSize, queue.length);
+    for (let i = 0; i < limit; i++) {
+      const it = duel.items[queue[(start + i) % queue.length]];
+      if (it && it.type === 'img' && it.src && !urls.includes(it.src)) {
+        urls.push(it.src);
+      }
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    const cache = window.__imageCache || (window.__imageCache = {});
+    const keep = new Set(urls);
+    Object.keys(cache).forEach((key) => {
+      if (!keep.has(key)) {
+        const entry = cache[key];
+        if (entry && entry.img) {
+          try { entry.img.src = ''; } catch { /* ignore */ }
+        }
+        delete cache[key];
+      }
+    });
+    if (typeof Image !== 'undefined') {
+      urls.forEach((url) => {
+        if (cache[url]) return;
+        const img = new Image();
+        img.decoding = 'async';
+        const entry = { img, url, ready: false };
+        img.onload = () => { entry.ready = true; };
+        img.onerror = () => { entry.ready = false; };
+        img.src = url;
+        if (typeof img.decode === 'function') {
+          img.decode().then(() => { entry.ready = true; }).catch(() => {});
+        }
+        cache[url] = entry;
+      });
+    }
+  }
+  return urls;
+}
+
 /** Thời gian đếm ngược chuẩn bị trận còn lại (ms) tại thời điểm `now`. */
 export function countdownRemainingOf(duel, now) {
   if (!duel || !duel.cdEnd) return 0;
@@ -135,6 +187,7 @@ function finish(s, loserSide) {
   });
   s.championId = findChampion(s);
   s.phase = 'finished';
+  preloadWindow(null);
   return 'finish';
 }
 
@@ -223,6 +276,7 @@ export function reduce(s, type, arg = {}, now) {
         cdEnd: 0,
       };
       s.phase = 'ready';
+      preloadWindow(s.duel);
       return 'ready';
     }
     case 'setVictoryVolumes': {
@@ -253,6 +307,7 @@ export function reduce(s, type, arg = {}, now) {
       d.passRem = 0;
       d.passAnswer = '';
       s.phase = 'playing';
+      preloadWindow(d);
       return 'start';
     case 'correct': {
       if (s.phase !== 'playing') return false;
@@ -266,6 +321,7 @@ export function reduce(s, type, arg = {}, now) {
       d.passRem = 0;
       d.passAnswer = '';
       d.qPos += 1;
+      preloadWindow(d);
       return 'ding';
     }
     case 'pass': {
@@ -288,6 +344,7 @@ export function reduce(s, type, arg = {}, now) {
       d.passRem = 0;
       d.passAnswer = '';
       d.qPos += 1;
+      preloadWindow(d);
       return null;
     }
     case 'pause': {
@@ -322,12 +379,14 @@ export function reduce(s, type, arg = {}, now) {
       if (s.phase !== 'finished') return false;
       s.phase = 'floor';
       s.setup = {};
+      preloadWindow(null);
       return 'click';
     case 'abort':
       if (!['ready', 'countdown', 'playing', 'paused'].includes(s.phase)) return false;
       s.phase = 'floor';
       s.duel = null;
       s.setup = {};
+      preloadWindow(null);
       return 'click';
     case 'updatePlayer': {
       const p = playerById(s, arg.id);

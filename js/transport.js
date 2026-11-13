@@ -30,10 +30,22 @@ export async function createTransport(room, config) {
   return localTransport(room);
 }
 
-// ---------- Diff để chỉ gửi phần thay đổi ----------
+// ---------- Diff để chỉ gửi phần thay đổi (Delta Update) ----------
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isEmpty = (v) => v === undefined || v === null || (Array.isArray(v) && v.length === 0) || (isPlain(v) && !Object.keys(v).length);
+const DUEL_STATIC_KEYS = new Set([
+  'items',
+  'queue',
+  'victoryVoiceData',
+  'victoryAudioUrl',
+  'victoryVoiceName',
+  'catName',
+  'catIcon',
+]);
+
 const same = (a, b) => {
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== 'object' || typeof b !== 'object') return false;
   try {
     return JSON.stringify(a) === JSON.stringify(b);
   } catch {
@@ -42,10 +54,19 @@ const same = (a, b) => {
 };
 
 function diffPaths(prev, next, base, out) {
+  const sameDuelSession = base === 'duel'
+    && prev && next
+    && prev.categoryId === next.categoryId
+    && prev.aId === next.aId
+    && prev.bId === next.bId;
   const keys = new Set([...Object.keys(prev || {}), ...Object.keys(next || {})]);
   keys.forEach((k) => {
+    if (sameDuelSession && DUEL_STATIC_KEYS.has(k) && prev[k] !== undefined && next[k] !== undefined) {
+      return;
+    }
     const pv = prev ? prev[k] : undefined;
     const nv = next ? next[k] : undefined;
+    if (pv === nv) return;
     const path = base ? `${base}/${k}` : k;
     if (isPlain(pv) && isPlain(nv)) diffPaths(pv, nv, path, out);
     else if (!same(pv, nv)) out[path] = isEmpty(nv) ? null : nv;
@@ -75,6 +96,7 @@ async function firebaseTransport(room, config) {
   const unsubs = [];
   let stateUnsub = null;
   let disposed = false;
+  let lastState = null;
   unsubs.push(db.onValue(db.ref(database, '.info/serverTimeOffset'), (snap) => {
     offset = snap.val() || 0;
   }));
@@ -114,7 +136,9 @@ async function firebaseTransport(room, config) {
       // Gỡ listener cũ (off) trước khi gắn listener mới → không nhân bản luồng xử lý ngầm.
       if (stateUnsub) { try { stateUnsub(); } catch { /* ignore */ } stateUnsub = null; }
       stateUnsub = db.onValue(stateRef, (snap) => {
-        try { cb(snap.val()); } catch (e) { console.error(e); }
+        const val = snap.val();
+        if (val) lastState = val;
+        try { cb(val); } catch (e) { console.error(e); }
       }, (err) => {
         emit({ type: 'error', message: `Không đọc được dữ liệu: ${err.message}` });
       });
@@ -123,8 +147,10 @@ async function firebaseTransport(room, config) {
     write(state, prev) {
       const handle = (err) => emit({ type: 'error', message: `Không ghi được dữ liệu: ${err?.message || err}` });
       try {
-        if (prev) {
-          const patch = diffPaths(prev, state, '', {});
+        const baseState = prev || lastState;
+        lastState = state;
+        if (baseState) {
+          const patch = diffPaths(baseState, state, '', {});
           if (!Object.keys(patch).length) return Promise.resolve();
           return db.update(stateRef, patch).catch(handle);
         }

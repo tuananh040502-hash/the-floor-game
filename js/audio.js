@@ -104,7 +104,7 @@ function ensureHiddenHost() {
   return box;
 }
 
-// ---------- Nạp SDK YouTube IFrame API ----------
+// ---------- Nạp lười (Lazy-load) SDK YouTube IFrame API (chỉ chèn script khi chủ đề có link YouTube) ----------
 let ytApiPromise = null;
 function loadYouTubeApi() {
   if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
@@ -121,15 +121,20 @@ function loadYouTubeApi() {
         try { if (typeof prev === 'function') prev(); } catch { /* ignore */ }
         resolve(window.YT);
       };
-      const s = document.createElement('script');
-      s.src = 'https://www.youtube.com/iframe_api';
-      s.async = true;
-      s.onerror = () => {
-        clearTimeout(timer);
-        ytApiPromise = null;
-        reject(new Error('Không tải được YouTube IFrame API'));
-      };
-      document.head.appendChild(s);
+      let s = document.querySelector('script[data-lazy-sdk="youtube"]');
+      if (!s) {
+        s = document.createElement('script');
+        s.dataset.lazySdk = 'youtube';
+        s.src = 'https://www.youtube.com/iframe_api';
+        s.async = true;
+        s.onerror = () => {
+          clearTimeout(timer);
+          ytApiPromise = null;
+          s.remove();
+          reject(new Error('Không tải được YouTube IFrame API'));
+        };
+        document.head.appendChild(s);
+      }
     } catch (err) {
       ytApiPromise = null;
       reject(err);
@@ -138,7 +143,7 @@ function loadYouTubeApi() {
   return ytApiPromise;
 }
 
-// ---------- Nạp SDK SoundCloud Widget API ----------
+// ---------- Nạp lười (Lazy-load) SDK SoundCloud Widget API (chỉ chèn script khi chủ đề có link SoundCloud) ----------
 let scApiPromise = null;
 function loadSoundCloudApi() {
   if (window.SC && window.SC.Widget) return Promise.resolve(window.SC);
@@ -149,26 +154,61 @@ function loadSoundCloudApi() {
         scApiPromise = null;
         reject(new Error('SoundCloud API timeout'));
       }, 12000);
-      const s = document.createElement('script');
-      s.src = 'https://w.soundcloud.com/player/api.js';
-      s.async = true;
-      s.onload = () => {
-        clearTimeout(timer);
-        if (window.SC && window.SC.Widget) resolve(window.SC);
-        else reject(new Error('SoundCloud Widget không khả dụng'));
-      };
-      s.onerror = () => {
-        clearTimeout(timer);
-        scApiPromise = null;
-        reject(new Error('Không tải được SoundCloud Widget API'));
-      };
-      document.head.appendChild(s);
+      let s = document.querySelector('script[data-lazy-sdk="soundcloud"]');
+      if (!s) {
+        s = document.createElement('script');
+        s.dataset.lazySdk = 'soundcloud';
+        s.src = 'https://w.soundcloud.com/player/api.js';
+        s.async = true;
+        s.onload = () => {
+          clearTimeout(timer);
+          if (window.SC && window.SC.Widget) resolve(window.SC);
+          else reject(new Error('SoundCloud Widget không khả dụng'));
+        };
+        s.onerror = () => {
+          clearTimeout(timer);
+          scApiPromise = null;
+          s.remove();
+          reject(new Error('Không tải được SoundCloud Widget API'));
+        };
+        document.head.appendChild(s);
+      }
     } catch (err) {
       scApiPromise = null;
       reject(err);
     }
   });
   return scApiPromise;
+}
+
+function destroyYouTubePlayer() {
+  if (victory.ytPlayer) {
+    try { if (victory.ytPlayer.stopVideo) victory.ytPlayer.stopVideo(); } catch { /* ignore */ }
+    try { if (victory.ytPlayer.destroy) victory.ytPlayer.destroy(); } catch { /* ignore */ }
+    victory.ytPlayer = null;
+    victory.ytReady = false;
+  }
+  const slot = document.getElementById('__ytVictorySlot');
+  if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
+}
+
+function destroySoundCloudWidget() {
+  if (victory.scWidget) {
+    try { victory.scWidget.pause(); } catch { /* ignore */ }
+    try {
+      victory.scWidget.unbind('ready');
+      victory.scWidget.unbind('play');
+      victory.scWidget.unbind('pause');
+      victory.scWidget.unbind('finish');
+      victory.scWidget.unbind('error');
+    } catch { /* ignore */ }
+    victory.scWidget = null;
+  }
+  if (victory.scIframe) {
+    try { victory.scIframe.src = 'about:blank'; } catch { /* ignore */ }
+    if (victory.scIframe.parentNode) victory.scIframe.parentNode.removeChild(victory.scIframe);
+    victory.scIframe = null;
+  }
 }
 
 /** Áp dụng mức âm lượng cho Nguồn 1 (File ghi âm / âm thanh tải lên từ máy, 0.0 -> 1.0). */
@@ -373,6 +413,8 @@ async function preloadExternalStream(rawUrl) {
   }
 
   stopExternalStream();
+  if (!parsed || parsed.kind !== 'youtube') destroyYouTubePlayer();
+  if (!parsed || parsed.kind !== 'soundcloud') destroySoundCloudWidget();
   victory.rawUrl = nextRaw;
   victory.parsed = parsed;
   victory.usingFallback = false;
@@ -1199,8 +1241,8 @@ export const Sfx = {
   releaseVictoryMedia() {
     this.stopSiren();
     stopCustomMedia();
-    try { if (victory.ytPlayer && victory.ytPlayer.destroy) victory.ytPlayer.destroy(); } catch { /* ignore */ }
-    try { if (victory.scWidget) { victory.scWidget.unbind('ready'); victory.scWidget.unbind('play'); } } catch { /* ignore */ }
+    destroyYouTubePlayer();
+    destroySoundCloudWidget();
     [victory.audioEl, victory.voiceEl].forEach((el) => {
       if (el) {
         try { el.pause(); el.removeAttribute('src'); el.load(); } catch { /* ignore */ }

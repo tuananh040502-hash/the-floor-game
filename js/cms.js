@@ -253,22 +253,35 @@ function readBase64(blob) {
   });
 }
 
-/** Thu nhỏ ảnh (cạnh dài tối đa 1280px, JPEG) để tải nhanh. GIF/SVG giữ nguyên. */
+/** Thu nhỏ ảnh (cạnh dài tối đa 1280px) và nén sang WebP (chất lượng 0.82, fallback JPEG 0.82) trước khi gửi lên Drive. GIF/SVG giữ nguyên. */
 async function prepareImage(file) {
   if (file.type === 'image/gif' || file.type === 'image/svg+xml') return { blob: file, name: file.name };
   try {
     const bmp = await createImageBitmap(file);
     const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bmp.width * scale);
-    canvas.height = Math.round(bmp.height * scale);
+    canvas.width = Math.max(1, Math.round(bmp.width * scale));
+    canvas.height = Math.max(1, Math.round(bmp.height * scale));
     const g = canvas.getContext('2d');
-    g.fillStyle = '#fff';
-    g.fillRect(0, 0, canvas.width, canvas.height);
     g.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.86));
+    if (typeof bmp.close === 'function') bmp.close();
+
+    // Ưu tiên xuất định dạng image/webp chất lượng 0.82
+    let blob = await new Promise((res) => canvas.toBlob(res, 'image/webp', 0.82));
+    let ext = '.webp';
+    if (!blob || blob.type !== 'image/webp') {
+      // Fallback sang image/jpeg chất lượng 0.82 nếu trình duyệt không hỗ trợ WebP (cần nền trắng cho ảnh trong suốt)
+      g.globalCompositeOperation = 'destination-over';
+      g.fillStyle = '#ffffff';
+      g.fillRect(0, 0, canvas.width, canvas.height);
+      blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.82));
+      ext = '.jpg';
+    }
+    canvas.width = 0;
+    canvas.height = 0;
     if (!blob) throw new Error('toBlob');
-    return { blob, name: file.name.replace(/\.[^.]+$/, '') + '.jpg' };
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'image';
+    return { blob, name: `${baseName}${ext}` };
   } catch {
     return { blob: file, name: file.name };
   }
@@ -279,7 +292,7 @@ async function uploadToDrive(cfg, blob, name) {
   const res = await fetch(cfg.url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // tránh preflight CORS với Apps Script
-    body: JSON.stringify({ folderId: cfg.folderId, name, mime: blob.type || 'image/jpeg', data }),
+    body: JSON.stringify({ folderId: cfg.folderId, name, mime: blob.type || 'image/webp', data }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
