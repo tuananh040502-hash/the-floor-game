@@ -12,6 +12,7 @@ import { Fireworks } from './fx.js';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
 
 const $ = (id) => document.getElementById(id);
+const MAX_TOPIC_IMAGES = 100;
 const SIDE_COLOR = { A: '#0a84ff', B: '#ff7a59' };
 const RING_LEN = 552.92;
 const GRACE_WAIT_MS = 2000; // giữ thêm tối đa 2s nếu ảnh câu đầu chưa tải xong
@@ -104,6 +105,11 @@ function onSnapshot(remote) {
         sessionStorage.getItem(pinKey) || '',
         clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
       );
+      const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
+      if (savedDur) {
+        const sec = clampDurationSec(savedDur);
+        fresh.players.forEach((p) => { p.durationSec = sec; });
+      }
       role = 'host';
       controller = true;
       state = fresh;
@@ -213,8 +219,8 @@ function activeUrls(s) {
     return s.setup.preloadUrls;
   }
   if (s.setup && s.setup.catId) {
-    const cat = allCategories().find((c) => c.id === s.setup.catId);
-    if (cat) return extractImageUrls(cat.items);
+    const cat = getCategories100().find((c) => c.id === s.setup.catId);
+    if (cat) return extractImageUrls(cat.items.slice(0, MAX_TOPIC_IMAGES));
   }
   return [];
 }
@@ -305,13 +311,31 @@ function makeEvent(next, type) {
   return { id, type };
 }
 
+/** Lấy toàn bộ chủ đề và đảm bảo giữ tối đa MAX_TOPIC_IMAGES (100) ảnh từ localStorage. */
+function getCategories100() {
+  const cats = allCategories();
+  try {
+    const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
+    if (Array.isArray(raw)) {
+      const byId = new Map(raw.map((t) => [t && t.id, t]));
+      cats.forEach((c) => {
+        const src = byId.get(c.id);
+        if (src && Array.isArray(src.items) && src.items.length > c.items.length) {
+          c.items = src.items.filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+        }
+      });
+    }
+  } catch { /* ignore */ }
+  return cats;
+}
+
 /** Gán thông tin chủ đề, danh sách preload ảnh và âm thanh chiến thắng vào setup */
 function applyCategoryToSetup(setup, catId) {
   setup.catId = catId;
-  const cats = allCategories();
+  const cats = getCategories100();
   const cat = cats.find((c) => c.id === catId);
   if (cat) {
-    setup.preloadUrls = extractImageUrls(cat.items);
+    setup.preloadUrls = extractImageUrls(cat.items.slice(0, MAX_TOPIC_IMAGES));
     setup.victoryAudioUrl = cat.victoryAudioUrl || '';
     setup.victoryVoiceData = cat.victoryVoiceData || '';
     setup.victoryVoiceName = cat.victoryVoiceName || '';
@@ -545,7 +569,10 @@ function buildFloor(count) {
     const el = document.createElement('div');
     el.className = 'cell';
     el.dataset.i = String(i);
-    el.innerHTML = '<span class="cell-avatar"></span><span class="cell-name"></span>';
+    el.innerHTML =
+      '<div class="cell-top"><span class="cell-badge"></span></div>' +
+      '<div class="cell-mid"><span class="cell-avatar"></span><span class="cell-name"></span></div>' +
+      '<div class="cell-bot"><span class="cell-topic"></span><span class="cell-territory"></span></div>';
     frag.appendChild(el);
   }
   grid.appendChild(frag);
@@ -564,17 +591,36 @@ function buildFloor(count) {
 function renderFloor(s) {
   if (!floorBuilt || floorBuiltCount !== s.floor.length) buildFloor(s.floor.length);
   const flipSet = new Set(prevPhase === 'finished' && s.phase === 'floor' && s.duel ? s.duel.changed : []);
+  const catMap = new Map(getCategories100().map((c) => [c.id, c]));
+  const countMap = new Map();
+  s.players.forEach((p) => countMap.set(p.id, cellCount(s, p.id)));
+
   [...$('floorGrid').children].forEach((el, i) => {
     const owner = playerById(s, s.floor[i]);
     if (!owner) return;
-    const isElim = cellCount(s, owner.id) <= 0;
+    const owned = countMap.get(owner.id) || 0;
+    const isElim = owned <= 0;
+    const isDef = !isElim && !!s.setup.defId && owner.id === s.setup.defId;
+    const isChal = !isElim && !!s.setup.chalId && owner.id === s.setup.chalId;
+    const cat = catMap.get(owner.categoryId);
+
     el.style.setProperty('--c', owner.color);
-    el.firstChild.textContent = owner.avatar;
-    el.lastChild.textContent = owner.name;
+    const badgeEl = el.querySelector('.cell-badge');
+    const avatarEl = el.querySelector('.cell-avatar');
+    const nameEl = el.querySelector('.cell-name');
+    const topicEl = el.querySelector('.cell-topic');
+    const territoryEl = el.querySelector('.cell-territory');
+
+    if (badgeEl) badgeEl.textContent = isChal ? '⚔️ THÁCH ĐẤU' : isDef ? '🛡️ BỊ THÁCH' : '';
+    if (avatarEl) avatarEl.textContent = owner.avatar;
+    if (nameEl) nameEl.textContent = owner.name;
+    if (topicEl) topicEl.textContent = cat ? `${cat.icon} ${cat.name}` : (owner.categoryId || '—');
+    if (territoryEl) territoryEl.textContent = `${owned} ô`;
+
     el.classList.toggle('is-eliminated', isElim);
     el.classList.toggle('is-sel', s.setup.cell === i);
-    el.classList.toggle('is-def', !isElim && !!s.setup.defId && owner.id === s.setup.defId);
-    el.classList.toggle('is-chal', !isElim && !!s.setup.chalId && owner.id === s.setup.chalId);
+    el.classList.toggle('is-def', isDef);
+    el.classList.toggle('is-chal', isChal);
     if (flipSet.has(i)) {
       el.classList.add('is-flip');
       setTimeout(() => el.classList.remove('is-flip'), 3300);
@@ -675,7 +721,7 @@ function renderSetup(s) {
     }
   }
 
-  const cats = allCategories();
+  const cats = getCategories100();
   const catSel = $('selCat');
   const catSig = JSON.stringify(cats.map((c) => [c.id, c.name, c.icon, c.items.length]));
   if (catSel.dataset.sig !== catSig) {
@@ -710,16 +756,19 @@ function renderSetup(s) {
     roster.dataset.sig = sig;
     roster.innerHTML = '';
     const rFrag = document.createDocumentFragment();
-    s.players.forEach((p) => {
+    s.players.forEach((p, idx) => {
       const row = document.createElement('div');
       row.dataset.pid = p.id;
-      row.className = 'grid grid-cols-[2.1rem_1fr_2rem_1.35fr_3.6rem] gap-1 items-center';
+      row.className = 'roster-grid roster-row';
       row.innerHTML = `
-        <input class="input !p-1 text-center" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" title="Biểu tượng" />
-        <input class="input !px-2" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" />
-        <input type="color" data-f="color" value="${p.color}" class="w-7 h-8 bg-transparent" title="Màu đại diện" />
-        <select class="input !px-1.5 text-xs" data-f="categoryId" title="Chủ đề khởi đầu">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>
-        <input type="number" min="10" max="600" step="5" class="input !px-1 text-center font-num text-xs" data-f="durationSec" value="${clampDurationSec(p.durationSec)}" title="Thời gian thi đấu (giây)" />`;
+        <div class="roster-col-id">
+          <span class="roster-num" style="background:${p.color}">${idx + 1}</span>
+          <input type="color" data-f="color" value="${p.color}" class="roster-color" title="Màu đại diện" />
+          <input class="input roster-avatar-inp" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" title="Biểu tượng" />
+        </div>
+        <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" placeholder="Tên…" />
+        <select class="input" data-f="categoryId" title="Chủ đề sở trường">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>
+        <input type="number" min="10" max="600" step="5" class="input text-center font-num" data-f="durationSec" value="${clampDurationSec(p.durationSec)}" title="Thời gian thi đấu (giây)" />`;
       rFrag.appendChild(row);
     });
     roster.appendChild(rFrag);

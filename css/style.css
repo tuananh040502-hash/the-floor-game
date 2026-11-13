@@ -182,7 +182,7 @@ input[type='checkbox'] { accent-color: var(--blue); width: 16px; height: 16px; }
 /* ---------- THE FLOOR ---------- */
 .floor-stage { perspective: 1500px; perspective-origin: 50% 10%; }
 .floor-grid {
-  display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px;
   width: min(92vw, 860px); margin: 0 auto; padding: 18px;
   transform: rotateX(26deg); transform-origin: 50% 80%; transform-style: preserve-3d;
   background: var(--glass); border: 1px solid var(--glass-border); border-radius: 36px;
@@ -193,30 +193,114 @@ input[type='checkbox'] { accent-color: var(--blue); width: 16px; height: 16px; }
 .cell {
   --c: #636366;
   position: relative; aspect-ratio: 1.2 / 1;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  display: flex; flex-direction: column; align-items: stretch; justify-content: space-between;
+  gap: 6px; padding: 10px 12px; overflow: hidden;
   border-radius: 22px;
   background:
     radial-gradient(120% 120% at 20% 0%, color-mix(in srgb, var(--c) 55%, transparent), transparent 70%),
     color-mix(in srgb, var(--c) 18%, var(--glass-strong));
   border: 1px solid color-mix(in srgb, var(--c) 40%, var(--glass-border));
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25), inset 0 1px 1px var(--specular);
-  transition: transform 0.45s var(--spring), box-shadow 0.45s var(--ease), background 0.8s var(--ease), border-color 0.8s var(--ease);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22), inset 0 1px 1px var(--specular);
+  transition: transform 0.35s var(--spring), box-shadow 0.35s var(--ease), background 0.8s var(--ease), border-color 0.35s var(--ease);
   will-change: transform;
   user-select: none;
 }
-.cell .cell-avatar { font-size: clamp(1.4rem, 4.4vw, 2.7rem); line-height: 1; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35)); }
-.cell .cell-name { font-size: clamp(0.6rem, 1.3vw, 0.85rem); font-weight: 700; letter-spacing: 0.02em; color: var(--t1); max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 3 tầng dọc trong mỗi ô người chơi: Top (trạng thái) | Mid (Avatar + Tên) | Bot (Chủ đề + Số ô) */
+.cell-top {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.cell-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  font-size: clamp(9px, 1.15vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  color: #fff;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-badge:empty { visibility: hidden; }
+
+.cell-mid {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+}
+.cell .cell-avatar {
+  font-size: clamp(1.5rem, 4vw, 2.6rem);
+  line-height: 1;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
+}
+.cell .cell-name {
+  font-family: var(--font-display, inherit);
+  font-size: clamp(0.85rem, 1.7vw, 1.28rem);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  color: var(--t1);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-bot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: clamp(10px, 1.15vw, 12px);
+  line-height: 1.2;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.cell-topic {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--t2);
+  text-align: left;
+}
+.cell-territory {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--t1);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .host .cell { cursor: pointer; }
-.host .cell:hover, .cell:hover { transform: translateZ(16px) scale(1.05); }
-.cell.is-chal, .cell.is-def { animation: cellBreath 2.4s ease-in-out infinite; }
+.host .cell:hover, .cell:hover { transform: translateZ(6px) scale(1.015); }
 .cell.is-sel {
-  transform: translateZ(30px) scale(1.09); z-index: 2;
+  transform: translateZ(8px) scale(1.015); z-index: 2;
   border-color: color-mix(in srgb, var(--c) 70%, #fff);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 60%, transparent), 0 0 70px 8px color-mix(in srgb, var(--c) 55%, transparent), 0 24px 40px rgba(0, 0, 0, 0.4), inset 0 1px 1px var(--specular);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 75%, #fff), 0 0 14px color-mix(in srgb, var(--c) 45%, transparent);
 }
 .cell.is-flip { animation: cellFlip 1.4s var(--spring) 2; }
-@keyframes cellBreath { 50% { box-shadow: 0 0 44px 2px color-mix(in srgb, var(--c) 45%, transparent), inset 0 1px 1px var(--specular); } }
-@keyframes cellFlip { 0% { transform: rotateY(0); } 50% { transform: rotateY(180deg) scale(1.12); box-shadow: 0 0 60px 8px color-mix(in srgb, var(--c) 70%, transparent); } 100% { transform: rotateY(360deg); } }
+@keyframes cellBreath { 50% { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--c) 65%, #fff), 0 0 14px color-mix(in srgb, var(--c) 40%, transparent); } }
+@keyframes cellFlip { 0% { transform: rotateY(0); } 50% { transform: rotateY(180deg) scale(1.04); box-shadow: 0 0 24px 4px color-mix(in srgb, var(--c) 65%, transparent); } 100% { transform: rotateY(360deg); } }
 
 /* ---------- Arena ---------- */
 .side-card {
@@ -600,88 +684,56 @@ html, body { height: auto; min-height: 100vh; min-height: 100dvh; }
 }
 
 .cell.is-chal {
-  border-color: #0a84ff !important;
-  box-shadow: 0 0 0 2px #0a84ff, 0 0 32px rgba(10, 132, 255, 0.7), 0 16px 32px rgba(0, 0, 0, 0.45), inset 0 1px 2px rgba(255, 255, 255, 0.7) !important;
-  transform: translateZ(26px) scale(1.05) !important;
-  z-index: 5;
+  border-color: #38bdf8 !important;
+  box-shadow: inset 0 0 0 3px #0a84ff, 0 0 0 2px rgba(56, 189, 248, 0.85), 0 0 12px rgba(10, 132, 255, 0.48) !important;
+  transform: scale(1.015) !important;
+  z-index: 3;
   animation: chalPulse 2.2s ease-in-out infinite !important;
 }
-.cell.is-chal::after {
-  content: '⚔️ THÁCH ĐẤU';
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 3px 8px;
-  font-size: clamp(8px, 1.8vw, 10px);
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: #fff;
-  background: rgba(10, 132, 255, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 9999px;
-  box-shadow: 0 4px 14px rgba(10, 132, 255, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.6);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  pointer-events: none;
-  z-index: 10;
-  white-space: nowrap;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-  animation: badgePop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+.cell.is-chal .cell-badge {
+  background: linear-gradient(135deg, #0a84ff, #2563eb);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 2px 8px rgba(10, 132, 255, 0.45);
+  animation: badgePop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .cell.is-def {
-  border-color: #ff7a59 !important;
-  box-shadow: 0 0 0 2px #ff7a59, 0 0 32px rgba(255, 122, 89, 0.7), 0 16px 32px rgba(0, 0, 0, 0.45), inset 0 1px 2px rgba(255, 255, 255, 0.7) !important;
-  transform: translateZ(26px) scale(1.05) !important;
-  z-index: 5;
+  border-color: #fb923c !important;
+  box-shadow: inset 0 0 0 3px #ef4444, 0 0 0 2px rgba(255, 122, 89, 0.85), 0 0 12px rgba(239, 68, 68, 0.48) !important;
+  transform: scale(1.015) !important;
+  z-index: 3;
   animation: defPulse 2.2s ease-in-out infinite !important;
 }
-.cell.is-def::after {
-  content: '🛡️ BỊ THÁCH';
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 3px 8px;
-  font-size: clamp(8px, 1.8vw, 10px);
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: #fff;
-  background: rgba(255, 122, 89, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 9999px;
-  box-shadow: 0 4px 14px rgba(255, 122, 89, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.6);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  pointer-events: none;
-  z-index: 10;
-  white-space: nowrap;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-  animation: badgePop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+.cell.is-def .cell-badge {
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.45);
+  animation: badgePop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes badgePop {
-  0% { transform: scale(0.5); opacity: 0; }
+  0% { transform: scale(0.8); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
 }
 
 @keyframes chalPulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px #0a84ff, 0 0 26px rgba(10, 132, 255, 0.55), 0 14px 28px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 3px #0a84ff, 0 0 0 2px rgba(56, 189, 248, 0.8), 0 0 10px rgba(10, 132, 255, 0.4);
   }
   50% {
-    box-shadow: 0 0 0 3px #64d2ff, 0 0 46px rgba(100, 210, 255, 0.85), 0 18px 36px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.7);
+    box-shadow: inset 0 0 0 3px #64d2ff, 0 0 0 2px rgba(100, 210, 255, 0.95), 0 0 16px rgba(56, 189, 248, 0.65);
   }
 }
 
 @keyframes defPulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px #ff7a59, 0 0 26px rgba(255, 122, 89, 0.55), 0 14px 28px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 0 0 3px #ef4444, 0 0 0 2px rgba(255, 122, 89, 0.8), 0 0 10px rgba(239, 68, 68, 0.4);
   }
   50% {
-    box-shadow: 0 0 0 3px #ff9f0a, 0 0 46px rgba(255, 159, 10, 0.85), 0 18px 36px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.7);
+    box-shadow: inset 0 0 0 3px #ff7a59, 0 0 0 2px rgba(255, 159, 10, 0.95), 0 0 16px rgba(255, 122, 89, 0.65);
   }
 }
-.cell.is-sel { box-shadow: 0 0 26px 2px var(--c); }
+.cell.is-sel { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 70%, #fff), 0 0 12px color-mix(in srgb, var(--c) 45%, transparent); }
 .side-card.active { box-shadow: 0 0 34px var(--sc); }
 .side-card.win { animation: none; box-shadow: 0 0 44px var(--sc); }
 .q-wrap { box-shadow: var(--shadow-sm); }
@@ -701,25 +753,111 @@ html, body { height: auto; min-height: 100vh; min-height: 100dvh; }
   width: min(94vw, 900px, calc((100vh - 240px) * 1.8));
   width: min(94vw, 900px, calc((100dvh - 240px) * 1.8));
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  transform: rotateX(18deg);
+  gap: 14px;
+  transform: rotateX(16deg);
 }
-.floor-grid > .cell { grid-column: span 2; aspect-ratio: auto; min-height: 100px; min-height: clamp(96px, 20dvh, 200px); }
+@media (min-width: 1024px) {
+  .floor-grid { gap: 18px; }
+}
+.floor-grid > .cell { grid-column: span 2; aspect-ratio: auto; min-height: 132px; min-height: clamp(128px, 24dvh, 220px); }
 .floor-grid[data-count='2'] > .cell,
-.floor-grid[data-count='4'] > .cell { grid-column: span 3; min-height: 150px; min-height: clamp(130px, 28dvh, 300px); }
-.floor-grid[data-count='3'] > .cell { min-height: 140px; min-height: clamp(130px, 30dvh, 300px); }
+.floor-grid[data-count='4'] > .cell { grid-column: span 3; min-height: 165px; min-height: clamp(150px, 30dvh, 300px); }
+.floor-grid[data-count='3'] > .cell { min-height: 160px; min-height: clamp(150px, 31dvh, 300px); }
 .floor-grid[data-count='5'] > .cell:nth-child(4) { grid-column: 2 / span 2; }
 .floor-grid[data-count='5'] > .cell:nth-child(5) { grid-column: 4 / span 2; }
 .floor-grid[data-count='2'] .cell-avatar,
 .floor-grid[data-count='3'] .cell-avatar,
-.floor-grid[data-count='4'] .cell-avatar { font-size: clamp(2.6rem, 8vw, 5rem); }
+.floor-grid[data-count='4'] .cell-avatar { font-size: clamp(2.4rem, 6.5vw, 4.4rem); }
 .floor-grid[data-count='2'] .cell-name,
 .floor-grid[data-count='3'] .cell-name,
-.floor-grid[data-count='4'] .cell-name { font-size: clamp(0.9rem, 2vw, 1.3rem); }
+.floor-grid[data-count='4'] .cell-name { font-size: clamp(1.05rem, 2.2vw, 1.55rem); }
 @media (orientation: portrait) {
   .floor-grid[data-count='3'] > .cell:nth-child(-n + 2) { grid-column: span 3; }
   .floor-grid[data-count='3'] > .cell:nth-child(3) { grid-column: 2 / span 4; }
   .floor-grid[data-count='6'] > .cell { grid-column: span 3; }
-  .floor-grid { width: 94vw; max-width: 760px; width: min(94vw, 760px); }
+  .floor-grid { width: 94vw; max-width: 760px; width: min(94vw, 760px); gap: 14px; }
+}
+
+/* ---------- Bảng thiết lập danh sách người chơi (2–6 người) thẳng cột ---------- */
+.player-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.player-toolbar .seg { padding: 3px; }
+.player-toolbar .seg button { min-height: 36px; min-width: 0; padding: 4px 6px; font-size: 13px; }
+.roster-table { width: 100%; overflow: hidden; }
+.roster-grid {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) minmax(0, 1.2fr) 60px;
+  gap: 6px;
+  align-items: center;
+}
+.roster-header {
+  padding: 0 2px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--t3);
+}
+.roster-row {
+  padding: 4px 2px;
+  border-radius: 12px;
+}
+.roster-row > * { min-width: 0; }
+.roster-col-id {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.roster-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.roster-color {
+  width: 22px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.roster-avatar-inp {
+  width: 30px !important;
+  padding: 4px 2px !important;
+  text-align: center;
+  font-size: 14px !important;
+  flex-shrink: 0;
+}
+.roster-row .input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.roster-row select.input {
+  padding-right: 4px;
+  text-overflow: ellipsis;
+}
+@media (max-width: 440px) {
+  .roster-grid {
+    grid-template-columns: 68px minmax(0, 1fr) minmax(0, 1.05fr) 52px;
+    gap: 4px;
+  }
+  .roster-num { display: none; }
 }
 
 /* ---------- Đấu trường (Arena): Ưu tiên ảnh trung tâm 75%–82% 100dvh & 2 HUD góc dưới ---------- */

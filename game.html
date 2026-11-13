@@ -46,7 +46,7 @@
 
     <!-- ===== SÀN THE FLOOR ===== -->
     <section id="viewFloor" class="hidden">
-      <div class="grid gap-6 lg:grid-cols-[1fr_340px]">
+      <div class="grid gap-6 lg:grid-cols-[1fr_430px] xl:grid-cols-[1fr_460px] items-start">
         <div>
           <div class="text-center mb-4">
             <div class="eyebrow">The Floor</div>
@@ -54,7 +54,7 @@
           </div>
           <div class="floor-stage"><div id="floorGrid" class="floor-grid"></div></div>
         </div>
-        <aside class="space-y-4">
+        <aside class="space-y-4 min-w-0">
           <div class="panel p-5">
             <div class="eyebrow mb-3">Bảng xếp hạng</div>
             <div id="board" class="space-y-3"></div>
@@ -100,15 +100,6 @@
               </div>
             </div>
 
-            <div class="field-label"><span class="eyebrow">Số người chơi (2–6)</span>
-              <div id="playerCountSeg" class="seg w-full" role="group" aria-label="Số người chơi">
-                <button type="button" data-pc="2" class="flex-1">2</button>
-                <button type="button" data-pc="3" class="flex-1">3</button>
-                <button type="button" data-pc="4" class="flex-1">4</button>
-                <button type="button" data-pc="5" class="flex-1">5</button>
-                <button type="button" data-pc="6" class="flex-1">6</button>
-              </div>
-            </div>
             <label class="field-label"><span class="eyebrow">Chủ đề thi đấu</span>
               <select id="selCat" class="input"></select>
             </label>
@@ -120,19 +111,47 @@
               <div class="progress"><div id="setupPreloadBar" class="progress-fill"></div></div>
             </div>
             <button id="btnStartDuel" class="btn btn-ok btn-lg w-full" disabled>Bắt đầu trận</button>
-            <details class="text-sm" open>
-              <summary class="cursor-pointer t-2 font-semibold">Tên, biểu tượng, thời gian &amp; chủ đề khởi đầu</summary>
-              <div class="flex items-center justify-between gap-2 mt-3 surface-sub rounded-xl px-3 py-2 border border-white/5">
-                <span class="text-xs font-semibold t-2">⏱ Đặt chung (giây):</span>
-                <div class="flex items-center gap-1.5">
-                  <input id="bulkTimeInput" type="number" min="10" max="600" step="5" value="60" class="input !py-1 !px-2 w-20 text-center font-num text-xs" />
-                  <button id="btnBulkTime" type="button" class="btn btn-ghost btn-sm !py-1 !px-2.5 text-xs">Đặt chung</button>
+
+            <!-- Bảng thiết lập người chơi (2–6 người) -->
+            <details class="text-sm border-t border-white/10 pt-3" open>
+              <summary class="cursor-pointer t-2 font-semibold select-none">Thiết lập người chơi (2–6 người)</summary>
+              <div class="mt-3 space-y-3">
+                <!-- Thanh công cụ chung trên cùng -->
+                <div class="player-toolbar surface-sub rounded-2xl p-3 border border-white/5">
+                  <div class="player-toolbar-block">
+                    <span class="eyebrow">Số người chơi (2–6)</span>
+                    <div id="playerCountSeg" class="seg w-full mt-1.5" role="group" aria-label="Số người chơi">
+                      <button type="button" data-pc="2" class="flex-1">2</button>
+                      <button type="button" data-pc="3" class="flex-1">3</button>
+                      <button type="button" data-pc="4" class="flex-1">4</button>
+                      <button type="button" data-pc="5" class="flex-1">5</button>
+                      <button type="button" data-pc="6" class="flex-1">6</button>
+                    </div>
+                  </div>
+                  <div class="player-toolbar-block">
+                    <span class="eyebrow">Đặt chung thời gian (giây)</span>
+                    <div class="flex items-center gap-1.5 mt-1.5">
+                      <input id="bulkTimeInput" type="number" min="10" max="600" step="5" value="60" class="input !py-1.5 !px-2 flex-1 min-w-0 text-center font-num text-xs font-bold" />
+                      <button id="btnBulkTime" type="button" class="btn btn-ghost btn-sm !py-1.5 !px-3 text-xs shrink-0">Áp dụng</button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div id="roster" class="space-y-2 mt-3"></div>
-              <div class="flex gap-2 mt-4">
-                <button id="btnShuffleFloor" class="btn btn-ghost btn-sm">Chia lại sàn</button>
-                <button id="btnResetAll" class="btn btn-ghost btn-sm">Đặt lại</button>
+
+                <!-- Bảng danh sách người chơi thẳng cột -->
+                <div class="roster-table">
+                  <div class="roster-grid roster-header">
+                    <span># / Màu</span>
+                    <span>Tên người chơi</span>
+                    <span>Chủ đề sở trường</span>
+                    <span class="text-center">Giây</span>
+                  </div>
+                  <div id="roster" class="space-y-2 mt-1.5"></div>
+                </div>
+
+                <div class="flex gap-2 pt-1">
+                  <button id="btnShuffleFloor" class="btn btn-ghost btn-sm">Chia lại sàn</button>
+                  <button id="btnResetAll" class="btn btn-ghost btn-sm">Đặt lại</button>
+                </div>
               </div>
             </details>
           </div>

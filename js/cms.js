@@ -1,23 +1,59 @@
 import { CATEGORIES } from './data.js';
 import {
-  MAX_ITEMS, loadCustom, saveCustom, newId, loadDrive, saveDrive, driveThumb,
+  TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive, driveThumb,
   normalizeImageUrl, parseVictoryAudio, normalizeVictoryAudioUrl,
   saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
   clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
 import { Sfx } from './audio.js';
 
+export const MAX_TOPIC_IMAGES = 100;
+
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const room = params.get('room');
 $('backLink').href = room ? `game.html?role=host&room=${encodeURIComponent(room)}` : 'index.html';
 
-let topics = loadCustom();
+function loadTopicsUpToLimit() {
+  const base = loadCustom();
+  try {
+    const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
+    if (Array.isArray(raw)) {
+      const byId = new Map(raw.map((t) => [t && t.id, t]));
+      base.forEach((t) => {
+        const src = byId.get(t.id);
+        if (src && Array.isArray(src.items) && src.items.length > t.items.length) {
+          t.items = src.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+        }
+      });
+    }
+  } catch { /* ignore */ }
+  return base;
+}
+
+let topics = loadTopicsUpToLimit();
 let currentId = topics[0] ? topics[0].id : null;
 let uploading = false;
 
 const cur = () => topics.find((t) => t.id === currentId) || null;
-const persist = () => saveCustom(topics);
+const persist = () => {
+  saveCustom(topics);
+  try {
+    const saved = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
+    if (Array.isArray(saved)) {
+      const byId = new Map(topics.map((t) => [t.id, t]));
+      let changed = false;
+      saved.forEach((st) => {
+        const src = byId.get(st && st.id);
+        if (src && Array.isArray(src.items) && src.items.length > (st.items?.length || 0)) {
+          st.items = src.items.slice(0, MAX_TOPIC_IMAGES);
+          changed = true;
+        }
+      });
+      if (changed) localStorage.setItem(TOPICS_KEY, JSON.stringify(saved));
+    }
+  } catch { /* ignore */ }
+};
 
 function toast(msg, bad = false) {
   const el = $('toast');
@@ -49,7 +85,7 @@ function renderTopics() {
     const hasVoice = !!(t.victoryVoiceData || t.victoryVoiceName);
     const hasMusic = !!t.victoryAudioUrl;
     const audioDots = `${hasVoice ? '<span title="Có file ghi âm / SFX riêng">🎙️</span>' : ''}${hasMusic ? '<span title="Có link nhạc chiến thắng riêng">🎵</span>' : ''}`;
-    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${audioDots}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_ITEMS}</span>`;
+    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${audioDots}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_TOPIC_IMAGES}</span>`;
     frag.appendChild(el);
   });
   list.appendChild(frag);
@@ -140,7 +176,7 @@ function render() {
   renderAudioBadges(t);
   $('tShuffle').checked = !!t.shuffle;
   $('countNow').textContent = t.items.length;
-  $('countMax').textContent = MAX_ITEMS;
+  $('countMax').textContent = MAX_TOPIC_IMAGES;
   renderItems();
 }
 
@@ -209,7 +245,7 @@ function addLinks() {
   let bad = 0;
   let full = 0;
   for (const line of lines) {
-    if (t.items.length >= MAX_ITEMS) {
+    if (t.items.length >= MAX_TOPIC_IMAGES) {
       full += 1;
       continue;
     }
@@ -226,7 +262,7 @@ function addLinks() {
   persist();
   $('linkArea').value = '';
   render();
-  toast(`Đã thêm ${added} ảnh.${bad ? ` ${bad} link không hợp lệ.` : ''}${full ? ` ${full} link bị bỏ vì chủ đề đã đủ ${MAX_ITEMS} ảnh.` : ''}`, bad || full);
+  toast(`Đã thêm ${added} ảnh.${bad ? ` ${bad} link không hợp lệ.` : ''}${full ? ` ${full} link bị bỏ vì chủ đề đã đủ ${MAX_TOPIC_IMAGES} ảnh.` : ''}`, bad || full);
 }
 
 function guessName(src) {
@@ -314,9 +350,9 @@ async function handleFiles(fileList) {
     toast('Hãy nhập Web App URL và Folder ID Google Drive trước (hoặc dùng “Dán link ảnh”).', true);
     return;
   }
-  const room = MAX_ITEMS - t.items.length;
+  const room = MAX_TOPIC_IMAGES - t.items.length;
   if (room <= 0) {
-    toast(`Chủ đề đã đủ ${MAX_ITEMS} ảnh.`, true);
+    toast(`Chủ đề đã đủ ${MAX_TOPIC_IMAGES} ảnh.`, true);
     return;
   }
   if (files.length > room) {
@@ -410,7 +446,18 @@ function importFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const incoming = parseImport(String(reader.result));
+      const rawText = String(reader.result);
+      const incoming = parseImport(rawText);
+      try {
+        const parsed = JSON.parse(rawText);
+        const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.topics) ? parsed.topics : []);
+        incoming.forEach((t, idx) => {
+          const rawT = rawList.find((r) => r && ((r.id && r.id === t.id) || r.name === t.name)) || rawList[idx];
+          if (rawT && Array.isArray(rawT.items) && rawT.items.length > t.items.length) {
+            t.items = rawT.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+          }
+        });
+      } catch { /* ignore */ }
       const replace = topics.length && confirm(`Tìm thấy ${incoming.length} chủ đề.\nOK = THAY THẾ toàn bộ chủ đề hiện có\nHủy = GỘP thêm vào danh sách`);
       if (replace) topics = [];
       const used = new Set(topics.map((t) => t.id));
@@ -568,7 +615,7 @@ function bind() {
     if (!src) return;
     const t = sanitizeTopic({
       id: newId(), name: `${src.name} (bản sao)`, icon: src.icon, shuffle: true,
-      items: src.items.slice(0, MAX_ITEMS),
+      items: src.items.slice(0, MAX_TOPIC_IMAGES),
     });
     topics.push(t);
     currentId = t.id;
