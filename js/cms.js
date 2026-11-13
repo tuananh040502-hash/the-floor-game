@@ -215,11 +215,20 @@ function renderItems() {
 
     const img = card.querySelector('img');
     if (img) {
+      let retried = false;
       img.addEventListener('error', () => {
+        if (!retried && it.src) {
+          retried = true;
+          const m = /(?:id=|\/d\/)([a-zA-Z0-9_-]{10,})/.exec(it.src);
+          img.src = m
+            ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`
+            : `${it.src}${it.src.includes('?') ? '&' : '?'}retry=1`;
+          return;
+        }
         img.replaceWith(Object.assign(document.createElement('div'), {
-          className: 'photo-emoji', textContent: '⚠️', title: 'Ảnh lỗi / không tải được — hãy xóa hoặc thay link',
+          className: 'photo-emoji', textContent: '🖼️', title: 'Ảnh lỗi / không tải được — hãy xóa hoặc thay link',
         }));
-      }, { once: true });
+      });
     }
     frag.appendChild(card);
   });
@@ -283,39 +292,109 @@ function cleanName(filename) {
 function readBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onload = () => {
+      const raw = String(r.result || '');
+      const commaIdx = raw.indexOf(',');
+      const b64 = (commaIdx >= 0 ? raw.slice(commaIdx + 1) : raw).replace(/[^A-Za-z0-9+/=]/g, '');
+      if (!b64) {
+        reject(new Error('Dữ liệu Base64 rỗng hoặc không hợp lệ.'));
+        return;
+      }
+      resolve(b64);
+    };
     r.onerror = () => reject(new Error('Không đọc được file.'));
     r.readAsDataURL(blob);
   });
 }
 
-/** Thu nhỏ ảnh (cạnh dài tối đa 1280px) và nén sang WebP (chất lượng 0.82, fallback JPEG 0.82) trước khi gửi lên Drive. GIF/SVG giữ nguyên. */
+function loadBitmapOrImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(file).catch(() => loadHtmlImage(file));
+  }
+  return loadHtmlImage(file);
+}
+
+function loadHtmlImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Không giải mã được ảnh.'));
+    };
+    img.src = url;
+  });
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [meta, rawB64] = String(dataUrl || '').split(',');
+  const b64 = (rawB64 || '').replace(/[^A-Za-z0-9+/=]/g, '');
+  if (!b64) return null;
+  const mimeMatch = /data:([^;]+)/i.exec(meta || '');
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+function canvasExportBlob(canvas, mime, quality) {
+  return new Promise((resolve) => {
+    try {
+      if (typeof canvas.toBlob === 'function') {
+        canvas.toBlob((blob) => {
+          if (blob && blob.size > 0) {
+            resolve(blob);
+            return;
+          }
+          try {
+            resolve(dataUrlToBlob(canvas.toDataURL(mime, quality)));
+          } catch {
+            resolve(null);
+          }
+        }, mime, quality);
+      } else {
+        resolve(dataUrlToBlob(canvas.toDataURL(mime, quality)));
+      }
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/** Thu nhỏ ảnh (cạnh dài tối đa 1280px) và nén sang WebP (chất lượng 0.82, tự động fallback JPEG 0.82) trước khi gửi lên Drive. GIF/SVG giữ nguyên. */
 async function prepareImage(file) {
   if (file.type === 'image/gif' || file.type === 'image/svg+xml') return { blob: file, name: file.name };
   try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+    const bmp = await loadBitmapOrImage(file);
+    const srcW = bmp.width || bmp.naturalWidth || 1;
+    const srcH = bmp.height || bmp.naturalHeight || 1;
+    const scale = Math.min(1, 1280 / Math.max(srcW, srcH));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bmp.width * scale));
-    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    canvas.width = Math.max(1, Math.round(srcW * scale));
+    canvas.height = Math.max(1, Math.round(srcH * scale));
     const g = canvas.getContext('2d');
     g.drawImage(bmp, 0, 0, canvas.width, canvas.height);
     if (typeof bmp.close === 'function') bmp.close();
 
     // Ưu tiên xuất định dạng image/webp chất lượng 0.82
-    let blob = await new Promise((res) => canvas.toBlob(res, 'image/webp', 0.82));
+    let blob = await canvasExportBlob(canvas, 'image/webp', 0.82);
     let ext = '.webp';
-    if (!blob || blob.type !== 'image/webp') {
-      // Fallback sang image/jpeg chất lượng 0.82 nếu trình duyệt không hỗ trợ WebP (cần nền trắng cho ảnh trong suốt)
+    if (!blob || blob.type !== 'image/webp' || blob.size <= 0) {
+      // Fallback an toàn sang image/jpeg chất lượng 0.82 (vẽ nền trắng cho ảnh trong suốt)
       g.globalCompositeOperation = 'destination-over';
       g.fillStyle = '#ffffff';
       g.fillRect(0, 0, canvas.width, canvas.height);
-      blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.82));
+      blob = await canvasExportBlob(canvas, 'image/jpeg', 0.82);
       ext = '.jpg';
     }
     canvas.width = 0;
     canvas.height = 0;
-    if (!blob) throw new Error('toBlob');
+    if (!blob || blob.size <= 0) throw new Error('toBlob');
     const baseName = file.name.replace(/\.[^.]+$/, '') || 'image';
     return { blob, name: `${baseName}${ext}` };
   } catch {
