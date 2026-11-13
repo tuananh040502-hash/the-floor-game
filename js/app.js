@@ -6,6 +6,7 @@ import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
+  normalizeImageUrl, driveFallbackUrl, preloadWindow,
 } from './engine.js';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
@@ -147,7 +148,7 @@ function normalize(s) {
   s.floor = Array.from({ length: cellTotal }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
   s.championId = s.championId || '';
   s.setup = s.setup || {};
-  s.setup.preloadUrls = s.setup.preloadUrls || [];
+  s.setup.preloadUrls = (s.setup.preloadUrls || []).map((u) => normalizeImageUrl(u) || u).filter(Boolean);
   s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
   s.setup.victoryVoiceData = s.setup.victoryVoiceData || '';
   s.setup.victoryVoiceName = s.setup.victoryVoiceName || '';
@@ -155,7 +156,13 @@ function normalize(s) {
   s.setup.onlineAudioVolume = clampVolume01(s.setup.onlineAudioVolume, 1.0);
   if (s.duel) {
     s.duel.queue = s.duel.queue || [];
-    s.duel.items = s.duel.items || [];
+    s.duel.items = (s.duel.items || []).map((it) => {
+      if (!it || typeof it !== 'object') return null;
+      if (it.type === 'img' && it.src) {
+        return { ...it, src: normalizeImageUrl(it.src) || it.src, aliases: it.aliases || [] };
+      }
+      return { ...it, aliases: it.aliases || [] };
+    }).filter(Boolean);
     s.duel.changed = s.duel.changed || [];
     s.duel.totalA = s.duel.totalA || DUEL_MS;
     s.duel.totalB = s.duel.totalB || DUEL_MS;
@@ -213,7 +220,7 @@ function activeVictorySpec(s) {
 function activeUrls(s) {
   if (!s) return [];
   if (s.duel && s.duel.items && s.duel.items.length) {
-    return extractImageUrls(s.duel.items, s.duel.queue);
+    return extractImageUrls(s.duel.items, s.duel.queue, s.duel.qPos);
   }
   if (s.setup && s.setup.preloadUrls && s.setup.preloadUrls.length) {
     return s.setup.preloadUrls;
@@ -227,6 +234,9 @@ function activeUrls(s) {
 
 /** Giai đoạn 1 & 2: tự động kích hoạt preload ngầm ảnh + âm thanh chiến thắng kép trên cả máy Host và máy Xem. */
 function syncPreload(s) {
+  if (s.duel && s.duel.items && s.duel.items.length) {
+    preloadWindow(s.duel);
+  }
   const urls = activeUrls(s);
   if (urls.length) {
     const inArena = s.phase !== 'floor';
@@ -323,6 +333,13 @@ function getCategories100() {
         if (src && Array.isArray(src.items) && src.items.length > c.items.length) {
           c.items = src.items.filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
         }
+        c.items = (c.items || []).map((it) => {
+          if (!it || typeof it !== 'object') return null;
+          if (it.type === 'img' && it.src) {
+            return { ...it, src: normalizeImageUrl(it.src) || it.src };
+          }
+          return it;
+        }).filter(Boolean);
       });
     }
   } catch { /* ignore */ }
@@ -387,7 +404,12 @@ function dispatch(type, arg) {
     return;
   }
 
-  const ev = reduce(next, type, arg, transport.serverNow());
+  let reduceArg = arg;
+  if (type === 'startDuel' && next.setup && next.setup.catId) {
+    const fullCat = getCategories100().find((c) => c.id === next.setup.catId);
+    if (fullCat) reduceArg = { ...(arg || {}), cat: fullCat };
+  }
+  const ev = reduce(next, type, reduceArg, transport.serverNow());
   if (ev === false) return;
   if (ev) next.event = makeEvent(next, ev);
   state = normalize(next);
@@ -845,9 +867,8 @@ function renderArena(s) {
     } else if (s.phase === 'playing' || s.phase === 'paused') {
       const q = currentQuestion(d);
       if (q) content.appendChild(buildArt(q));
-      // Ưu tiên nạp trước 3 ảnh kế tiếp
-      const upcoming = [1, 2, 3].map((off) => currentQuestion(d, off)).filter((x) => x && x.type === 'img').map((x) => x.src);
-      if (upcoming.length) preloadImages(upcoming, { priority: true });
+      // Ưu tiên nạp tuần tự 3 ảnh kế tiếp qua preloadWindow
+      preloadWindow(d);
     }
   }
   $('qInner').classList.toggle('blurred', s.phase === 'paused');
@@ -900,25 +921,38 @@ function paintVictoryButtons() {
 
 function buildArt(q) {
   if (q.type === 'img') {
-    const cached = getCached(q.src);
-    let img;
-    if (cached && cached.img && cached.status === 'ok') {
-      // Dùng lại trực tiếp bitmap đã decode trong cache → hiển thị tức thì 0ms
-      img = cached.img.cloneNode(false);
-    } else {
-      img = document.createElement('img');
-      img.decoding = 'async';
-      img.referrerPolicy = 'no-referrer';
-      img.src = cached ? cached.cdn : toCdnUrl(q.src);
-    }
+    const src = normalizeImageUrl(q.src) || q.src;
+    const cached = (typeof window !== 'undefined' && window.__imageCache && window.__imageCache[src]) || getCached(src);
+    const img = document.createElement('img');
+    img.decoding = 'async';
+    img.referrerPolicy = 'no-referrer';
+    // Tuyệt đối không đặt crossOrigin="anonymous" để tránh bị Google Drive CDN chặn CORS
+    img.removeAttribute('crossorigin');
     img.className = 'q-img';
     img.alt = 'Câu đố';
+
+    let retried = false;
     img.addEventListener('error', () => {
+      console.error('Lỗi tải ảnh:', img.src);
+      if (!retried && src) {
+        retried = true;
+        const fallback = driveFallbackUrl(src);
+        if (fallback && img.src !== fallback) {
+          img.src = fallback;
+          return;
+        }
+        if (!src.startsWith('data:')) {
+          img.src = `${src}${src.includes('?') ? '&' : '?'}retry=1`;
+          return;
+        }
+      }
       img.replaceWith(Object.assign(document.createElement('div'), {
         className: 'font-display text-4xl t-danger text-center px-4',
         textContent: '⚠️ Ảnh không tải được',
       }));
-    }, { once: true });
+    });
+
+    img.src = (cached && cached.status === 'ok' && cached.resolvedUrl) ? cached.resolvedUrl : src;
     return img;
   }
   const div = document.createElement('div');

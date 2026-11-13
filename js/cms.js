@@ -1,10 +1,11 @@
 import { CATEGORIES } from './data.js';
 import {
-  TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive, driveThumb,
-  normalizeImageUrl, parseVictoryAudio, normalizeVictoryAudioUrl,
+  TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
+  parseVictoryAudio, normalizeVictoryAudioUrl,
   saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
   clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
+import { normalizeImageUrl, driveFallbackUrl } from './engine.js';
 import { Sfx } from './audio.js';
 
 export const MAX_TOPIC_IMAGES = 100;
@@ -193,6 +194,9 @@ function renderItems() {
   }
   const frag = document.createDocumentFragment();
   t.items.forEach((it, i) => {
+    if (it.type === 'img' && it.src) {
+      it.src = normalizeImageUrl(it.src) || it.src;
+    }
     const card = document.createElement('div');
     card.className = 'photo-card';
     card.draggable = true;
@@ -215,18 +219,20 @@ function renderItems() {
 
     const img = card.querySelector('img');
     if (img) {
+      img.removeAttribute('crossorigin');
       let retried = false;
       img.addEventListener('error', () => {
+        console.error('Lỗi tải ảnh:', img.src);
         if (!retried && it.src) {
           retried = true;
-          const m = /(?:id=|\/d\/)([a-zA-Z0-9_-]{10,})/.exec(it.src);
-          img.src = m
-            ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`
+          const fallback = driveFallbackUrl(it.src);
+          img.src = fallback && img.src !== fallback
+            ? fallback
             : `${it.src}${it.src.includes('?') ? '&' : '?'}retry=1`;
           return;
         }
         img.replaceWith(Object.assign(document.createElement('div'), {
-          className: 'photo-emoji', textContent: '🖼️', title: 'Ảnh lỗi / không tải được — hãy xóa hoặc thay link',
+          className: 'photo-emoji', textContent: '⚠️', title: 'Ảnh lỗi / không tải được — hãy xóa hoặc thay link',
         }));
       });
     }
@@ -458,7 +464,7 @@ async function handleFiles(fileList) {
       }
       t.items.push({
         type: 'img',
-        src: driveThumb(id),
+        src: normalizeImageUrl(`https://lh3.googleusercontent.com/d/${id}=w1280`),
         answer: cleanName(f.name) || `Ảnh ${t.items.length + 1}`,
         aliases: [],
       });
@@ -566,9 +572,36 @@ function showPreview() {
   if (!t || !t.items.length) return;
   pvI = (pvI + t.items.length) % t.items.length;
   const it = t.items[pvI];
-  $('pvImg').innerHTML = it.type === 'emoji'
-    ? `<div style="font-size:12rem;line-height:1">${esc(it.emoji)}</div>`
-    : `<img src="${esc(it.src)}" referrerpolicy="no-referrer" style="max-height:55vh;max-width:100%;border-radius:8px" alt="">`;
+  const box = $('pvImg');
+  box.innerHTML = '';
+  if (it.type === 'emoji') {
+    box.innerHTML = `<div style="font-size:12rem;line-height:1">${esc(it.emoji)}</div>`;
+  } else {
+    const src = normalizeImageUrl(it.src) || it.src;
+    const img = document.createElement('img');
+    img.referrerPolicy = 'no-referrer';
+    img.removeAttribute('crossorigin');
+    img.style.cssText = 'max-height:55vh;max-width:100%;border-radius:8px';
+    img.alt = '';
+    let retried = false;
+    img.addEventListener('error', () => {
+      console.error('Lỗi tải ảnh:', img.src);
+      if (!retried && src) {
+        retried = true;
+        const fallback = driveFallbackUrl(src);
+        img.src = fallback && img.src !== fallback
+          ? fallback
+          : `${src}${src.includes('?') ? '&' : '?'}retry=1`;
+        return;
+      }
+      img.replaceWith(Object.assign(document.createElement('div'), {
+        className: 'font-display text-3xl t-danger text-center px-4',
+        textContent: '⚠️ Ảnh không tải được',
+      }));
+    });
+    img.src = src;
+    box.appendChild(img);
+  }
   $('pvAnswer').textContent = it.answer;
   $('pvIdx').textContent = `${pvI + 1}/${t.items.length}`;
 }

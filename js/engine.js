@@ -102,19 +102,57 @@ export function findChampion(state) {
 let activeDuelRef = null;
 let preloadSeqId = 0;
 
-/** Làm sạch chuỗi URL / Base64 ảnh để đồng bộ gọn gàng qua Firebase Realtime Database. */
-export function cleanImageSrc(raw) {
+/** Trích xuất Google Drive File ID từ mọi biến thể link (/d/{ID}, ?id={ID}, &id={ID}). */
+export function extractDriveFileId(raw) {
   if (typeof raw !== 'string') return '';
-  const s = raw.trim().replace(/[\r\n\t]+/g, '');
+  const s = raw.trim();
+  if (!s || s.startsWith('data:')) return '';
+  const byPath = /\/(?:file\/)?d\/([a-zA-Z0-9_-]{10,})/i.exec(s);
+  if (byPath && byPath[1]) return byPath[1];
+  const byQuery = /[?&]id=([a-zA-Z0-9_-]{10,})/i.exec(s);
+  if (byQuery && byQuery[1]) return byQuery[1];
+  if (/^[a-zA-Z0-9_-]{25,}$/.test(s)) return s;
+  return '';
+}
+
+/** Link fallback Google Drive Thumbnail khi link CDN lh3 gặp sự cố. */
+export function driveFallbackUrl(raw) {
+  const id = extractDriveFileId(raw);
+  return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w1280` : '';
+}
+
+/**
+ * Chuẩn hóa URL ảnh:
+ * - Giữ nguyên toàn bộ chuỗi data:image/... (WebP/JPEG/PNG Base64) không cắt xén.
+ * - Nếu là link Google Drive có File ID (/d/{ID} hoặc ?id={ID} / &id={ID}), chuyển về
+ *   CDN ổn định nhất: https://lh3.googleusercontent.com/d/${ID}=w1280.
+ * - Với các URL http/https khác: giữ nguyên đầy đủ cả phần query string (?...&...).
+ */
+export function normalizeImageUrl(url) {
+  if (typeof url !== 'string') return '';
+  const s = url.trim();
   if (!s) return '';
   if (s.startsWith('data:image/')) {
     const comma = s.indexOf(',');
     if (comma < 0) return '';
     const head = s.slice(0, comma + 1);
-    const body = s.slice(comma + 1).replace(/[^A-Za-z0-9+/=]/g, '');
+    const body = s.slice(comma + 1).replace(/\s+/g, '');
     return body ? `${head}${body}` : '';
   }
-  return /^https?:\/\/\S+$/i.test(s) ? s : '';
+  const driveId = extractDriveFileId(s);
+  if (driveId && /(?:drive\.google\.com|docs\.google\.com|googleusercontent\.com)/i.test(s)) {
+    return `https://lh3.googleusercontent.com/d/${driveId}=w1280`;
+  }
+  if (driveId && /^[a-zA-Z0-9_-]{25,}$/.test(s)) {
+    return `https://lh3.googleusercontent.com/d/${driveId}=w1280`;
+  }
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
+/** Giữ tương thích với tên hàm cleanImageSrc: luôn bảo toàn query string & chuẩn hóa link Drive. */
+export function cleanImageSrc(raw) {
+  return normalizeImageUrl(raw);
 }
 
 function compactDuelItem(it) {
@@ -124,14 +162,15 @@ function compactDuelItem(it) {
   if (it.type === 'emoji') {
     return { type: 'emoji', emoji: String(it.emoji || '❓').trim(), answer, aliases };
   }
-  const src = cleanImageSrc(it.src) || FALLBACK_IMAGE_DATA_URL;
+  const src = normalizeImageUrl(it.src) || String(it.src || '').trim();
+  if (!src) return null;
   return { type: 'img', src, answer, aliases };
 }
 
 /**
  * Trích xuất danh sách URL ảnh gọn gàng trong cửa sổ trượt:
  * Chỉ lấy ảnh hiện tại + tối đa `PRELOAD_WINDOW` (3) ảnh tiếp theo (`currentIndex + 1, + 2, + 3`)
- * để tránh tải ồ ạt 100 ảnh gây lỗi 429 Too Many Requests hoặc nghẽn gói dữ liệu Firebase.
+ * để tránh tải ồ ạt 100 ảnh gây lỗi 429 Too Many Requests.
  */
 export function extractImageUrls(items = [], queue = null, startIndex = null, maxNext = PRELOAD_WINDOW) {
   if (!Array.isArray(items) || !items.length) return [];
@@ -152,7 +191,7 @@ export function extractImageUrls(items = [], queue = null, startIndex = null, ma
   for (let offset = 0; offset < windowCount; offset++) {
     const it = items[order[(currentIndex + offset) % order.length]];
     if (it && it.type === 'img' && it.src) {
-      const clean = cleanImageSrc(it.src);
+      const clean = normalizeImageUrl(it.src);
       if (clean && !urls.includes(clean)) urls.push(clean);
     }
   }
@@ -161,16 +200,16 @@ export function extractImageUrls(items = [], queue = null, startIndex = null, ma
 
 function buildRetryUrl(url) {
   if (!url || url.startsWith('data:')) return url;
-  const driveMatch = /(?:id=|\/d\/)([a-zA-Z0-9_-]{10,})/.exec(url);
-  if (driveMatch) {
-    return `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w1000`;
-  }
+  const thumb = driveFallbackUrl(url);
+  if (thumb && url !== thumb) return thumb;
   return `${url}${url.includes('?') ? '&' : '?'}retry=1`;
 }
 
 function loadSingleImageWithTimeout(entry, targetUrl, timeoutMs = PRELOAD_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const img = entry.img;
+    // Tuyệt đối không đặt crossOrigin="anonymous" vì Google Drive CDN chặn CORS
+    img.removeAttribute('crossorigin');
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -184,6 +223,7 @@ function loadSingleImageWithTimeout(entry, targetUrl, timeoutMs = PRELOAD_TIMEOU
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      entry.resolvedUrl = targetUrl;
       if (typeof img.decode === 'function') {
         img.decode().catch(() => {}).finally(() => resolve(true));
       } else {
@@ -194,27 +234,18 @@ function loadSingleImageWithTimeout(entry, targetUrl, timeoutMs = PRELOAD_TIMEOU
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      console.error('Lỗi tải ảnh:', img.src || targetUrl);
       resolve(false);
     };
     img.src = targetUrl;
   });
 }
 
-function applyFallbackToDuelItems(duel, failedUrl) {
-  if (!duel || !Array.isArray(duel.items)) return;
-  duel.items.forEach((it) => {
-    if (it && it.type === 'img' && it.src === failedUrl) {
-      it.fallbackSrc = FALLBACK_IMAGE_DATA_URL;
-      it.src = FALLBACK_IMAGE_DATA_URL;
-    }
-  });
-}
-
 /**
  * Tải tuần tự thông minh (Queue / Batch Preload):
  * - Chỉ preload ảnh hiện tại (`currentIndex`) và tối đa 3 ảnh tiếp theo (`currentIndex + 1, + 2, + 3`).
- * - Tải tuần tự từng ảnh với Timeout 5 giây + Retry 1 lần.
- * - Nếu ảnh lỗi mạng hoàn toàn, tự động chuyển sang ảnh thay thế (fallback placeholder) mượt mà.
+ * - Tải tuần tự từng ảnh với Timeout 5 giây + Retry 1 lần (fallback sang drive.google.com/thumbnail).
+ * - Không đặt crossOrigin để tránh lỗi CORS từ Google Drive CDN.
  */
 export function preloadWindow(duel, windowSize = PRELOAD_WINDOW) {
   activeDuelRef = duel || null;
@@ -229,8 +260,11 @@ export function preloadWindow(duel, windowSize = PRELOAD_WINDOW) {
     for (let offset = 0; offset < maxWindow; offset++) {
       const it = duel.items[queue[(currentIndex + offset) % queue.length]];
       if (it && it.type === 'img' && it.src) {
-        const clean = cleanImageSrc(it.src);
-        if (clean && !urls.includes(clean)) urls.push(clean);
+        const clean = normalizeImageUrl(it.src);
+        if (clean) {
+          it.src = clean;
+          if (!urls.includes(clean)) urls.push(clean);
+        }
       }
     }
   }
@@ -263,7 +297,8 @@ export function preloadWindow(duel, windowSize = PRELOAD_WINDOW) {
           const img = new Image();
           img.decoding = 'async';
           img.referrerPolicy = 'no-referrer';
-          const entry = { img, url, ready: false, loading: true, failed: false };
+          img.removeAttribute('crossorigin');
+          const entry = { img, url, resolvedUrl: url, ready: false, loading: true, failed: false, status: 'loading' };
           cache[url] = entry;
 
           let ok = await loadSingleImageWithTimeout(entry, url, PRELOAD_TIMEOUT_MS);
@@ -276,12 +311,14 @@ export function preloadWindow(duel, windowSize = PRELOAD_WINDOW) {
           entry.loading = false;
           if (ok) {
             entry.ready = true;
+            entry.status = 'ok';
+            entry.cdn = entry.resolvedUrl || url;
           } else {
             entry.failed = true;
             entry.ready = true;
+            entry.status = 'error';
+            entry.cdn = FALLBACK_IMAGE_DATA_URL;
             entry.img.src = FALLBACK_IMAGE_DATA_URL;
-            cache[FALLBACK_IMAGE_DATA_URL] = entry;
-            applyFallbackToDuelItems(duel, url);
           }
         }
       })();
@@ -312,10 +349,9 @@ export function currentQuestion(duel, offset = 0) {
   const items = duel.items || [];
   if (!queue.length || !items.length) return null;
   const it = items[queue[(duel.qPos + offset) % queue.length]] || null;
-  if (it && it.type === 'img') {
-    const cleaned = cleanImageSrc(it.src);
-    if (!cleaned) it.src = FALLBACK_IMAGE_DATA_URL;
-    else if (cleaned !== it.src) it.src = cleaned;
+  if (it && it.type === 'img' && it.src) {
+    const normalized = normalizeImageUrl(it.src);
+    if (normalized) it.src = normalized;
   }
   return it;
 }
@@ -399,8 +435,8 @@ export function reduce(s, type, arg = {}, now) {
       const { chalId, defId, catId } = s.setup;
       if (s.phase !== 'floor' || s.championId || !chalId || !defId || !catId) return false;
       if (chalId === defId || cellCount(s, chalId) < 1 || cellCount(s, defId) < 1) return false;
-      const cat = getCategory(catId);
-      if (!cat || !cat.items.length) return false;
+      const cat = arg.cat || getCategory(catId);
+      if (!cat || !cat.items || !cat.items.length) return false;
       const pA = playerById(s, chalId);
       const pB = playerById(s, defId);
       const durA = clampDurationSec(pA?.durationSec) * 1000;
