@@ -941,6 +941,7 @@ function renderArena(s) {
       preloadWindow(d);
     }
   }
+  syncHostAnswer(s);
   $('qInner').classList.toggle('blurred', s.phase === 'paused');
   $('pauseOverlay').classList.toggle('hidden', s.phase !== 'paused');
 
@@ -1059,6 +1060,42 @@ function syncPassUi(s, now = transport ? transport.serverNow() : Date.now()) {
   if ($('cPass')) $('cPass').disabled = !canAct;
 }
 
+/**
+ * Đồng bộ tức thì khung đáp án góc trên bên phải cho Host (luôn hiển thị rõ nét, không làm mờ),
+ * đồng thời ẩn hoàn toàn đáp án trên màn hình Người xem (role === 'view' / 'viewer').
+ */
+function syncHostAnswer(s) {
+  const phase = s ? s.phase : 'floor';
+  const isHostScreen = role === 'host';
+  const isViewer = !isHostScreen && !controller;
+  const q = s && s.duel && (phase === 'playing' || phase === 'paused') ? currentQuestion(s.duel) : null;
+
+  const wrap = $('answerWrap');
+  const ansText = $('answerText');
+  const ansAlias = $('answerAlias');
+  if (wrap) {
+    wrap.classList.toggle('hidden', !(isHostScreen && q));
+  }
+  if (ansText) {
+    ansText.classList.remove('blurred', 'blur');
+    ansText.textContent = isHostScreen && q ? (q.answer || '') : '';
+  }
+  if (ansAlias) {
+    ansAlias.classList.remove('blurred', 'blur');
+    ansAlias.textContent = isHostScreen && q && q.aliases && q.aliases.length
+      ? `(${q.aliases.join(' / ')})`
+      : '';
+  }
+
+  const miniAns = $('miniAnswer');
+  if (miniAns) {
+    miniAns.classList.remove('blurred', 'blur');
+    miniAns.textContent = !isViewer && q
+      ? `Đáp án: ${q.answer}${q.aliases && q.aliases.length ? ` (${q.aliases.join(' / ')})` : ''}`
+      : '';
+  }
+}
+
 function renderControls(s) {
   const phase = s.phase;
   const inDuel = phase !== 'floor';
@@ -1092,12 +1129,8 @@ function renderControls(s) {
   $('cAbort').classList.toggle('hidden', phase === 'finished' || phase === 'floor');
   if (isHostScreen) $('dockInner').classList.toggle('hidden', !inDuel);
 
-  // Đáp án nhắc bài (chỉ hiện khi đã vào câu hỏi)
-  const q = s.duel && (phase === 'playing' || phase === 'paused') ? currentQuestion(s.duel) : null;
-  $('answerWrap').classList.toggle('hidden', !(isHostScreen && q));
-  $('answerText').textContent = q ? q.answer : '';
-  $('answerAlias').textContent = q && q.aliases && q.aliases.length ? `(${q.aliases.join(' / ')})` : '';
-  $('miniAnswer').textContent = q ? `Đáp án: ${q.answer}${q.aliases && q.aliases.length ? ' (' + q.aliases.join(' / ') + ')' : ''}` : '';
+  // Cập nhật tức thì đáp án nhắc bài của Host (luôn sắc nét, bảo mật phía Người xem)
+  syncHostAnswer(s);
 
   syncPassUi(s, now);
 }

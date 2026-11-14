@@ -348,7 +348,8 @@ export function currentQuestion(duel, offset = 0) {
   const queue = duel.queue || [];
   const items = duel.items || [];
   if (!queue.length || !items.length) return null;
-  const it = items[queue[(duel.qPos + offset) % queue.length]] || null;
+  const pos = Math.max(0, Number(duel.qPos) || 0);
+  const it = items[queue[(pos + offset) % queue.length]] || null;
   if (it && it.type === 'img' && it.src) {
     const normalized = normalizeImageUrl(it.src);
     if (normalized) it.src = normalized;

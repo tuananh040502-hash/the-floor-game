@@ -715,8 +715,10 @@ html[data-theme='light'] .cell {
   border: 1px solid var(--border);
   max-width: 100%;
 }
-.answer-strip { filter: blur(8px); transition: filter 0.2s var(--ease); cursor: help; }
-.answer-strip:hover, .answer-strip.reveal { filter: none; }
+.answer-strip {
+  filter: none;
+  opacity: 1;
+}
 
 /* Question frame */
 .q-wrap {
