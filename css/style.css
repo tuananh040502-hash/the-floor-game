@@ -714,10 +714,24 @@ html[data-theme='light'] .cell {
   background: var(--surface);
   border: 1px solid var(--border);
   max-width: 100%;
+  filter: none !important;
+  -webkit-filter: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
 }
-.answer-strip {
-  filter: none;
-  opacity: 1;
+#answerWrap:not(.hidden),
+.answer-strip,
+.answer-strip:hover,
+#answerText,
+#answerAlias,
+#miniAnswer {
+  filter: none !important;
+  -webkit-filter: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  mask: none !important;
+  -webkit-mask: none !important;
+  cursor: default !important;
 }
 
 /* Question frame */
@@ -1127,6 +1141,20 @@ main.app-main.pb-40 { padding-bottom: 108px; }
   .hud-card .avatar { width: 34px; height: 34px; font-size: 1.15rem; }
   .hud-clock-wrap .clock { font-size: clamp(1.35rem, 3.2vw, 2rem); }
   #viewArena .q-inner { height: clamp(320px, 75dvh, calc(100dvh - 165px)); }
+  #answerWrap:not(.hidden), .answer-pill, .answer-strip, #answerText, #answerAlias, #miniAnswer {
+    filter: none !important;
+    -webkit-filter: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  #answerWrap:not(.hidden), .answer-pill, .answer-strip, #answerText, #answerAlias, #miniAnswer {
+    filter: none !important;
+    -webkit-filter: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
 }
 @media (max-width: 720px) {
   .island { border-radius: 22px; }

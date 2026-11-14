@@ -7,7 +7,7 @@ import {
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow,
-} from './engine.js';
+} from './engine.js?v=hostclear1';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
@@ -1060,6 +1060,15 @@ function syncPassUi(s, now = transport ? transport.serverNow() : Date.now()) {
   if ($('cPass')) $('cPass').disabled = !canAct;
 }
 
+function clearAnswerBlurStyles(el) {
+  if (!el) return;
+  el.classList.remove('blurred', 'blur', 'is-blurred', 'spoiler', 'obscure', 'hidden-answer');
+  el.style.filter = 'none';
+  el.style.webkitFilter = 'none';
+  el.style.opacity = '1';
+  el.style.visibility = 'visible';
+}
+
 /**
  * Đồng bộ tức thì khung đáp án góc trên bên phải cho Host (luôn hiển thị rõ nét, không làm mờ),
  * đồng thời ẩn hoàn toàn đáp án trên màn hình Người xem (role === 'view' / 'viewer').
@@ -1074,14 +1083,16 @@ function syncHostAnswer(s) {
   const ansText = $('answerText');
   const ansAlias = $('answerAlias');
   if (wrap) {
-    wrap.classList.toggle('hidden', !(isHostScreen && q));
+    const showWrap = Boolean(isHostScreen && q);
+    wrap.classList.toggle('hidden', !showWrap);
+    if (showWrap) clearAnswerBlurStyles(wrap);
   }
   if (ansText) {
-    ansText.classList.remove('blurred', 'blur');
+    clearAnswerBlurStyles(ansText);
     ansText.textContent = isHostScreen && q ? (q.answer || '') : '';
   }
   if (ansAlias) {
-    ansAlias.classList.remove('blurred', 'blur');
+    clearAnswerBlurStyles(ansAlias);
     ansAlias.textContent = isHostScreen && q && q.aliases && q.aliases.length
       ? `(${q.aliases.join(' / ')})`
       : '';
@@ -1089,7 +1100,7 @@ function syncHostAnswer(s) {
 
   const miniAns = $('miniAnswer');
   if (miniAns) {
-    miniAns.classList.remove('blurred', 'blur');
+    clearAnswerBlurStyles(miniAns);
     miniAns.textContent = !isViewer && q
       ? `Đáp án: ${q.answer}${q.aliases && q.aliases.length ? ` (${q.aliases.join(' / ')})` : ''}`
       : '';

@@ -350,10 +350,13 @@ export function currentQuestion(duel, offset = 0) {
   if (!queue.length || !items.length) return null;
   const pos = Math.max(0, Number(duel.qPos) || 0);
   const it = items[queue[(pos + offset) % queue.length]] || null;
-  if (it && it.type === 'img' && it.src) {
+  if (!it) return null;
+  if (it.type === 'img' && it.src) {
     const normalized = normalizeImageUrl(it.src);
     if (normalized) it.src = normalized;
   }
+  it.answer = String(it.answer || '').trim();
+  it.aliases = Array.isArray(it.aliases) ? it.aliases : [];
   return it;
 }
 
