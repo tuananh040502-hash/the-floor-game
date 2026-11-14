@@ -1,6 +1,6 @@
 import { loadFirebaseConfig } from './firebase-config.js';
 import { openFirebaseSettings } from './settings.js';
-import { createTransport } from './transport.js';
+import { createTransport, createSharedTopicsSync, sanitizeCloudTopic } from './transport.js';
 import { allCategories, TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
@@ -48,6 +48,9 @@ let uiTimer = null;
 let artKey = '';
 let fx = null;
 let fxKey = '';
+let topicsSync = null;
+let sharedCustomTopics = null;
+let initialTopicsMigrated = false;
 
 // ---------- Khởi động ----------
 init();
@@ -57,14 +60,70 @@ async function init() {
   $('gateRoom').textContent = room;
   fx = new Fireworks($('fx'));
   bindStaticUi();
-  transport = await createTransport(room, loadFirebaseConfig());
+  const fbCfg = loadFirebaseConfig();
+  transport = await createTransport(room, fbCfg);
   transport.onStatus(onConnStatus);
   if (transport.mode === 'local') {
     onConnStatus({ type: 'local' });
     if (transport.fallbackReason) showConnError(`Firebase lỗi (${transport.fallbackReason}) — đang dùng chế độ cục bộ.`);
   }
+  initSharedTopics(fbCfg);
   transport.subscribe(onSnapshot);
   startUiTimer();
+}
+
+async function initSharedTopics(fbCfg) {
+  try {
+    topicsSync = await createSharedTopicsSync(fbCfg);
+    topicsSync.onStatus((st) => {
+      const badge = $('gameTopicsCloudBadge');
+      if (!badge) return;
+      if (st.state === 'synced') {
+        const n = Array.isArray(sharedCustomTopics) ? sharedCustomTopics.length : (st.count ?? 0);
+        badge.textContent = `☁️ Kho dùng chung (${n} chủ đề riêng)`;
+      } else if (st.state === 'syncing') {
+        badge.textContent = '⏳ Đang đồng bộ chủ đề…';
+      } else if (st.state === 'local') {
+        badge.textContent = '💻 Chủ đề cục bộ';
+      } else {
+        badge.textContent = '⚠️ Dùng bản lưu tạm';
+      }
+    });
+    topicsSync.subscribe(async (cloudList) => {
+      const cloudById = new Map((cloudList || []).map((t) => [t.id, t]));
+      if (!initialTopicsMigrated) {
+        initialTopicsMigrated = true;
+        try {
+          const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || '[]');
+          if (Array.isArray(localRaw) && topicsSync.mode === 'firebase') {
+            const missing = localRaw.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
+            if (missing.length) {
+              missing.forEach((lt) => {
+                const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
+                if (clean) cloudById.set(clean.id, clean);
+              });
+              await topicsSync.putMany(missing);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      sharedCustomTopics = [...cloudById.values()];
+      try {
+        localStorage.setItem(TOPICS_KEY, JSON.stringify(sharedCustomTopics));
+      } catch { /* ignore */ }
+      const badge = $('gameTopicsCloudBadge');
+      if (badge && topicsSync.mode === 'firebase') {
+        badge.textContent = `☁️ Kho dùng chung (${sharedCustomTopics.length} chủ đề riêng)`;
+      }
+      if (state) {
+        if (state.phase === 'floor') renderFloor(state);
+        syncPreload(state);
+        updatePreloadBadges();
+      }
+    });
+  } catch (err) {
+    console.warn('Không khởi tạo được shared_topics:', err);
+  }
 }
 
 /** Đồng hồ giao diện: cập nhật DOM mỗi 100ms (10fps) thay vì 60-120fps để giảm tải CPU/nhiệt. */
@@ -75,6 +134,7 @@ function startUiTimer() {
     clearInterval(uiTimer);
     if (fx) fx.destroy();
     if (transport && transport.dispose) transport.dispose();
+    if (topicsSync && topicsSync.dispose) topicsSync.dispose();
   });
 }
 
@@ -189,7 +249,7 @@ function activeVictorySpec(s) {
     };
   }
   if (s.duel) {
-    const cat = s.duel.categoryId ? allCategories().find((c) => c.id === s.duel.categoryId) : null;
+    const cat = s.duel.categoryId ? getCategories100().find((c) => c.id === s.duel.categoryId) : null;
     return {
       url: s.duel.victoryAudioUrl || (cat && cat.victoryAudioUrl) || '',
       topicId: s.duel.categoryId || '',
@@ -200,7 +260,7 @@ function activeVictorySpec(s) {
     };
   }
   if (s.setup && s.setup.catId) {
-    const cat = allCategories().find((c) => c.id === s.setup.catId);
+    const cat = getCategories100().find((c) => c.id === s.setup.catId);
     return {
       url: s.setup.victoryAudioUrl || (cat && cat.victoryAudioUrl) || '',
       topicId: s.setup.catId || '',
@@ -321,13 +381,23 @@ function makeEvent(next, type) {
   return { id, type };
 }
 
-/** Lấy toàn bộ chủ đề và đảm bảo giữ tối đa MAX_TOPIC_IMAGES (100) ảnh từ localStorage. */
+/** Lấy toàn bộ chủ đề (mặc định + `shared_topics` từ Firebase + dự phòng `localStorage`) và giữ tối đa MAX_TOPIC_IMAGES (100) ảnh. */
 function getCategories100() {
   const cats = allCategories();
   try {
-    const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
-    if (Array.isArray(raw)) {
-      const byId = new Map(raw.map((t) => [t && t.id, t]));
+    const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
+    const sourceList = Array.isArray(sharedCustomTopics)
+      ? sharedCustomTopics
+      : (Array.isArray(localRaw) ? localRaw : []);
+    if (sourceList.length) {
+      const byId = new Map(sourceList.map((t) => [t && t.id, t]));
+      const existingIds = new Set(cats.map((c) => c.id));
+      sourceList.forEach((t) => {
+        if (t && t.id && !existingIds.has(t.id)) {
+          existingIds.add(t.id);
+          cats.push({ ...t, custom: true, items: Array.isArray(t.items) ? t.items : [] });
+        }
+      });
       cats.forEach((c) => {
         const src = byId.get(c.id);
         if (src && Array.isArray(src.items) && src.items.length > c.items.length) {
@@ -571,7 +641,7 @@ function handleFloorCellClick(cellIndex) {
   if (defId) {
     const defP = playerById(state, defId);
     if (defP && defP.categoryId) {
-      const cats = allCategories();
+      const cats = getCategories100();
       if (cats.some((c) => c.id === defP.categoryId && c.items.length > 0)) {
         catId = defP.categoryId;
       }

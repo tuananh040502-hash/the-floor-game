@@ -16,44 +16,47 @@
   <canvas id="fx"></canvas>
 
   <!-- Cổng bật âm thanh -->
-  <div id="soundGate" class="fixed inset-0 z-[80] grid place-items-center scrim cursor-pointer">
-    <div class="glass px-10 py-12 text-center" style="border-radius:40px">
+  <div id="soundGate" class="fixed inset-0 z-[80] grid place-items-center scrim cursor-pointer p-4">
+    <div class="glass px-10 py-12 text-center max-w-md w-full">
       <div class="eyebrow">Game show</div>
-      <div class="font-display wordmark text-6xl md:text-7xl mt-1">The Floor</div>
+      <div class="font-display wordmark text-5xl md:text-6xl mt-2">The Floor</div>
       <div class="t-2 mt-4 text-base">Chạm để bật âm thanh &amp; vào phòng <b class="t-1">PIN <span id="gateRoom"></span></b></div>
       <div class="btn btn-ok btn-lg mt-6">Bắt đầu</div>
     </div>
   </div>
 
-  <header class="appbar glass">
-    <div class="flex items-center gap-3 flex-wrap">
-      <a href="index.html" class="font-display wordmark text-2xl">The Floor</a>
-      <span class="chip">PIN <b id="roomLabel"></b></span>
-      <span id="roleLabel" class="chip"></span>
-    </div>
-    <div class="flex items-center gap-2 flex-wrap">
-      <span id="connLabel" class="chip">…</span>
-      <a id="linkCms" class="hidden btn btn-ghost btn-sm" href="topics.html">Chủ đề</a>
-      <button id="btnFirebase" class="btn btn-ghost btn-sm" title="Cấu hình Firebase &amp; Đám Mây">⚙︎ Firebase</button>
-      <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
-      <button id="btnMute" class="btn btn-ghost btn-sm btn-icon" title="Bật/tắt âm">🔊</button>
-      <button id="btnFull" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
+  <header class="appbar">
+    <div class="appbar-inner">
+      <div class="flex items-center gap-3 flex-wrap">
+        <a href="index.html" class="font-display wordmark text-xl md:text-2xl">The Floor</a>
+        <span class="chip">PIN <b id="roomLabel"></b></span>
+        <span id="roleLabel" class="chip"></span>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span id="connLabel" class="chip">…</span>
+        <a id="linkCms" class="hidden btn btn-ghost btn-sm" href="topics.html">Chủ đề</a>
+        <button id="btnFirebase" class="btn btn-ghost btn-sm" title="Cấu hình Firebase &amp; Đám Mây">⚙︎ Firebase</button>
+        <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
+        <button id="btnMute" class="btn btn-ghost btn-sm btn-icon" title="Bật/tắt âm">🔊</button>
+        <button id="btnFull" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
+      </div>
     </div>
   </header>
 
-  <main class="app-main px-3 md:px-6 pt-4 pb-40 mx-auto" style="max-width:1600px">
+  <main class="app-main px-3 md:px-6 pt-5 pb-40 mx-auto" style="max-width:1560px">
     <div id="waiting" class="hidden text-center text-2xl mt-28 t-2 font-display">Đang chờ Host tạo phòng…</div>
 
     <!-- ===== SÀN THE FLOOR ===== -->
     <section id="viewFloor" class="hidden">
-      <div class="grid gap-6 lg:grid-cols-[1fr_430px] xl:grid-cols-[1fr_460px] items-start">
+      <div class="grid gap-6 lg:grid-cols-[1fr_420px] xl:grid-cols-[1fr_450px] items-start">
         <div>
-          <div class="text-center mb-4">
-            <div class="eyebrow">The Floor</div>
-            <div id="floorHint" class="font-display text-3xl md:text-4xl mt-1">The Floor</div>
+          <div class="floor-header">
+            <div class="eyebrow">Sàn đấu The Floor</div>
+            <h1 id="floorHint" class="font-display text-2xl md:text-4xl mt-1.5 t-1">The Floor</h1>
           </div>
           <div class="floor-stage"><div id="floorGrid" class="floor-grid"></div></div>
         </div>
+
         <aside class="space-y-4 min-w-0">
           <div class="panel p-5">
             <div class="eyebrow mb-3">Bảng xếp hạng</div>
@@ -68,56 +71,59 @@
             </div>
 
             <!-- Cặp đấu trực quan: Thách đấu ⚔️ Bị thách -->
-            <div id="pairCard" class="surface-sub rounded-2xl p-3.5 space-y-2.5 border border-white/5">
+            <div id="pairCard" class="pair-box space-y-3">
               <div class="flex items-center justify-between gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="eyebrow text-[10px] text-[#0a84ff] font-bold tracking-wider">⚔️ THÁCH ĐẤU</div>
-                  <div id="pairChalName" class="font-display text-sm md:text-base truncate t-1 font-bold mt-0.5">
+                  <div class="eyebrow text-[10px] pair-side-chal">⚔️ THÁCH ĐẤU</div>
+                  <div id="pairChalName" class="font-display text-sm md:text-base truncate t-1 mt-1">
                     <span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>
                   </div>
-                  <div id="pairChalTimeWrap" class="hidden flex items-center gap-1 mt-1.5">
-                    <input id="pairChalSec" type="number" min="10" max="600" step="5" value="60" class="input !py-0.5 !px-1.5 w-16 text-center font-num text-xs" title="Thời gian người thách đấu (giây)" />
-                    <span class="t-3 text-[11px] font-semibold">giây</span>
+                  <div id="pairChalTimeWrap" class="hidden flex items-center gap-1.5 mt-2">
+                    <input id="pairChalSec" type="number" min="10" max="600" step="5" value="60" class="input !py-1 !px-2 w-16 text-center font-num text-xs" title="Thời gian người thách đấu (giây)" />
+                    <span class="t-3 text-[11px] font-medium">giây</span>
                   </div>
                 </div>
-                <button id="btnSwapPair" type="button" class="btn btn-ghost btn-sm !px-2.5 !py-1 text-xs shrink-0 rounded-xl" title="Đổi vai Thách đấu / Bị thách" disabled>
+                <button id="btnSwapPair" type="button" class="btn btn-ghost btn-sm !px-3 text-xs shrink-0" title="Đổi vai Thách đấu / Bị thách" disabled>
                   ⇄ Đổi vai
                 </button>
                 <div class="flex-1 min-w-0 text-right">
-                  <div class="eyebrow text-[10px] text-[#ff7a59] font-bold tracking-wider">🛡️ BỊ THÁCH</div>
-                  <div id="pairDefName" class="font-display text-sm md:text-base truncate t-1 font-bold mt-0.5">
+                  <div class="eyebrow text-[10px] pair-side-def">🛡️ BỊ THÁCH</div>
+                  <div id="pairDefName" class="font-display text-sm md:text-base truncate t-1 mt-1">
                     <span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>
                   </div>
-                  <div id="pairDefTimeWrap" class="hidden flex items-center justify-end gap-1 mt-1.5">
-                    <input id="pairDefSec" type="number" min="10" max="600" step="5" value="60" class="input !py-0.5 !px-1.5 w-16 text-center font-num text-xs" title="Thời gian người bị thách (giây)" />
-                    <span class="t-3 text-[11px] font-semibold">giây</span>
+                  <div id="pairDefTimeWrap" class="hidden flex items-center justify-end gap-1.5 mt-2">
+                    <input id="pairDefSec" type="number" min="10" max="600" step="5" value="60" class="input !py-1 !px-2 w-16 text-center font-num text-xs" title="Thời gian người bị thách (giây)" />
+                    <span class="t-3 text-[11px] font-medium">giây</span>
                   </div>
                 </div>
               </div>
-              <div id="pairVsRow" class="hidden pt-2 border-t border-white/5 text-center">
-                <span class="text-xs font-semibold t-3">Đối đầu:</span>
-                <span id="pairVsText" class="text-xs font-bold t-1 ml-1.5"></span>
+              <div id="pairVsRow" class="hidden pt-2.5 hairline-t text-center">
+                <span class="text-xs font-medium t-3">Đối đầu:</span>
+                <span id="pairVsText" class="text-xs font-semibold t-1 ml-1.5"></span>
               </div>
             </div>
 
-            <label class="field-label"><span class="eyebrow">Chủ đề thi đấu</span>
+            <label class="field-label">
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <span class="eyebrow !mb-0">Chủ đề thi đấu</span>
+                <span id="gameTopicsCloudBadge" class="text-[11px] font-medium t-2">☁️ Đang đồng bộ chủ đề…</span>
+              </div>
               <select id="selCat" class="input"></select>
             </label>
             <div id="setupPreload" class="hidden surface-sub rounded-2xl px-3.5 py-2.5 space-y-1.5">
               <div class="flex items-center justify-between text-xs">
-                <span id="setupPreloadText" class="t-2 font-semibold">Đang tải ngầm ảnh…</span>
-                <span id="setupPreloadCount" class="font-num t-1 font-bold">0/0</span>
+                <span id="setupPreloadText" class="t-2 font-medium">Đang tải ngầm ảnh…</span>
+                <span id="setupPreloadCount" class="font-num t-1">0/0</span>
               </div>
               <div class="progress"><div id="setupPreloadBar" class="progress-fill"></div></div>
             </div>
             <button id="btnStartDuel" class="btn btn-ok btn-lg w-full" disabled>Bắt đầu trận</button>
 
             <!-- Bảng thiết lập người chơi (2–6 người) -->
-            <details class="text-sm border-t border-white/10 pt-3" open>
+            <details class="text-sm hairline-t pt-4" open>
               <summary class="cursor-pointer t-2 font-semibold select-none">Thiết lập người chơi (2–6 người)</summary>
               <div class="mt-3 space-y-3">
-                <!-- Thanh công cụ chung trên cùng -->
-                <div class="player-toolbar surface-sub rounded-2xl p-3 border border-white/5">
+                <div class="player-toolbar">
                   <div class="player-toolbar-block">
                     <span class="eyebrow">Số người chơi (2–6)</span>
                     <div id="playerCountSeg" class="seg w-full mt-1.5" role="group" aria-label="Số người chơi">
@@ -130,14 +136,13 @@
                   </div>
                   <div class="player-toolbar-block">
                     <span class="eyebrow">Đặt chung thời gian (giây)</span>
-                    <div class="flex items-center gap-1.5 mt-1.5">
-                      <input id="bulkTimeInput" type="number" min="10" max="600" step="5" value="60" class="input !py-1.5 !px-2 flex-1 min-w-0 text-center font-num text-xs font-bold" />
-                      <button id="btnBulkTime" type="button" class="btn btn-ghost btn-sm !py-1.5 !px-3 text-xs shrink-0">Áp dụng</button>
+                    <div class="flex items-center gap-2 mt-1.5">
+                      <input id="bulkTimeInput" type="number" min="10" max="600" step="5" value="60" class="input !py-1.5 !px-2 flex-1 min-w-0 text-center font-num text-xs" />
+                      <button id="btnBulkTime" type="button" class="btn btn-ghost btn-sm shrink-0">Áp dụng</button>
                     </div>
                   </div>
                 </div>
 
-                <!-- Bảng danh sách người chơi thẳng cột -->
                 <div class="roster-table">
                   <div class="roster-grid roster-header">
                     <span># / Màu</span>
@@ -145,12 +150,12 @@
                     <span>Chủ đề sở trường</span>
                     <span class="text-center">Giây</span>
                   </div>
-                  <div id="roster" class="space-y-2 mt-1.5"></div>
+                  <div id="roster" class="space-y-1.5 mt-2"></div>
                 </div>
 
                 <div class="flex gap-2 pt-1">
-                  <button id="btnShuffleFloor" class="btn btn-ghost btn-sm">Chia lại sàn</button>
-                  <button id="btnResetAll" class="btn btn-ghost btn-sm">Đặt lại</button>
+                  <button id="btnShuffleFloor" class="btn btn-ghost btn-sm flex-1">Chia lại sàn</button>
+                  <button id="btnResetAll" class="btn btn-ghost btn-sm flex-1">Đặt lại</button>
                 </div>
               </div>
             </details>
@@ -172,13 +177,13 @@
           <div id="answerWrap" class="hidden">
             <div class="answer-pill" title="Rê chuột vào để xem đáp án">
               <span class="eyebrow">Đáp án Host</span>
-              <span id="answerText" class="answer-strip font-display text-lg md:text-xl t-gold"></span>
+              <span id="answerText" class="answer-strip font-display text-base md:text-lg t-gold"></span>
               <span id="answerAlias" class="answer-strip t-2 text-xs"></span>
             </div>
           </div>
         </div>
 
-        <!-- Khung ảnh câu hỏi trung tâm (chiếm 75%–82% 100dvh) -->
+        <!-- Khung ảnh câu hỏi trung tâm (75%–82% 100dvh) -->
         <div id="qWrap" class="q-wrap">
           <div id="qInner" class="q-inner">
             <div id="qContent"></div>
@@ -186,22 +191,22 @@
             <div id="passOverlay" class="pass-overlay hidden">
               <div class="pass-overlay-card">
                 <div class="pass-x-icon" aria-hidden="true">✕</div>
-                <div class="pass-ans-label">ĐÁP ÁN</div>
+                <div class="pass-ans-label">Đáp án</div>
                 <div id="passOverlayAnswer" class="pass-ans-text"></div>
               </div>
             </div>
             <div id="pauseOverlay" class="hidden overlay-glass">
               <div>
-                <div class="eyebrow">Trận đấu</div>
-                <div class="font-display text-5xl md:text-6xl mt-1">Tạm dừng</div>
+                <div class="eyebrow text-white/60">Trận đấu</div>
+                <div class="font-display text-5xl md:text-6xl mt-1 text-white">Tạm dừng</div>
               </div>
             </div>
             <div id="resultOverlay" class="hidden overlay-glass">
               <div>
-                <div class="eyebrow">Chiến thắng</div>
+                <div class="eyebrow text-white/60">Chiến thắng</div>
                 <div id="resultName" class="result-title text-5xl md:text-7xl mt-1"></div>
-                <div id="resultSub" class="t-2 text-lg font-semibold mt-2"></div>
-                <div id="victoryAudioControls" class="hidden mt-4 space-y-2.5">
+                <div id="resultSub" class="text-white/80 text-lg font-medium mt-2"></div>
+                <div id="victoryAudioControls" class="hidden mt-5 space-y-3">
                   <div class="flex items-center justify-center gap-2 flex-wrap">
                     <button id="btnVicToggle" type="button" class="btn btn-ghost btn-sm">⏸ Tạm dừng nhạc</button>
                     <button id="btnVicReplay" type="button" class="btn btn-ghost btn-sm">↻ Phát lại</button>
@@ -225,11 +230,11 @@
           </div>
         </div>
 
-        <!-- Khung hiển thị đáp án công khai khi bấm Bỏ qua (hiện ở khoảng giữa 2 thẻ người chơi dưới cùng) -->
+        <!-- Khung hiển thị đáp án công khai khi bấm Bỏ qua -->
         <div id="passRevealBox" class="pass-reveal-box hidden">
           <div class="pass-reveal-pill">
             <span class="eyebrow text-[#ff9f0a]">Đáp án:</span>
-            <span id="passRevealText" class="font-display text-xl md:text-3xl font-extrabold text-white"></span>
+            <span id="passRevealText" class="font-display text-xl md:text-2xl t-1"></span>
           </div>
         </div>
 
@@ -240,7 +245,7 @@
             <div class="hud-info">
               <div class="eyebrow hud-role">Thách đấu</div>
               <div id="nameA" class="hud-name font-display truncate"></div>
-              <div class="hud-cells t-2 text-xs font-semibold">▦ <span id="cellsA" class="t-1">0</span> ô</div>
+              <div class="hud-cells t-2 text-xs font-medium">▦ <span id="cellsA" class="t-1 font-semibold">0</span> ô</div>
             </div>
             <div class="ring-wrap hud-clock-wrap">
               <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringA" class="ring-fill" cx="100" cy="100" r="88"/></svg>
@@ -260,7 +265,7 @@
             <div class="hud-info text-right">
               <div class="eyebrow hud-role">Bị thách</div>
               <div id="nameB" class="hud-name font-display truncate"></div>
-              <div class="hud-cells t-2 text-xs font-semibold">▦ <span id="cellsB" class="t-1">0</span> ô</div>
+              <div class="hud-cells t-2 text-xs font-medium">▦ <span id="cellsB" class="t-1 font-semibold">0</span> ô</div>
             </div>
             <div id="avatarB" class="avatar"></div>
           </div>
@@ -311,7 +316,7 @@
       <div id="miniCtrl" class="hidden space-y-3">
         <div id="miniAnswer" class="text-sm t-gold font-semibold answer-strip"></div>
         <div id="miniButtons" class="flex flex-wrap gap-2"></div>
-        <div class="t-3 text-[10px] tracking-widest uppercase font-bold">Space · P / ↓ · T</div>
+        <div class="t-3 text-[10px] tracking-widest uppercase font-semibold">Space · P / ↓ · T</div>
       </div>
     </div>
   </div>

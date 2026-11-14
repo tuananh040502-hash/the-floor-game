@@ -13,27 +13,42 @@
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
 
   <div class="p-3 md:p-5">
-    <div class="window glass">
+    <div class="window">
       <!-- Sidebar -->
       <aside class="window-side">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
           <div class="traffic"><i></i><i></i><i></i></div>
-          <div class="flex gap-2">
-            <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
+          <div class="flex items-center gap-2">
+            <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
             <a id="backLink" href="index.html" class="btn btn-ghost btn-sm">← Về game</a>
           </div>
         </div>
-        <div>
+
+        <div class="pt-1">
           <div class="eyebrow">The Floor</div>
-          <h1 class="font-display text-3xl">Chủ đề</h1>
+          <h1 class="font-display text-3xl mt-0.5 t-1">Chủ đề</h1>
+        </div>
+
+        <!-- Trạng thái đồng bộ Cloud gọn trên Sidebar + nút Đồng bộ thủ công -->
+        <div class="surface-sub rounded-xl p-3 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <span id="cloudSyncBadge" class="chip flex-1 min-w-0 justify-start truncate" title="Trạng thái kết nối nhánh shared_topics trên Firebase">
+              <span id="cloudSyncDot" class="cd-dot shrink-0"></span>
+              <span id="cloudSyncText" class="truncate">⏳ Đang đồng bộ...</span>
+            </span>
+          </div>
+          <button id="btnSyncCloud" type="button" class="btn btn-ghost btn-sm w-full !min-h-[34px] text-xs" title="Đẩy chủ đề trên máy lên Cloud &amp; tải danh sách mới nhất">
+            ↻ Đồng bộ thủ công
+          </button>
         </div>
 
         <div class="flex gap-2">
           <button id="btnNew" class="btn btn-ok btn-sm flex-1">＋ Chủ đề mới</button>
           <button id="btnClone" class="btn btn-ghost btn-sm" title="Nhân bản chủ đề có sẵn để chỉnh sửa">Nhân bản</button>
         </div>
-        <div id="topicList" class="space-y-1 overflow-auto" style="max-height:38vh"></div>
-        <p class="t-3" style="font-size:11px">Chủ đề có sẵn không hiện ở đây — dùng “Nhân bản” để tạo bản của bạn rồi chỉnh sửa.</p>
+
+        <div id="topicList" class="space-y-1 overflow-auto" style="max-height:36vh"></div>
+        <p class="t-3 text-[11px] leading-relaxed">Mọi chủ đề tạo tại đây được lưu lên nhánh <code>shared_topics</code> (Firebase) để mọi máy Host dùng chung.</p>
 
         <div class="divider"></div>
 
@@ -77,36 +92,52 @@
         </details>
       </aside>
 
-      <!-- Nội dung -->
+      <!-- Nội dung chính -->
       <section class="window-main">
-        <div id="emptyState" class="text-center py-24">
-          <div class="text-6xl mb-4">🖼️</div>
-          <div class="font-display text-3xl">Chọn hoặc tạo một chủ đề</div>
-          <p class="t-2 mt-2">Mỗi chủ đề chứa tối đa 100 ảnh kèm đáp án chuẩn.</p>
+        <!-- Thanh trạng thái đồng bộ Kho chủ đề dùng chung ở đầu trang -->
+        <div class="flex items-center justify-between flex-wrap gap-3 pb-4 mb-6 hairline-b mx-auto" style="max-width:980px">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <span id="cloudTopPill" class="chip">
+              <span id="cloudTopDot" class="cd-dot"></span>
+              <span id="cloudTopLabel">⏳ Đang đồng bộ...</span>
+            </span>
+            <span id="cloudTopicCountBadge" class="chip">0 chủ đề dùng chung</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btnSyncCloudTop" type="button" class="btn btn-ghost btn-sm">↻ Đồng bộ thủ công</button>
+          </div>
         </div>
 
-        <div id="editorBody" class="hidden space-y-6 mx-auto" style="max-width:1100px">
+        <div id="emptyState" class="text-center py-24">
+          <div class="text-6xl mb-4">🖼️</div>
+          <div class="font-display text-3xl t-1">Chọn hoặc tạo một chủ đề</div>
+          <p class="t-2 mt-2 text-base">Mỗi chủ đề chứa tối đa 100 ảnh kèm đáp án chuẩn và tự động đồng bộ lên Cloud.</p>
+        </div>
+
+        <div id="editorBody" class="hidden space-y-6 mx-auto" style="max-width:980px">
           <!-- Thông tin chủ đề -->
-          <div class="group group-pad space-y-4">
+          <div class="group group-pad space-y-5">
             <div class="grid gap-4 md:grid-cols-[84px_1fr_auto] items-end">
               <label class="field-label"><span class="eyebrow">Biểu tượng</span>
-                <input id="tIcon" class="input text-center" style="font-size:1.6rem;padding:6px" maxlength="4" />
+                <input id="tIcon" class="input text-center" style="font-size:1.5rem;padding:6px" maxlength="4" />
               </label>
               <label class="field-label"><span class="eyebrow">Tên chủ đề</span>
-                <input id="tName" class="input" style="font-size:18px;font-weight:700" maxlength="60" />
+                <input id="tName" class="input" style="font-size:17px;font-weight:600" maxlength="60" />
               </label>
               <div class="flex items-center gap-4 flex-wrap">
-                <label class="flex items-center gap-2 text-sm t-2 font-semibold"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
-                <span class="font-display text-2xl"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">100</span></span></span>
+                <label class="flex items-center gap-2 text-sm t-2 font-medium cursor-pointer"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
+                <span class="font-display text-2xl font-num"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">100</span></span></span>
                 <button id="btnDeleteTopic" class="btn btn-pass btn-sm">Xóa chủ đề</button>
               </div>
             </div>
+
             <div class="divider"></div>
+
             <div class="space-y-3">
               <div class="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <div class="eyebrow">🎧 Hệ thống Âm thanh Chiến thắng Kép (Dual Volume Sliders)</div>
-                  <p class="t-3 mt-0.5" style="font-size:11px">Tự động nạp sẵn bộ đệm (0ms) ở màn đếm ngược. Tùy chỉnh độc lập âm lượng của từng nguồn âm thanh theo tỷ lệ % mong muốn.</p>
+                  <div class="eyebrow">🎧 Hệ thống Âm thanh Chiến thắng Kép</div>
+                  <p class="t-3 mt-0.5 text-[12px]">Tự động nạp sẵn bộ đệm (0ms) ở màn đếm ngược. Tùy chỉnh độc lập âm lượng từng nguồn âm thanh.</p>
                 </div>
                 <div class="flex items-center gap-2 flex-wrap">
                   <span id="dualAudioModeBadge" class="chip">Mặc định (Fanfare)</span>
@@ -116,10 +147,10 @@
               </div>
 
               <div class="grid gap-3 lg:grid-cols-2">
-                <!-- Kênh 1: File âm thanh từ máy (IndexedDB + Base64) + Thanh trượt 1 -->
-                <div class="surface-sub rounded-2xl p-3.5 space-y-3">
+                <!-- Kênh 1: File âm thanh từ máy -->
+                <div class="surface-sub rounded-xl p-4 space-y-3">
                   <div class="flex items-center justify-between gap-2">
-                    <span class="eyebrow">🎙️ 1. File ghi âm / SFX từ máy (.mp3, .m4a, .wav)</span>
+                    <span class="eyebrow">🎙️ 1. File ghi âm / SFX từ máy</span>
                     <span id="voiceAudioBadge" class="chip">Chưa có file</span>
                   </div>
                   <div class="flex items-center gap-2 flex-wrap">
@@ -129,27 +160,27 @@
                     <button id="btnClearVoiceAudio" type="button" class="btn btn-pass btn-sm hidden" title="Xóa file âm thanh đã tải">✕ Xóa</button>
                   </div>
                   <div class="vol-slider-box">
-                    <div class="flex items-center justify-between text-xs font-semibold mb-1.5">
-                      <span class="t-2">Âm lượng âm thanh tải lên/ghi âm từ máy</span>
+                    <div class="flex items-center justify-between text-xs font-medium mb-1.5">
+                      <span class="t-2">Âm lượng âm thanh từ máy</span>
                       <span id="tLocalAudioVolLabel" class="font-num t-accent text-sm">100%</span>
                     </div>
                     <input id="tLocalAudioVol" type="range" min="0" max="100" step="1" value="100" class="vol-range" />
                   </div>
                 </div>
 
-                <!-- Kênh 2: Link nhạc ngoài + Thanh trượt 2 -->
-                <div class="surface-sub rounded-2xl p-3.5 space-y-3">
+                <!-- Kênh 2: Link nhạc ngoài -->
+                <div class="surface-sub rounded-xl p-4 space-y-3">
                   <div class="flex items-center justify-between gap-2">
-                    <span class="eyebrow">🎵 2. Link nhạc ngoài (YouTube / SoundCloud / MP3)</span>
+                    <span class="eyebrow">🎵 2. Link nhạc ngoài</span>
                     <span id="victoryAudioBadge" class="chip">Không dùng</span>
                   </div>
                   <div class="flex items-center gap-2">
                     <input id="tVictoryAudio" class="input flex-1" placeholder="Dán link YouTube, SoundCloud, hoặc link .mp3 / .wav / Google Drive" />
-                    <button id="btnTestExternalOnly" type="button" class="btn btn-ghost btn-sm">▶ Nghe thử link</button>
+                    <button id="btnTestExternalOnly" type="button" class="btn btn-ghost btn-sm shrink-0">▶ Nghe thử</button>
                   </div>
                   <div class="vol-slider-box">
-                    <div class="flex items-center justify-between text-xs font-semibold mb-1.5">
-                      <span class="t-2">Âm lượng nhạc ngoài (YouTube / SoundCloud / MP3)</span>
+                    <div class="flex items-center justify-between text-xs font-medium mb-1.5">
+                      <span class="t-2">Âm lượng nhạc ngoài</span>
                       <span id="tOnlineAudioVolLabel" class="font-num t-gold text-sm">100%</span>
                     </div>
                     <input id="tOnlineAudioVol" type="range" min="0" max="100" step="1" value="100" class="vol-range vol-range-gold" />
@@ -161,13 +192,13 @@
 
           <!-- Thêm ảnh -->
           <div class="grid gap-4 xl:grid-cols-2">
-            <div id="dropzone" class="dropzone p-6 text-center space-y-3">
+            <div id="dropzone" class="dropzone p-6 text-center space-y-3 flex flex-col items-center justify-center">
               <div class="text-4xl">☁️</div>
-              <div class="font-display text-xl">Kéo thả ảnh vào đây</div>
+              <div class="font-display text-xl t-1">Kéo thả ảnh vào đây</div>
               <div class="t-2 text-sm">Tối đa 100 ảnh · tự động tải lên Google Drive của bạn.</div>
               <button id="btnPick" class="btn btn-ok btn-sm">Chọn ảnh…</button>
               <input id="filePick" type="file" accept="image/*" multiple class="hidden" />
-              <div id="progressWrap" class="hidden text-left space-y-2 pt-1">
+              <div id="progressWrap" class="hidden text-left space-y-2 pt-1 w-full">
                 <div id="progressText" class="t-2 text-xs font-semibold"></div>
                 <div class="progress"><div id="progressBar" class="progress-fill"></div></div>
               </div>
@@ -177,8 +208,8 @@
               <div class="eyebrow">Dán link ảnh</div>
               <textarea id="linkArea" rows="4" class="input" placeholder="Mỗi dòng một ảnh, có thể kèm đáp án:&#10;https://example.com/messi.jpg | Lionel Messi&#10;https://drive.google.com/file/d/ID/view | Ronaldo"></textarea>
               <div class="flex items-center justify-between gap-3">
-                <span class="t-3" style="font-size:11px">Hỗ trợ link online và link chia sẻ Google Drive (“Bất kỳ ai có link”).</span>
-                <button id="btnAddLinks" class="btn btn-gold btn-sm">Thêm</button>
+                <span class="t-3 text-[12px]">Hỗ trợ link online và link chia sẻ Google Drive (“Bất kỳ ai có link”).</span>
+                <button id="btnAddLinks" class="btn btn-gold btn-sm shrink-0">Thêm</button>
               </div>
             </div>
           </div>
@@ -188,14 +219,14 @@
             <div class="flex items-end justify-between mb-3 flex-wrap gap-2">
               <div>
                 <div class="eyebrow">Thư viện</div>
-                <h2 class="font-display text-2xl">Ảnh &amp; đáp án</h2>
+                <h2 class="font-display text-2xl t-1 mt-0.5">Ảnh &amp; đáp án</h2>
               </div>
               <div class="flex gap-2">
                 <button id="btnPreviewAll" class="btn btn-ghost btn-sm">▶ Chạy thử</button>
                 <button id="btnClearItems" class="btn btn-ghost btn-sm">Xóa tất cả</button>
               </div>
             </div>
-            <p class="t-3 mb-3" style="font-size:11px">Kéo ảnh để đổi thứ tự (hoặc dùng ‹ ›). Bấm vào tên để sửa đáp án — tự lưu khi bấm ra ngoài. Đáp án phụ cách nhau bằng dấu phẩy.</p>
+            <p class="t-3 mb-4 text-[12px]">Kéo ảnh để đổi thứ tự (hoặc dùng ‹ ›). Bấm vào tên để sửa đáp án — tự lưu khi bấm ra ngoài. Đáp án phụ cách nhau bằng dấu phẩy.</p>
             <div id="itemList" class="gallery"></div>
           </div>
         </div>
@@ -203,21 +234,49 @@
     </div>
   </div>
 
+  <!-- Modal xác nhận xóa chủ đề dùng chung (Chống xóa nhầm) -->
+  <div id="deleteConfirmModal" class="hidden fixed inset-0 z-[75] scrim grid place-items-center p-4">
+    <div class="glass p-6 md:p-7 max-w-md w-full space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-full grid place-items-center text-lg bg-[#ff453a]/15 text-[#ff453a] shrink-0">⚠️</div>
+        <div>
+          <div class="eyebrow text-[#ff453a]">Bảo vệ kho chủ đề dùng chung</div>
+          <h3 class="font-display text-xl t-1">Xác nhận xóa chủ đề?</h3>
+        </div>
+      </div>
+      <div class="surface-sub rounded-xl p-3.5 space-y-1">
+        <div id="delModalTopicName" class="font-display text-base t-1 truncate"></div>
+        <div id="delModalTopicCount" class="text-xs t-2"></div>
+      </div>
+      <p class="text-sm t-2 leading-relaxed">
+        Chủ đề này sẽ bị xóa trực tiếp khỏi nhánh <code>shared_topics</code> trên Firebase Cloud và biến mất trên <b>tất cả các thiết bị Host khác</b>. (Ảnh gốc trên Google Drive không bị xóa).
+      </p>
+      <label class="flex items-start gap-2.5 text-xs t-1 font-medium cursor-pointer select-none pt-1">
+        <input id="delConfirmCheck" type="checkbox" class="mt-0.5 shrink-0" />
+        <span>Tôi hiểu hành động này sẽ xóa chủ đề dùng chung trên mọi thiết bị và không thể hoàn tác.</span>
+      </label>
+      <div class="flex items-center justify-end gap-2.5 pt-2">
+        <button id="btnCancelDeleteTopic" type="button" class="btn btn-ghost btn-sm">Hủy</button>
+        <button id="btnConfirmDeleteTopic" type="button" class="btn btn-pass btn-sm" disabled>Xóa vĩnh viễn</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Chạy thử -->
   <div id="previewModal" class="hidden fixed inset-0 z-[70] scrim grid place-items-center p-4">
-    <div class="text-center space-y-4 max-w-3xl w-full">
+    <div class="text-center space-y-5 max-w-3xl w-full">
       <div id="pvImg" class="grid place-items-center" style="min-height:40vh"></div>
-      <div id="pvAnswer" class="font-display text-5xl t-gold"></div>
+      <div id="pvAnswer" class="font-display text-4xl md:text-5xl text-white"></div>
       <div class="flex justify-center items-center gap-3">
         <button id="pvPrev" class="btn btn-ghost btn-icon">‹</button>
-        <span id="pvIdx" class="font-num text-xl px-3"></span>
+        <span id="pvIdx" class="font-num text-xl px-3 text-white"></span>
         <button id="pvNext" class="btn btn-ghost btn-icon">›</button>
         <button id="pvClose" class="btn btn-gold btn-sm">Đóng</button>
       </div>
     </div>
   </div>
 
-  <div id="toast" class="hidden glass"></div>
+  <div id="toast" class="hidden"></div>
 
   <script type="module" src="js/theme.js"></script>
   <script type="module" src="js/cms.js"></script>

@@ -1,4 +1,6 @@
 import { CATEGORIES } from './data.js';
+import { loadFirebaseConfig } from './firebase-config.js';
+import { createSharedTopicsSync, sanitizeCloudTopic } from './transport.js';
 import {
   TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
   parseVictoryAudio, normalizeVictoryAudioUrl,
@@ -35,9 +37,14 @@ function loadTopicsUpToLimit() {
 let topics = loadTopicsUpToLimit();
 let currentId = topics[0] ? topics[0].id : null;
 let uploading = false;
+let cloudSync = null;
+let initialMigrationDone = false;
+let pendingDeleteId = null;
 
 const cur = () => topics.find((t) => t.id === currentId) || null;
-const persist = () => {
+
+/** Lưu bản đệm cục bộ vào localStorage (giữ tối đa 100 ảnh mỗi chủ đề). */
+function persistLocalCache() {
   saveCustom(topics);
   try {
     const saved = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
@@ -54,7 +61,148 @@ const persist = () => {
       if (changed) localStorage.setItem(TOPICS_KEY, JSON.stringify(saved));
     }
   } catch { /* ignore */ }
-};
+}
+
+/**
+ * Lưu thay đổi vào localStorage cache và ghi trực tiếp lên nhánh `shared_topics` (Firebase).
+ * @param {object|'all'|null} target - Chủ đề cần đẩy lên Cloud, hoặc 'all' để đồng bộ toàn bộ.
+ */
+function persist(target = cur()) {
+  persistLocalCache();
+  updateCloudCountBadge();
+  if (!cloudSync || cloudSync.mode !== 'firebase') return;
+  if (target === 'all') {
+    cloudSync.putMany(topics);
+  } else if (target && typeof target === 'object' && target.id) {
+    target.updatedAt = Date.now();
+    cloudSync.putTopic(target);
+  }
+}
+
+function updateCloudCountBadge() {
+  const countEl = $('cloudTopicCountBadge');
+  if (countEl) {
+    countEl.textContent = `${topics.length} chủ đề dùng chung`;
+  }
+}
+
+function renderCloudStatus(st) {
+  const state = st?.state || 'syncing';
+  let label = '⏳ Đang đồng bộ...';
+  let ready = false;
+  if (state === 'synced') {
+    label = '☁️ Kho chủ đề dùng chung (Đã đồng bộ)';
+    ready = true;
+  } else if (state === 'syncing') {
+    label = `⏳ ${st?.message || 'Đang đồng bộ...'}`;
+  } else if (state === 'offline') {
+    label = '⚠️ Mất kết nối Cloud (Lưu tạm trên máy)';
+  } else if (state === 'local') {
+    label = '💻 Chế độ cục bộ (Chưa cấu hình Firebase)';
+  } else if (state === 'error') {
+    label = `⚠️ ${st?.message || 'Lỗi đồng bộ Cloud'}`;
+  }
+
+  ['cloudSyncText', 'cloudTopLabel'].forEach((id) => {
+    const el = $(id);
+    if (el) el.textContent = label;
+  });
+  ['cloudSyncDot', 'cloudTopDot'].forEach((id) => {
+    const dot = $(id);
+    if (dot) dot.classList.toggle('ready', ready);
+  });
+  updateCloudCountBadge();
+}
+
+/**
+ * Gộp danh sách chủ đề từ `shared_topics` trên Firebase với dữ liệu âm thanh lưu trong IndexedDB máy hiện tại,
+ * và tự động di trú (Auto-Migration) các chủ đề cũ chỉ có ở localStorage lên Firebase trong lần đầu khởi tạo.
+ */
+async function handleCloudSnapshot(cloudList) {
+  const localBefore = loadTopicsUpToLimit();
+  const voiceCache = new Map();
+  [...localBefore, ...topics].forEach((t) => {
+    if (t && t.id && (t.victoryVoiceData || t.victoryVoiceName)) {
+      voiceCache.set(t.id, {
+        victoryVoiceData: t.victoryVoiceData || '',
+        victoryVoiceName: t.victoryVoiceName || '',
+      });
+    }
+  });
+
+  const cloudById = new Map((cloudList || []).map((t) => [t.id, t]));
+
+  // Auto-Migration ngay khi khởi tạo: đẩy các chủ đề cục bộ chưa có trên shared_topics lên Firebase
+  if (!initialMigrationDone) {
+    initialMigrationDone = true;
+    const missingOnCloud = localBefore.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
+    if (missingOnCloud.length && cloudSync && cloudSync.mode === 'firebase') {
+      missingOnCloud.forEach((lt) => {
+        const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
+        if (clean) cloudById.set(clean.id, clean);
+      });
+      const count = await cloudSync.putMany(missingOnCloud);
+      if (count > 0) {
+        toast(`☁️ Đã tự động đồng bộ ${count} chủ đề cũ từ máy lên Kho dùng chung.`);
+      }
+    }
+  }
+
+  const merged = [...cloudById.values()].map((ct) => {
+    const sanitized = sanitizeTopic({ ...ct, items: [] });
+    if (!sanitized) return null;
+    sanitized.items = (ct.items || []).map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+    sanitized.updatedAt = ct.updatedAt || 0;
+    const vc = voiceCache.get(sanitized.id);
+    if (vc) {
+      if (vc.victoryVoiceData) sanitized.victoryVoiceData = vc.victoryVoiceData;
+      if (!sanitized.victoryVoiceName && vc.victoryVoiceName) sanitized.victoryVoiceName = vc.victoryVoiceName;
+    }
+    return sanitized;
+  }).filter(Boolean);
+
+  topics = merged;
+  if (!topics.some((t) => t.id === currentId)) {
+    currentId = topics[0] ? topics[0].id : null;
+  }
+  persistLocalCache();
+  updateCloudCountBadge();
+  render();
+}
+
+async function initCloudSync() {
+  renderCloudStatus({ state: 'syncing', message: 'Đang đồng bộ...' });
+  cloudSync = await createSharedTopicsSync(loadFirebaseConfig());
+  cloudSync.onStatus(renderCloudStatus);
+  cloudSync.subscribe((cloudList) => {
+    handleCloudSnapshot(cloudList);
+  });
+}
+
+async function manualSyncCloud() {
+  if (!cloudSync) return;
+  if (cloudSync.mode !== 'firebase') {
+    toast('Chưa kết nối Firebase — dữ liệu đang lưu cục bộ trên trình duyệt.', true);
+    return;
+  }
+  try {
+    renderCloudStatus({ state: 'syncing', message: 'Đang đồng bộ thủ công...' });
+    const remoteList = await cloudSync.fetchAll();
+    const remoteIds = new Set(remoteList.map((r) => r.id));
+    const localUnsynced = topics.filter((t) => t && t.id && !remoteIds.has(t.id));
+    if (localUnsynced.length) {
+      await cloudSync.putMany(localUnsynced);
+    }
+    if (cur()) {
+      await cloudSync.putTopic(cur());
+    }
+    const latest = await cloudSync.fetchAll();
+    await handleCloudSnapshot(latest);
+    toast(`☁️ Đã đồng bộ xong (${topics.length} chủ đề dùng chung).`);
+  } catch (err) {
+    toast(`Không đồng bộ được: ${err.message || err}`, true);
+  }
+}
 
 function toast(msg, bad = false) {
   const el = $('toast');
@@ -166,6 +314,7 @@ function renderAudioBadges(t) {
 
 function render() {
   renderTopics();
+  updateCloudCountBadge();
   const t = cur();
   $('emptyState').classList.toggle('hidden', !!t);
   $('editorBody').classList.toggle('hidden', !t);
@@ -246,7 +395,7 @@ function move(from, to) {
   if (from === to || to < 0 || to >= t.items.length) return;
   const [it] = t.items.splice(from, 1);
   t.items.splice(to, 0, it);
-  persist();
+  persist(t);
   render();
 }
 
@@ -274,7 +423,7 @@ function addLinks() {
     t.items.push({ type: 'img', src, answer, aliases: [] });
     added += 1;
   }
-  persist();
+  persist(t);
   $('linkArea').value = '';
   render();
   toast(`Đã thêm ${added} ảnh.${bad ? ` ${bad} link không hợp lệ.` : ''}${full ? ` ${full} link bị bỏ vì chủ đề đã đủ ${MAX_TOPIC_IMAGES} ảnh.` : ''}`, bad || full);
@@ -435,14 +584,14 @@ async function handleFiles(fileList) {
     toast('Hãy nhập Web App URL và Folder ID Google Drive trước (hoặc dùng “Dán link ảnh”).', true);
     return;
   }
-  const room = MAX_TOPIC_IMAGES - t.items.length;
-  if (room <= 0) {
+  const roomLeft = MAX_TOPIC_IMAGES - t.items.length;
+  if (roomLeft <= 0) {
     toast(`Chủ đề đã đủ ${MAX_TOPIC_IMAGES} ảnh.`, true);
     return;
   }
-  if (files.length > room) {
-    toast(`Chỉ còn chỗ cho ${room} ảnh — các ảnh dư sẽ bị bỏ qua.`, true);
-    files = files.slice(0, room);
+  if (files.length > roomLeft) {
+    toast(`Chỉ còn chỗ cho ${roomLeft} ảnh — các ảnh dư sẽ bị bỏ qua.`, true);
+    files = files.slice(0, roomLeft);
   }
 
   uploading = true;
@@ -459,7 +608,7 @@ async function handleFiles(fileList) {
       let id;
       try {
         id = await uploadToDrive(cfg, blob, name);
-      } catch (e1) {
+      } catch {
         id = await uploadToDrive(cfg, blob, name); // thử lại 1 lần
       }
       t.items.push({
@@ -468,7 +617,7 @@ async function handleFiles(fileList) {
         answer: cleanName(f.name) || `Ảnh ${t.items.length + 1}`,
         aliases: [],
       });
-      persist();
+      persist(t);
       ok += 1;
       render();
     } catch (err) {
@@ -479,7 +628,7 @@ async function handleFiles(fileList) {
   $('progressText').textContent = `Hoàn tất: ${ok}/${total} ảnh đã tải lên${failed.length ? `, ${failed.length} lỗi` : ''}.`;
   uploading = false;
   if (failed.length) toast(`Lỗi: ${failed.slice(0, 3).join('; ')}${failed.length > 3 ? '…' : ''}`, true);
-  else toast(`Đã tải lên ${ok} ảnh. Hãy kiểm tra và sửa đáp án trong bảng bên dưới.`);
+  else toast(`Đã tải lên ${ok} ảnh & đồng bộ lên Kho chủ đề dùng chung.`);
   setTimeout(() => { if (!uploading) $('progressWrap').classList.add('hidden'); }, 6000);
 }
 
@@ -529,7 +678,7 @@ function download(filename, obj) {
 
 function importFile(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const rawText = String(reader.result);
       const incoming = parseImport(rawText);
@@ -543,7 +692,7 @@ function importFile(file) {
           }
         });
       } catch { /* ignore */ }
-      const replace = topics.length && confirm(`Tìm thấy ${incoming.length} chủ đề.\nOK = THAY THẾ toàn bộ chủ đề hiện có\nHủy = GỘP thêm vào danh sách`);
+      const replace = topics.length && confirm(`Tìm thấy ${incoming.length} chủ đề.\nOK = THAY THẾ toàn bộ chủ đề trên Kho dùng chung\nHủy = GỘP thêm vào danh sách hiện có`);
       if (replace) topics = [];
       const used = new Set(topics.map((t) => t.id));
       incoming.forEach((t) => {
@@ -555,14 +704,64 @@ function importFile(file) {
         topics.push(t);
       });
       currentId = incoming[0].id;
-      persist();
+      persistLocalCache();
+      if (cloudSync && cloudSync.mode === 'firebase') {
+        if (replace) await cloudSync.replaceAll(topics);
+        else await cloudSync.putMany(incoming);
+      }
       render();
-      toast(`Đã nhập ${incoming.length} chủ đề.`);
+      toast(`Đã nhập & đồng bộ ${incoming.length} chủ đề lên Cloud.`);
     } catch (e) {
       toast(e.message, true);
     }
   };
   reader.readAsText(file);
+}
+
+// ---------- Xác nhận xóa chủ đề (Chống xóa nhầm trên Cloud) ----------
+function openDeleteModal(t) {
+  if (!t) return;
+  const modal = $('deleteConfirmModal');
+  if (!modal) {
+    // Fallback an toàn nếu thiếu modal
+    if (confirm(`Xác nhận xóa chủ đề dùng chung “${t.name}” (${t.items.length} ảnh) khỏi tất cả thiết bị?`)) {
+      executeDeleteTopic(t.id);
+    }
+    return;
+  }
+  pendingDeleteId = t.id;
+  if ($('delModalTopicName')) $('delModalTopicName').textContent = `${t.icon || '🖼️'} ${t.name}`;
+  if ($('delModalTopicCount')) $('delModalTopicCount').textContent = `Gồm ${t.items.length} câu hỏi ảnh · Nhánh shared_topics`;
+  if ($('delConfirmCheck')) $('delConfirmCheck').checked = false;
+  if ($('btnConfirmDeleteTopic')) $('btnConfirmDeleteTopic').disabled = true;
+  modal.classList.remove('hidden');
+}
+
+function closeDeleteModal() {
+  pendingDeleteId = null;
+  const modal = $('deleteConfirmModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function executeDeleteTopic(targetId) {
+  const t = topics.find((x) => x.id === targetId);
+  if (!t) {
+    closeDeleteModal();
+    return;
+  }
+  const removedName = t.name;
+  Sfx.stopVictory();
+  closeDeleteModal();
+  await deleteTopicAudioIDB(t.id);
+  topics = topics.filter((x) => x.id !== t.id);
+  currentId = topics[0] ? topics[0].id : null;
+  persistLocalCache();
+  updateCloudCountBadge();
+  render();
+  if (cloudSync && cloudSync.mode === 'firebase') {
+    await cloudSync.removeTopic(t.id);
+  }
+  toast(`Đã xóa chủ đề “${removedName}” khỏi Kho chủ đề dùng chung.`);
 }
 
 // ---------- Chạy thử ----------
@@ -625,6 +824,11 @@ function topicAudioSpec(t) {
 
 // ---------- Gắn sự kiện ----------
 function bind() {
+  ['btnSyncCloud', 'btnSyncCloudTop'].forEach((id) => {
+    const btn = $(id);
+    if (btn) btn.addEventListener('click', manualSyncCloud);
+  });
+
   // Event delegation cho danh sách chủ đề
   $('topicList').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-topic-id]');
@@ -652,11 +856,11 @@ function bind() {
         return;
       }
       it.answer = v;
-      persist();
-      toast('Đã lưu đáp án.');
+      persist(t);
+      toast('Đã lưu & đồng bộ đáp án.');
     } else if (f === 'aliases') {
       it.aliases = e.target.value.split(',').map((x) => x.trim()).filter(Boolean);
-      persist();
+      persist(t);
     }
   });
   box.addEventListener('click', (e) => {
@@ -671,7 +875,7 @@ function bind() {
     else if (a === 'down') move(i, i + 1);
     else if (a === 'del') {
       t.items.splice(i, 1);
-      persist();
+      persist(t);
       render();
     }
   });
@@ -716,8 +920,9 @@ function bind() {
     const t = sanitizeTopic({ id: newId(), name, icon: '🖼️', shuffle: false, items: [] });
     topics.push(t);
     currentId = t.id;
-    persist();
+    persist(t);
     render();
+    toast(`Đã tạo chủ đề “${t.name}” trên Kho dùng chung.`);
   });
 
   $('btnClone').addEventListener('click', () => {
@@ -731,9 +936,9 @@ function bind() {
     });
     topics.push(t);
     currentId = t.id;
-    persist();
+    persist(t);
     render();
-    toast(`Đã nhân bản “${src.name}”.`);
+    toast(`Đã nhân bản “${src.name}” lên Kho dùng chung.`);
   });
 
   $('tName').addEventListener('change', () => {
@@ -741,7 +946,7 @@ function bind() {
     const v = $('tName').value.trim();
     if (!t || !v) return render();
     t.name = v;
-    persist();
+    persist(t);
     renderTopics();
   });
   $('tIcon').addEventListener('change', () => {
@@ -749,14 +954,14 @@ function bind() {
     const v = $('tIcon').value.trim();
     if (!t || !v) return render();
     t.icon = v.slice(0, 8);
-    persist();
+    persist(t);
     renderTopics();
   });
   $('tShuffle').addEventListener('change', () => {
     const t = cur();
     if (!t) return;
     t.shuffle = $('tShuffle').checked;
-    persist();
+    persist(t);
   });
 
   // --- Kênh 1: Tải file âm thanh từ máy (.mp3, .m4a, .wav) + Thanh trượt âm lượng 1 ---
@@ -776,11 +981,11 @@ function bind() {
         localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
         onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
       });
-      persist();
+      persist(t);
       renderAudioBadges(t);
       renderTopics();
       await Sfx.preloadVictory(topicAudioSpec(t));
-      toast(`Đã lưu file âm thanh “${name}” vào IndexedDB & đồng bộ chủ đề.`);
+      toast(`Đã lưu file âm thanh “${name}” vào IndexedDB & đồng bộ cấu hình.`);
     } catch (err) {
       toast(err.message || 'Không thể đọc file âm thanh.', true);
     }
@@ -802,7 +1007,7 @@ function bind() {
     if (!t) return;
     const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
     t.localAudioVolume = clampVolume01(pct / 100, 1.0);
-    persist();
+    persist(t);
     if (t.victoryVoiceData) {
       await saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '', {
         localAudioVolume: t.localAudioVolume,
@@ -818,7 +1023,7 @@ function bind() {
     t.victoryVoiceData = '';
     t.victoryVoiceName = '';
     await deleteTopicAudioIDB(t.id);
-    persist();
+    persist(t);
     renderAudioBadges(t);
     renderTopics();
     toast('Đã xóa file ghi âm khỏi chủ đề.');
@@ -850,12 +1055,12 @@ function bind() {
     }
     t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
     $('tVictoryAudio').value = t.victoryAudioUrl;
-    persist();
+    persist(t);
     renderAudioBadges(t);
     renderTopics();
     if (t.victoryAudioUrl || t.victoryVoiceData) {
       Sfx.preloadVictory(topicAudioSpec(t));
-      toast('Đã lưu cấu hình âm thanh chiến thắng & nạp sẵn bộ đệm.');
+      toast('Đã lưu cấu hình âm thanh chiến thắng & đồng bộ Cloud.');
     } else {
       Sfx.stopVictory();
       toast('Đã đặt về âm thanh chiến thắng mặc định.');
@@ -878,7 +1083,7 @@ function bind() {
     if (!t) return;
     const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
     t.onlineAudioVolume = clampVolume01(pct / 100, 1.0);
-    persist();
+    persist(t);
     if (t.victoryVoiceData) {
       await saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '', {
         localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
@@ -898,7 +1103,7 @@ function bind() {
     }
     if (raw !== (t.victoryAudioUrl || '')) {
       t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
-      persist();
+      persist(t);
       renderAudioBadges(t);
       renderTopics();
     }
@@ -920,7 +1125,7 @@ function bind() {
     const raw = $('tVictoryAudio').value.trim();
     if (raw !== (t.victoryAudioUrl || '')) {
       t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
-      persist();
+      persist(t);
       renderAudioBadges(t);
       renderTopics();
     }
@@ -949,21 +1154,39 @@ function bind() {
     const stopBtn = $('btnStopVictoryAudio');
     if (stopBtn) stopBtn.classList.toggle('hidden', !st.playing);
   });
-  $('btnDeleteTopic').addEventListener('click', async () => {
+
+  // Bảo vệ xóa nhầm chủ đề dùng chung
+  $('btnDeleteTopic').addEventListener('click', () => {
     const t = cur();
-    if (!t || !confirm(`Xóa chủ đề “${t.name}” cùng ${t.items.length} ảnh? (Ảnh trên Drive không bị xóa)`)) return;
-    Sfx.stopVictory();
-    await deleteTopicAudioIDB(t.id);
-    topics = topics.filter((x) => x.id !== t.id);
-    currentId = topics[0] ? topics[0].id : null;
-    persist();
-    render();
+    if (!t) return;
+    openDeleteModal(t);
   });
+  if ($('delConfirmCheck')) {
+    $('delConfirmCheck').addEventListener('change', (e) => {
+      if ($('btnConfirmDeleteTopic')) $('btnConfirmDeleteTopic').disabled = !e.target.checked;
+    });
+  }
+  if ($('btnCancelDeleteTopic')) {
+    $('btnCancelDeleteTopic').addEventListener('click', closeDeleteModal);
+  }
+  if ($('btnConfirmDeleteTopic')) {
+    $('btnConfirmDeleteTopic').addEventListener('click', () => {
+      if (pendingDeleteId && (!$('delConfirmCheck') || $('delConfirmCheck').checked)) {
+        executeDeleteTopic(pendingDeleteId);
+      }
+    });
+  }
+  if ($('deleteConfirmModal')) {
+    $('deleteConfirmModal').addEventListener('mousedown', (e) => {
+      if (e.target === $('deleteConfirmModal')) closeDeleteModal();
+    });
+  }
+
   $('btnClearItems').addEventListener('click', () => {
     const t = cur();
-    if (!t || !t.items.length || !confirm('Xóa tất cả ảnh trong chủ đề này?')) return;
+    if (!t || !t.items.length || !confirm(`Xóa tất cả ${t.items.length} ảnh trong chủ đề “${t.name}” trên Kho dùng chung?`)) return;
     t.items = [];
-    persist();
+    persist(t);
     render();
   });
 
@@ -1025,6 +1248,10 @@ function bind() {
   $('pvNext').addEventListener('click', () => { pvI += 1; showPreview(); });
   $('pvPrev').addEventListener('click', () => { pvI -= 1; showPreview(); });
   window.addEventListener('keydown', (e) => {
+    if ($('deleteConfirmModal') && !$('deleteConfirmModal').classList.contains('hidden')) {
+      if (e.key === 'Escape') closeDeleteModal();
+      return;
+    }
     if ($('previewModal').classList.contains('hidden')) return;
     if (e.key === 'ArrowRight') { pvI += 1; showPreview(); }
     if (e.key === 'ArrowLeft') { pvI -= 1; showPreview(); }
@@ -1041,3 +1268,4 @@ window.addEventListener('beforeunload', (e) => {
 
 bind();
 render();
+initCloudSync();
