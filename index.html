@@ -12,14 +12,14 @@
 <body class="min-h-screen page-fill">
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
 
-  <div class="fixed top-4 right-4 flex gap-2 z-10">
+  <div class="fixed top-4 right-4 flex gap-2 z-10 anim-from-top">
     <a href="topics.html" class="btn btn-ghost btn-sm">Chủ đề</a>
     <button id="btnFirebase" class="btn btn-ghost btn-sm">⚙︎ Firebase</button>
     <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
   </div>
 
   <main class="page-fill grid place-items-center p-4">
-    <div class="w-full max-w-md">
+    <div class="w-full max-w-md anim-zoom-center">
       <div class="text-center mb-8">
         <div class="eyebrow">Fox · Game show</div>
         <h1 class="font-display wordmark hero-title mt-2">The Floor</h1>
@@ -77,6 +77,63 @@
     $('room').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
     $('btnRandom').onclick = () => { $('room').value = rand4(); };
     $('btnFirebase').onclick = openFirebaseSettings;
+    const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
+      || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')
+      || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (isLowPower) document.body.classList.add('low-power-motion');
+
+    const ANIM_CLASSES = ['stagger-item', 'anim-from-top', 'anim-from-bottom', 'anim-from-left', 'anim-from-right', 'anim-zoom-center', 'anim-d0', 'anim-d1', 'anim-d2', 'anim-d3'];
+    document.addEventListener('animationend', (e) => {
+      const t = e.target;
+      if (t && t.classList) {
+        ANIM_CLASSES.forEach((c) => t.classList.remove(c));
+        t.style.removeProperty('--stagger-index');
+        t.style.removeProperty('--stagger-step');
+        t.style.removeProperty('--stagger-delay');
+      }
+    });
+
+    function initStaggeredEntrance(root = document) {
+      const selector = '.anim-from-top, main .max-w-md > div:first-child, main .glass > *';
+      const nodes = [...root.querySelectorAll(selector)].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      nodes.sort((a, b) => {
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        return (ra.top - rb.top) || (ra.left - rb.left);
+      });
+      const stepMs = nodes.length > 7 ? 35 : 55;
+      nodes.forEach((el, i) => {
+        const idx = Math.min(i, 10);
+        el.style.setProperty('--stagger-index', String(idx));
+        el.style.setProperty('--stagger-step', `${stepMs}ms`);
+        el.style.setProperty('--stagger-delay', `${idx * stepMs}ms`);
+        el.classList.add('stagger-item');
+      });
+    }
+    window.initStaggeredEntrance = initStaggeredEntrance;
+    initStaggeredEntrance();
+    window.addEventListener('pageshow', () => {
+      document.body.classList.remove('page-exiting');
+      initStaggeredEntrance();
+    });
+
+    function navigateSmoothly(url) {
+      if (!url) return;
+      document.body.classList.add('page-exiting');
+      setTimeout(() => { window.location.href = url; }, 180);
+    }
+    window.navigateSmoothly = navigateSmoothly;
+    document.querySelectorAll('a[href="topics.html"]').forEach((link) => {
+      link.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        navigateSmoothly(link.href);
+      });
+    });
+
     const go = (role) => {
       const room = $('room').value.trim();
       if (!/^\d{4}$/.test(room)) { alert('Game PIN phải gồm đúng 4 chữ số.'); return; }
@@ -85,7 +142,7 @@
         if (!$('pin').value) { alert('Nhập mật khẩu Host.'); return; }
         sessionStorage.setItem(`thefloor:pin:${room}`, $('pin').value);
       }
-      location.href = `game.html?role=${role}&room=${room}`;
+      navigateSmoothly(`game.html?role=${role}&room=${room}`);
     };
     let pc = Math.max(2, Math.min(6, parseInt(localStorage.getItem('thefloor:playerCount'), 10) || 4));
     const paintPc = () => document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => b.classList.toggle('active', Number(b.dataset.pc) === pc));

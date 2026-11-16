@@ -12,6 +12,95 @@ export const COUNTDOWN_MS = 10000;
 export const PRELOAD_WINDOW = 3; // Chỉ preload tối đa 3 ảnh tiếp theo (currentIndex + 1, + 2, + 3)
 export const PRELOAD_TIMEOUT_MS = 5000;
 export const PRELOAD_RETRY_COUNT = 1;
+const FALLBACK_CATEGORIES = [
+  {
+    id: 'flags', name: 'Quốc kỳ', icon: '🏳️', shuffle: true,
+    items: [
+      { type: 'emoji', emoji: '🇻🇳', answer: 'Việt Nam', aliases: ['Viet Nam'] },
+      { type: 'emoji', emoji: '🇯🇵', answer: 'Nhật Bản', aliases: ['Nhat Ban', 'Japan'] },
+      { type: 'emoji', emoji: '🇰🇷', answer: 'Hàn Quốc', aliases: ['Han Quoc', 'Korea'] },
+      { type: 'emoji', emoji: '🇺🇸', answer: 'Hoa Kỳ', aliases: ['Mỹ', 'My', 'USA'] },
+      { type: 'emoji', emoji: '🇫🇷', answer: 'Pháp', aliases: ['Phap', 'France'] },
+      { type: 'emoji', emoji: '🇬🇧', answer: 'Vương quốc Anh', aliases: ['Anh', 'UK'] },
+    ],
+  },
+  {
+    id: 'animals', name: 'Động vật', icon: '🐾', shuffle: true,
+    items: [
+      { type: 'emoji', emoji: '🦁', answer: 'Sư tử', aliases: ['Su tu'] },
+      { type: 'emoji', emoji: '🐯', answer: 'Hổ', aliases: ['Ho', 'Cọp'] },
+      { type: 'emoji', emoji: '🐘', answer: 'Voi', aliases: [] },
+      { type: 'emoji', emoji: '🦒', answer: 'Hươu cao cổ', aliases: ['Huou cao co'] },
+      { type: 'emoji', emoji: '🐼', answer: 'Gấu trúc', aliases: ['Gau truc'] },
+      { type: 'emoji', emoji: '🐬', answer: 'Cá heo', aliases: ['Ca heo'] },
+    ],
+  },
+  {
+    id: 'food', name: 'Ẩm thực', icon: '🍜', shuffle: true,
+    items: [
+      { type: 'emoji', emoji: '🍕', answer: 'Pizza', aliases: [] },
+      { type: 'emoji', emoji: '🍣', answer: 'Sushi', aliases: [] },
+      { type: 'emoji', emoji: '🍔', answer: 'Hamburger', aliases: ['Burger'] },
+      { type: 'emoji', emoji: '🍜', answer: 'Mì ramen', aliases: ['Mì', 'Phở'] },
+    ],
+  },
+  {
+    id: 'vehicles', name: 'Phương tiện', icon: '🚀', shuffle: true,
+    items: [
+      { type: 'emoji', emoji: '🚗', answer: 'Ô tô', aliases: ['Xe hơi', 'O to'] },
+      { type: 'emoji', emoji: '✈️', answer: 'Máy bay', aliases: ['May bay'] },
+      { type: 'emoji', emoji: '🚂', answer: 'Tàu hỏa', aliases: ['Tau hoa'] },
+      { type: 'emoji', emoji: '🚁', answer: 'Trực thăng', aliases: ['Truc thang'] },
+    ],
+  },
+  {
+    id: 'sports', name: 'Thể thao', icon: '⚽', shuffle: true,
+    items: [
+      { type: 'emoji', emoji: '⚽', answer: 'Bóng đá', aliases: ['Bong da'] },
+      { type: 'emoji', emoji: '🏀', answer: 'Bóng rổ', aliases: ['Bong ro'] },
+      { type: 'emoji', emoji: '🎾', answer: 'Quần vợt', aliases: ['Tennis'] },
+      { type: 'emoji', emoji: '🏸', answer: 'Cầu lông', aliases: ['Cau long'] },
+    ],
+  },
+  {
+    id: 'nature', name: 'Thiên nhiên', icon: '🌿', shuffle: true,
+    items: [
+      { type: 'emoji', emoji: '🌋', answer: 'Núi lửa', aliases: ['Nui lua'] },
+      { type: 'emoji', emoji: '🌈', answer: 'Cầu vồng', aliases: ['Cau vong'] },
+      { type: 'emoji', emoji: '🌻', answer: 'Hoa hướng dương', aliases: ['Huong duong'] },
+      { type: 'emoji', emoji: '❄️', answer: 'Bông tuyết', aliases: ['Tuyết'] },
+    ],
+  },
+];
+
+export function safeAllCategories() {
+  try {
+    const raw = allCategories();
+    if (Array.isArray(raw) && raw.length) {
+      return raw.filter(Boolean).map((c) => ({
+        ...c,
+        id: String(c.id || 'flags'),
+        name: String(c.name || 'Chủ đề'),
+        icon: String(c.icon || '🖼️'),
+        items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
+      }));
+    }
+  } catch (err) {
+    console.warn('Fallback danh sách chủ đề mặc định do lỗi đọc topics:', err);
+  }
+  return FALLBACK_CATEGORIES.map((c) => ({ ...c, items: [...c.items] }));
+}
+
+function safeGetCategory(id) {
+  try {
+    const c = getCategory(id);
+    if (c && typeof c === 'object') {
+      return { ...c, items: Array.isArray(c.items) ? c.items.filter(Boolean) : [] };
+    }
+  } catch { /* ignore */ }
+  const list = safeAllCategories();
+  return list.find((c) => c.id === id) || list[0];
+}
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
 export const DEFAULT_PLAYER_COUNT = 4;
@@ -81,20 +170,24 @@ export function createInitialState(pin, playerCount = DEFAULT_PLAYER_COUNT) {
 }
 
 export function playerById(state, id) {
-  return state.players.find((p) => p.id === id) || null;
+  if (!state || !Array.isArray(state.players)) return null;
+  return state.players.find((p) => p && p.id === id) || null;
 }
 
 export function cellCount(state, id) {
+  if (!state || !Array.isArray(state.floor)) return 0;
   return state.floor.reduce((n, o) => n + (o === id ? 1 : 0), 0);
 }
 
 /** Người chơi còn sở hữu ít nhất 1 ô (còn trong cuộc). */
 export function alivePlayers(state) {
-  return state.players.filter((p) => cellCount(state, p.id) > 0);
+  if (!state || !Array.isArray(state.players)) return [];
+  return state.players.filter((p) => p && cellCount(state, p.id) > 0);
 }
 
 /** Id người vô địch nếu một người đã sở hữu toàn bộ sàn; ngược lại ''. */
 export function findChampion(state) {
+  if (!state || !Array.isArray(state.floor) || !state.floor.length) return '';
   const first = state.floor[0];
   return first && state.floor.every((o) => o === first) ? first : '';
 }
@@ -397,6 +490,9 @@ function finish(s, loserSide) {
  *  - null: hợp lệ, không có sự kiện
  */
 export function reduce(s, type, arg = {}, now) {
+  if (!s || typeof s !== 'object') return false;
+  if (!s.phase || s.phase === 'lobby') s.phase = 'floor';
+  s.setup = s.setup || {};
   const d = s.duel;
   switch (type) {
     case 'selectCell': {
@@ -405,7 +501,8 @@ export function reduce(s, type, arg = {}, now) {
       if (!owner) return false;
       s.setup = { ...s.setup, cell: arg.cell, defId: owner };
       if (s.setup.chalId === owner) delete s.setup.chalId;
-      const cat = getCategory(playerById(s, owner).categoryId);
+      const pOwner = playerById(s, owner);
+      const cat = safeGetCategory(pOwner ? pOwner.categoryId : '');
       s.setup.catId = cat.id;
       s.setup.preloadUrls = extractImageUrls(cat.items, null, 0, PRELOAD_WINDOW);
       s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
@@ -421,8 +518,8 @@ export function reduce(s, type, arg = {}, now) {
       s.setup = { ...s.setup, chalId: arg.id };
       return 'click';
     case 'setCategory': {
-      if (s.phase !== 'floor' || !allCategories().some((c) => c.id === arg.id)) return false;
-      const cat = getCategory(arg.id);
+      if (s.phase !== 'floor' || !safeAllCategories().some((c) => c.id === arg.id)) return false;
+      const cat = safeGetCategory(arg.id);
       s.setup = {
         ...s.setup,
         catId: arg.id,
@@ -439,7 +536,7 @@ export function reduce(s, type, arg = {}, now) {
       const { chalId, defId, catId } = s.setup;
       if (s.phase !== 'floor' || s.championId || !chalId || !defId || !catId) return false;
       if (chalId === defId || cellCount(s, chalId) < 1 || cellCount(s, defId) < 1) return false;
-      const cat = arg.cat || getCategory(catId);
+      const cat = arg.cat || safeGetCategory(catId);
       if (!cat || !cat.items || !cat.items.length) return false;
       const pA = playerById(s, chalId);
       const pB = playerById(s, defId);

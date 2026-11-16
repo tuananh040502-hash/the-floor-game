@@ -15,7 +15,7 @@
   <div class="p-3 md:p-5">
     <div class="window">
       <!-- Sidebar -->
-      <aside class="window-side">
+      <aside class="window-side anim-from-left">
         <div class="flex items-center justify-between gap-2">
           <div class="traffic"><i></i><i></i><i></i></div>
           <div class="flex items-center gap-2">
@@ -95,7 +95,7 @@
       <!-- Nội dung chính -->
       <section class="window-main">
         <!-- Thanh trạng thái đồng bộ Kho chủ đề dùng chung ở đầu trang -->
-        <div class="flex items-center justify-between flex-wrap gap-3 pb-4 mb-6 hairline-b mx-auto" style="max-width:980px">
+        <div class="flex items-center justify-between flex-wrap gap-3 pb-4 mb-6 hairline-b mx-auto anim-from-top" style="max-width:980px">
           <div class="flex items-center gap-2.5 flex-wrap">
             <span id="cloudTopPill" class="chip">
               <span id="cloudTopDot" class="cd-dot"></span>
@@ -108,13 +108,13 @@
           </div>
         </div>
 
-        <div id="emptyState" class="text-center py-24">
+        <div id="emptyState" class="text-center py-24 anim-zoom-center">
           <div class="text-6xl mb-4">🖼️</div>
           <div class="font-display text-3xl t-1">Chọn hoặc tạo một chủ đề</div>
           <p class="t-2 mt-2 text-base">Mỗi chủ đề chứa tối đa 100 ảnh kèm đáp án chuẩn và tự động đồng bộ lên Cloud.</p>
         </div>
 
-        <div id="editorBody" class="hidden space-y-6 mx-auto" style="max-width:980px">
+        <div id="editorBody" class="hidden space-y-6 mx-auto anim-zoom-center" style="max-width:980px">
           <!-- Thông tin chủ đề -->
           <div class="group group-pad space-y-5">
             <div class="grid gap-4 md:grid-cols-[84px_1fr_auto] items-end">
@@ -280,5 +280,64 @@
 
   <script type="module" src="js/theme.js"></script>
   <script type="module" src="js/cms.js"></script>
+  <script type="module">
+    const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
+      || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')
+      || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (isLowPower) document.body.classList.add('low-power-motion');
+
+    const ANIM_CLASSES = ['stagger-item', 'anim-from-top', 'anim-from-bottom', 'anim-from-left', 'anim-from-right', 'anim-zoom-center', 'anim-d0', 'anim-d1', 'anim-d2', 'anim-d3'];
+    document.addEventListener('animationend', (e) => {
+      const t = e.target;
+      if (t && t.classList) {
+        ANIM_CLASSES.forEach((c) => t.classList.remove(c));
+        t.style.removeProperty('--stagger-index');
+        t.style.removeProperty('--stagger-step');
+        t.style.removeProperty('--stagger-delay');
+      }
+    });
+
+    function initStaggeredEntrance(root = document) {
+      const selector = '.window-side > *, .window-main > div:not(.hidden), .group, .dropzone, .topic-item, .photo-card';
+      const nodes = [...root.querySelectorAll(selector)].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      nodes.sort((a, b) => {
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        return (ra.top - rb.top) || (ra.left - rb.left);
+      });
+      const stepMs = nodes.length > 7 ? 35 : 55;
+      nodes.forEach((el, i) => {
+        const idx = Math.min(i, 10);
+        el.style.setProperty('--stagger-index', String(idx));
+        el.style.setProperty('--stagger-step', `${stepMs}ms`);
+        el.style.setProperty('--stagger-delay', `${idx * stepMs}ms`);
+        el.classList.add('stagger-item');
+      });
+    }
+    window.initStaggeredEntrance = initStaggeredEntrance;
+    initStaggeredEntrance();
+    window.addEventListener('pageshow', () => {
+      document.body.classList.remove('page-exiting');
+      initStaggeredEntrance();
+    });
+
+    function navigateSmoothly(url) {
+      if (!url) return;
+      document.body.classList.add('page-exiting');
+      setTimeout(() => { window.location.href = url; }, 180);
+    }
+    window.navigateSmoothly = navigateSmoothly;
+    const backLink = document.getElementById('backLink');
+    if (backLink) {
+      backLink.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        navigateSmoothly(backLink.href);
+      });
+    }
+  </script>
 </body>
 </html>

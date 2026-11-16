@@ -6,8 +6,8 @@ import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
-  normalizeImageUrl, driveFallbackUrl, preloadWindow,
-} from './engine.js?v=hostclear1';
+  normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
+} from './engine.js?v=fixfloor3';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
@@ -25,11 +25,12 @@ const ICONS = {
 // ---------- Tham số trang ----------
 const params = new URLSearchParams(location.search);
 const room = (params.get('room') || 'FLOOR').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20) || 'FLOOR';
-const requestedHost = params.get('role') === 'host';
+const roleParam = (params.get('role') || 'host').toLowerCase();
+const requestedHost = roleParam !== 'view' && roleParam !== 'viewer';
 const pinKey = `thefloor:pin:${room}`;
 
-let role = 'view';
-let controller = false; // được phép điều khiển (Host hoặc đã mở khóa PIN)
+let role = requestedHost ? 'host' : 'view';
+let controller = requestedHost; // được phép điều khiển (Host hoặc đã mở khóa PIN)
 let state = null;
 let transport = null;
 let firstSnapshot = true;
@@ -51,15 +52,59 @@ let fxKey = '';
 let topicsSync = null;
 let sharedCustomTopics = null;
 let initialTopicsMigrated = false;
+const conn = { base: '…', latency: '', error: '' };
+const ANIM_CLASSES = [
+  'stagger-item', 'anim-from-top', 'anim-from-bottom', 'anim-from-left',
+  'anim-from-right', 'anim-zoom-center', 'anim-d0', 'anim-d1', 'anim-d2', 'anim-d3',
+];
+const STAGGER_SELECTOR = [
+  'header.appbar',
+  '.floor-header',
+  '.floor-stage',
+  '.floor-grid > .cell',
+  '#viewFloor aside > .panel:not(.hidden)',
+  '#setupPanel:not(.hidden) > *',
+  '.arena-top-bar',
+  '#qWrap',
+  '#cardA',
+  '#dock:not(.hidden)',
+  '#cardB',
+  '.window-side > *',
+  '.window-main > div:not(.hidden)',
+  '.group',
+  '.dropzone',
+  '.topic-item',
+  '.photo-card',
+].join(', ');
 
 // ---------- Khởi động ----------
-init();
-
 async function init() {
-  $('roomLabel').textContent = room;
-  $('gateRoom').textContent = room;
-  fx = new Fireworks($('fx'));
+  if (document.body) document.body.classList.remove('page-exiting');
+  window.__unlockFloorAudio = () => {
+    try { Sfx.unlock(); } catch { /* ignore */ }
+  };
+  if ($('roomLabel')) $('roomLabel').textContent = room;
+  if ($('gateRoom')) $('gateRoom').textContent = room;
+  if ($('fx')) fx = new Fireworks($('fx'));
   bindStaticUi();
+
+  // Khởi tạo và hiển thị ngay bàn cờ cục bộ để giao diện phía sau luôn sẵn sàng tức thì
+  const initialLocal = createInitialState(
+    sessionStorage.getItem(pinKey) || '',
+    clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
+  );
+  const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
+  if (savedDur) {
+    const sec = clampDurationSec(savedDur);
+    initialLocal.players.forEach((p) => { p.durationSec = sec; });
+  }
+  if (requestedHost) {
+    role = 'host';
+    controller = true;
+  }
+  state = initialLocal;
+  applyState(state, false);
+
   const fbCfg = loadFirebaseConfig();
   transport = await createTransport(room, fbCfg);
   transport.onStatus(onConnStatus);
@@ -107,7 +152,10 @@ async function initSharedTopics(fbCfg) {
           }
         } catch { /* ignore */ }
       }
-      sharedCustomTopics = [...cloudById.values()];
+      sharedCustomTopics = [...cloudById.values()].map((t) => ({
+        ...t,
+        items: Array.isArray(t?.items) ? t.items : [],
+      }));
       try {
         localStorage.setItem(TOPICS_KEY, JSON.stringify(sharedCustomTopics));
       } catch { /* ignore */ }
@@ -116,7 +164,7 @@ async function initSharedTopics(fbCfg) {
         badge.textContent = `☁️ Kho dùng chung (${sharedCustomTopics.length} chủ đề riêng)`;
       }
       if (state) {
-        if (state.phase === 'floor') renderFloor(state);
+        if (state.phase === 'floor' || state.phase === 'lobby') renderFloor(state);
         syncPreload(state);
         updatePreloadBadges();
       }
@@ -138,7 +186,6 @@ function startUiTimer() {
   });
 }
 
-const conn = { base: '…', latency: '', error: '' };
 function paintConn() {
   $('connLabel').textContent = `${conn.base}${conn.latency ? ` · ${conn.latency}` : ''}`;
   $('connLabel').title = conn.error || '';
@@ -159,71 +206,108 @@ function onConnStatus(ev) {
   if (ev.type === 'latency') $('connLabel').title = `Khứ hồi ${ev.rtt}ms`;
 }
 
-function onSnapshot(remote) {
-  if (!remote) {
-    if (requestedHost && firstSnapshot) {
-      const fresh = createInitialState(
-        sessionStorage.getItem(pinKey) || '',
-        clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
-      );
-      const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
-      if (savedDur) {
-        const sec = clampDurationSec(savedDur);
-        fresh.players.forEach((p) => { p.durationSec = sec; });
-      }
-      role = 'host';
-      controller = true;
-      state = fresh;
-      transport.write(fresh);
-      firstSnapshot = false;
-      applyState(fresh);
-    } else {
-      showWaiting();
-    }
-    return;
+function buildDefaultState() {
+  const fresh = createInitialState(
+    sessionStorage.getItem(pinKey) || '',
+    clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
+  );
+  const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
+  if (savedDur) {
+    const sec = clampDurationSec(savedDur);
+    fresh.players.forEach((p) => { p.durationSec = sec; });
   }
-  if (firstSnapshot) {
-    if (requestedHost) {
-      const pin = sessionStorage.getItem(pinKey) || '';
-      if (!remote.pin || remote.pin === pin) {
-        role = 'host';
-      } else {
-        alert('PIN Host không đúng cho phòng này — bạn đang vào ở chế độ xem. Dùng bảng điều khiển mini để mở khóa.');
-      }
-    }
-    controller = role === 'host' || (remote.pin && sessionStorage.getItem(`${pinKey}:unlocked`) === remote.pin);
-  }
-  state = normalize(remote);
-  applyState(state, !firstSnapshot);
-  firstSnapshot = false;
+  return fresh;
 }
 
-/** Firebase bỏ mảng/object rỗng — khôi phục các trường bắt buộc. */
-function normalize(s) {
-  s.players = (s.players || []).map((p) => ({
-    ...p,
+function onSnapshot(remote) {
+  try {
+    if (!remote || typeof remote !== 'object') {
+      const fresh = normalize(state || buildDefaultState());
+      if (requestedHost) {
+        role = 'host';
+        controller = true;
+        state = fresh;
+        if (transport && typeof transport.write === 'function') {
+          try { transport.write(fresh); } catch { /* ignore */ }
+        }
+        firstSnapshot = false;
+        applyState(fresh, false);
+      } else {
+        state = fresh;
+        applyState(fresh, false);
+      }
+      return;
+    }
+    if (firstSnapshot) {
+      if (requestedHost) {
+        role = 'host';
+        controller = true;
+      } else {
+        controller = Boolean(remote.pin && sessionStorage.getItem(`${pinKey}:unlocked`) === remote.pin);
+      }
+    }
+    state = normalize(remote);
+    applyState(state, !firstSnapshot);
+    firstSnapshot = false;
+  } catch (err) {
+    console.error('Lỗi xử lý onSnapshot:', err);
+    if (!state) state = buildDefaultState();
+    try { render(state); } catch { /* ignore */ }
+  }
+}
+
+/** Firebase bỏ mảng/object rỗng — khôi phục các trường bắt buộc & chuẩn hóa trạng thái phòng chờ. */
+function normalize(raw) {
+  const fallback = buildDefaultState();
+  const s = (raw && typeof raw === 'object') ? raw : fallback;
+
+  const validPlayers = Array.isArray(s.players)
+    ? s.players.filter((p) => p && typeof p === 'object' && p.id)
+    : [];
+  const basePlayers = validPlayers.length >= 2 ? validPlayers : fallback.players;
+  s.players = basePlayers.slice(0, 6).map((p, idx) => ({
+    id: String(p.id || `p${idx + 1}`),
+    name: String(p.name || `Người chơi ${idx + 1}`),
+    avatar: String(p.avatar || '🦁'),
+    color: String(p.color || '#06b6d4'),
+    categoryId: String(p.categoryId || 'flags'),
     durationSec: clampDurationSec(p.durationSec),
   }));
+
+  const validIds = new Set(s.players.map((p) => p.id));
   const cellTotal = Math.max(2, s.players.length);
-  s.floor = Array.from({ length: cellTotal }, (_, i) => (s.floor || [])[i] || s.players[0]?.id);
-  s.championId = s.championId || '';
-  s.setup = s.setup || {};
-  s.setup.preloadUrls = (s.setup.preloadUrls || []).map((u) => normalizeImageUrl(u) || u).filter(Boolean);
+  const rawFloor = Array.isArray(s.floor) ? s.floor : [];
+  s.floor = Array.from({ length: cellTotal }, (_, i) => {
+    const owner = rawFloor[i];
+    return (owner && validIds.has(owner)) ? owner : s.players[i % s.players.length].id;
+  });
+
+  s.championId = (s.championId && validIds.has(s.championId)) ? s.championId : '';
+  s.setup = (s.setup && typeof s.setup === 'object') ? s.setup : {};
+  s.setup.preloadUrls = (Array.isArray(s.setup.preloadUrls) ? s.setup.preloadUrls : [])
+    .map((u) => normalizeImageUrl(u) || u)
+    .filter(Boolean);
   s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
   s.setup.victoryVoiceData = s.setup.victoryVoiceData || '';
   s.setup.victoryVoiceName = s.setup.victoryVoiceName || '';
   s.setup.localAudioVolume = clampVolume01(s.setup.localAudioVolume, 1.0);
   s.setup.onlineAudioVolume = clampVolume01(s.setup.onlineAudioVolume, 1.0);
-  if (s.duel) {
-    s.duel.queue = s.duel.queue || [];
-    s.duel.items = (s.duel.items || []).map((it) => {
+
+  const validPhases = new Set(['floor', 'ready', 'countdown', 'playing', 'paused', 'finished']);
+  if (!s.phase || s.phase === 'lobby' || !validPhases.has(s.phase)) {
+    s.phase = 'floor';
+  }
+
+  if (s.duel && typeof s.duel === 'object') {
+    s.duel.queue = Array.isArray(s.duel.queue) ? s.duel.queue : [];
+    s.duel.items = (Array.isArray(s.duel.items) ? s.duel.items : []).map((it) => {
       if (!it || typeof it !== 'object') return null;
       if (it.type === 'img' && it.src) {
-        return { ...it, src: normalizeImageUrl(it.src) || it.src, aliases: it.aliases || [] };
+        return { ...it, src: normalizeImageUrl(it.src) || it.src, aliases: Array.isArray(it.aliases) ? it.aliases : [] };
       }
-      return { ...it, aliases: it.aliases || [] };
+      return { ...it, aliases: Array.isArray(it.aliases) ? it.aliases : [] };
     }).filter(Boolean);
-    s.duel.changed = s.duel.changed || [];
+    s.duel.changed = Array.isArray(s.duel.changed) ? s.duel.changed : [];
     s.duel.totalA = s.duel.totalA || DUEL_MS;
     s.duel.totalB = s.duel.totalB || DUEL_MS;
     s.duel.passUntil = s.duel.passUntil || 0;
@@ -236,6 +320,13 @@ function normalize(s) {
     s.duel.victoryVoiceName = s.duel.victoryVoiceName || '';
     s.duel.localAudioVolume = clampVolume01(s.duel.localAudioVolume, 1.0);
     s.duel.onlineAudioVolume = clampVolume01(s.duel.onlineAudioVolume, 1.0);
+    if (!s.duel.aId || !s.duel.bId || !validIds.has(s.duel.aId) || !validIds.has(s.duel.bId)) {
+      s.phase = 'floor';
+      s.duel = null;
+    }
+  } else {
+    s.duel = null;
+    s.phase = 'floor';
   }
   return s;
 }
@@ -383,27 +474,35 @@ function makeEvent(next, type) {
 
 /** Lấy toàn bộ chủ đề (mặc định + `shared_topics` từ Firebase + dự phòng `localStorage`) và giữ tối đa MAX_TOPIC_IMAGES (100) ảnh. */
 function getCategories100() {
-  const cats = allCategories();
+  const cats = safeAllCategories();
   try {
     const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
     const sourceList = Array.isArray(sharedCustomTopics)
       ? sharedCustomTopics
       : (Array.isArray(localRaw) ? localRaw : []);
     if (sourceList.length) {
-      const byId = new Map(sourceList.map((t) => [t && t.id, t]));
+      const byId = new Map(sourceList.filter(Boolean).map((t) => [t.id, t]));
       const existingIds = new Set(cats.map((c) => c.id));
       sourceList.forEach((t) => {
         if (t && t.id && !existingIds.has(t.id)) {
           existingIds.add(t.id);
-          cats.push({ ...t, custom: true, items: Array.isArray(t.items) ? t.items : [] });
+          cats.push({
+            ...t,
+            id: String(t.id),
+            name: String(t.name || 'Chủ đề riêng'),
+            icon: String(t.icon || '🖼️'),
+            custom: true,
+            items: Array.isArray(t.items) ? t.items.filter(Boolean) : [],
+          });
         }
       });
       cats.forEach((c) => {
+        if (!Array.isArray(c.items)) c.items = [];
         const src = byId.get(c.id);
         if (src && Array.isArray(src.items) && src.items.length > c.items.length) {
           c.items = src.items.filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
         }
-        c.items = (c.items || []).map((it) => {
+        c.items = c.items.map((it) => {
           if (!it || typeof it !== 'object') return null;
           if (it.type === 'img' && it.src) {
             return { ...it, src: normalizeImageUrl(it.src) || it.src };
@@ -412,8 +511,13 @@ function getCategories100() {
         }).filter(Boolean);
       });
     }
-  } catch { /* ignore */ }
-  return cats;
+  } catch (err) {
+    console.warn('Lỗi đọc danh sách chủ đề mở rộng:', err);
+  }
+  return cats.map((c) => ({
+    ...c,
+    items: Array.isArray(c.items) ? c.items : [],
+  }));
 }
 
 /** Gán thông tin chủ đề, danh sách preload ảnh và âm thanh chiến thắng vào setup */
@@ -530,11 +634,16 @@ function isPassWaiting(s, now = transport ? transport.serverNow() : Date.now()) 
 
 // ---------- Áp dụng trạng thái ----------
 function applyState(s, allowEvents = true) {
-  $('waiting').classList.add('hidden');
-  document.body.classList.toggle('host', role === 'host');
-  $('linkCms').classList.toggle('hidden', role !== 'host');
-  $('linkCms').href = `topics.html?room=${encodeURIComponent(room)}`;
-  $('roleLabel').textContent = role === 'host' ? 'Host' : controller ? 'Màn hình · đã mở khóa Host' : 'Màn hình xem';
+  if (!s) return;
+  if ($('waiting')) $('waiting').classList.add('hidden');
+  if (document.body) document.body.classList.toggle('host', role === 'host');
+  if ($('linkCms')) {
+    $('linkCms').classList.toggle('hidden', role !== 'host');
+    $('linkCms').href = `topics.html?room=${encodeURIComponent(room)}`;
+  }
+  if ($('roleLabel')) {
+    $('roleLabel').textContent = role === 'host' ? 'Host' : controller ? 'Màn hình · đã mở khóa Host' : 'Màn hình xem';
+  }
 
   // Sự kiện cũ có sẵn trong phòng khi mới vào sẽ không phát lại (allowEvents=false ở snapshot đầu).
   if (s.event && s.event.id !== lastEventId) {
@@ -569,13 +678,20 @@ function playEvent(type) {
 }
 
 function showWaiting() {
-  $('waiting').classList.remove('hidden');
-  ['viewFloor', 'viewArena', 'dock', 'miniPanel'].forEach((id) => $(id).classList.add('hidden'));
+  if ($('waiting')) $('waiting').classList.remove('hidden');
+  ['viewFloor', 'viewArena', 'dock', 'miniPanel'].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.add('hidden');
+  });
 }
 
 // ---------- Render ----------
 function render(s) {
-  const inDuel = s.phase !== 'floor';
+  if (!s) return;
+  const isLobbyOrFloor = !s.phase || s.phase === 'floor' || s.phase === 'lobby' || !s.duel;
+  const inDuel = !isLobbyOrFloor;
+  const phaseSwitch = prevPhase === null || (prevPhase === 'floor' || prevPhase === 'lobby') !== isLobbyOrFloor;
+  if (document.body) document.body.classList.toggle('in-arena', inDuel);
   if (!inDuel) {
     document.documentElement.style.setProperty('--turn', 'transparent');
     if (artKey) {
@@ -584,13 +700,19 @@ function render(s) {
       if (content) content.innerHTML = '';
     }
   }
-  $('viewFloor').classList.toggle('hidden', inDuel);
-  $('viewArena').classList.toggle('hidden', !inDuel);
-  renderFloor(s);
-  if (inDuel) renderArena(s);
-  renderControls(s);
-  renderFireworks(s);
-  syncMusic(s);
+  if ($('viewFloor')) $('viewFloor').classList.toggle('hidden', inDuel);
+  if ($('viewArena')) $('viewArena').classList.toggle('hidden', !inDuel);
+
+  try { renderFloor(s); } catch (err) { console.error('Lỗi renderFloor:', err); }
+  if (inDuel) {
+    try { renderArena(s); } catch (err) { console.error('Lỗi renderArena:', err); }
+  }
+  try { renderControls(s); } catch (err) { console.error('Lỗi renderControls:', err); }
+  if (phaseSwitch) {
+    try { initStaggeredEntrance(inDuel ? $('viewArena') : $('viewFloor')); } catch { /* ignore */ }
+  }
+  try { renderFireworks(s); } catch (err) { console.error('Lỗi renderFireworks:', err); }
+  try { syncMusic(s); } catch (err) { console.error('Lỗi syncMusic:', err); }
 }
 
 // Nhạc nền đếm ngược: chỉ chạy khi đang đấu (dừng khi tạm dừng / kết thúc), nhịp tăng theo thời gian còn lại.
@@ -681,89 +803,123 @@ function buildFloor(count) {
 }
 
 function renderFloor(s) {
-  if (!floorBuilt || floorBuiltCount !== s.floor.length) buildFloor(s.floor.length);
-  const flipSet = new Set(prevPhase === 'finished' && s.phase === 'floor' && s.duel ? s.duel.changed : []);
-  const catMap = new Map(getCategories100().map((c) => [c.id, c]));
+  const setup = s.setup || {};
+  const cats = getCategories100();
+  const catMap = new Map(cats.map((c) => [c.id, c]));
   const countMap = new Map();
-  s.players.forEach((p) => countMap.set(p.id, cellCount(s, p.id)));
+  (s.players || []).forEach((p) => countMap.set(p.id, cellCount(s, p.id)));
 
-  [...$('floorGrid').children].forEach((el, i) => {
-    const owner = playerById(s, s.floor[i]);
-    if (!owner) return;
-    const owned = countMap.get(owner.id) || 0;
-    const isElim = owned <= 0;
-    const isDef = !isElim && !!s.setup.defId && owner.id === s.setup.defId;
-    const isChal = !isElim && !!s.setup.chalId && owner.id === s.setup.chalId;
-    const cat = catMap.get(owner.categoryId);
+  // 1. Render lưới bàn cờ chính & tiêu đề gợi ý
+  try {
+    const grid = $('floorGrid');
+    if (grid) {
+      if (!floorBuilt || floorBuiltCount !== s.floor.length) buildFloor(s.floor.length);
+      const flipSet = new Set(prevPhase === 'finished' && (s.phase === 'floor' || s.phase === 'lobby') && s.duel ? (s.duel.changed || []) : []);
+      [...grid.children].forEach((el, i) => {
+        const owner = playerById(s, s.floor[i]) || s.players[i % s.players.length];
+        if (!owner) return;
+        const owned = countMap.get(owner.id) || 0;
+        const isElim = owned <= 0;
+        const isDef = !isElim && !!setup.defId && owner.id === setup.defId;
+        const isChal = !isElim && !!setup.chalId && owner.id === setup.chalId;
+        const cat = catMap.get(owner.categoryId);
 
-    el.style.setProperty('--c', owner.color);
-    const badgeEl = el.querySelector('.cell-badge');
-    const avatarEl = el.querySelector('.cell-avatar');
-    const nameEl = el.querySelector('.cell-name');
-    const topicEl = el.querySelector('.cell-topic');
-    const territoryEl = el.querySelector('.cell-territory');
+        el.style.setProperty('--c', owner.color || '#0071e3');
+        el.style.opacity = isElim ? '0.36' : '1';
+        el.style.visibility = 'visible';
 
-    if (badgeEl) badgeEl.textContent = isChal ? '⚔️ THÁCH ĐẤU' : isDef ? '🛡️ BỊ THÁCH' : '';
-    if (avatarEl) avatarEl.textContent = owner.avatar;
-    if (nameEl) nameEl.textContent = owner.name;
-    if (topicEl) topicEl.textContent = cat ? `${cat.icon} ${cat.name}` : (owner.categoryId || '—');
-    if (territoryEl) territoryEl.textContent = `${owned} ô`;
+        const badgeEl = el.querySelector('.cell-badge');
+        const avatarEl = el.querySelector('.cell-avatar');
+        const nameEl = el.querySelector('.cell-name');
+        const topicEl = el.querySelector('.cell-topic');
+        const territoryEl = el.querySelector('.cell-territory');
 
-    el.classList.toggle('is-eliminated', isElim);
-    el.classList.toggle('is-sel', s.setup.cell === i);
-    el.classList.toggle('is-def', isDef);
-    el.classList.toggle('is-chal', isChal);
-    if (flipSet.has(i)) {
-      el.classList.add('is-flip');
-      setTimeout(() => el.classList.remove('is-flip'), 3300);
+        if (badgeEl) badgeEl.textContent = isChal ? '⚔️ THÁCH ĐẤU' : isDef ? '🛡️ BỊ THÁCH' : '';
+        if (avatarEl) avatarEl.textContent = owner.avatar || '🦁';
+        if (nameEl) nameEl.textContent = owner.name || `Người chơi ${i + 1}`;
+        if (topicEl) topicEl.textContent = cat ? `${cat.icon} ${cat.name}` : (owner.categoryId || '—');
+        if (territoryEl) territoryEl.textContent = `${owned} ô`;
+
+        el.classList.toggle('is-eliminated', isElim);
+        el.classList.toggle('is-sel', setup.cell === i);
+        el.classList.toggle('is-def', isDef);
+        el.classList.toggle('is-chal', isChal);
+        if (flipSet.has(i)) {
+          el.classList.add('is-flip');
+          setTimeout(() => el.classList.remove('is-flip'), 3300);
+        }
+      });
     }
-  });
 
-  const def = playerById(s, s.setup.defId);
-  const chal = playerById(s, s.setup.chalId);
-  const champ = playerById(s, s.championId);
-  $('floorHint').textContent = champ
-    ? `🏆 ${champ.name} vô địch The Floor!`
-    : chal && def
-      ? `${chal.name}  ⚔️  ${def.name}`
-      : chal
-        ? `${chal.name} đang chọn đối thủ…`
-        : def
-          ? `Chờ chọn người thách đấu vs ${def.name}`
-          : role === 'host'
-            ? 'Chạm 2 ô trên sàn để chọn cặp đấu'
-            : 'Chờ trận đấu kế tiếp';
+    const def = playerById(s, setup.defId);
+    const chal = playerById(s, setup.chalId);
+    const champ = playerById(s, s.championId);
+    if ($('floorHint')) {
+      $('floorHint').textContent = champ
+        ? `🏆 ${champ.name} vô địch The Floor!`
+        : chal && def
+          ? `${chal.name}  ⚔️  ${def.name}`
+          : chal
+            ? `${chal.name} đang chọn đối thủ…`
+            : def
+              ? `Chờ chọn người thách đấu vs ${def.name}`
+              : (role === 'host' || controller)
+                ? 'Chạm 2 ô trên sàn để chọn cặp đấu'
+                : 'Chờ trận đấu kế tiếp';
+    }
+  } catch (err) {
+    console.error('Lỗi render lưới bàn cờ:', err);
+  }
 
-  // Bảng xếp hạng
-  const board = $('board');
-  const sorted = [...s.players].sort((a, b) => cellCount(s, b.id) - cellCount(s, a.id));
-  board.innerHTML = '';
-  const frag = document.createDocumentFragment();
-  sorted.forEach((p) => {
-    const n = cellCount(s, p.id);
-    const row = document.createElement('div');
-    row.innerHTML = `
-      <div class="flex items-center gap-2 text-base font-semibold mb-1 ${n === 0 ? 'opacity-40' : ''}">
-        <span>${p.avatar}</span>
-        <span class="flex-1 truncate t-1">${esc(p.name)}</span>
-        <span style="color:${p.color}">${n}</span>
-      </div>
-      <div class="h-1.5 rounded track overflow-hidden"><div style="width:${(n / s.floor.length) * 100}%;background:${p.color};border-radius:9999px;transition:width .6s" class="h-full"></div></div>`;
-    frag.appendChild(row);
-  });
-  board.appendChild(frag);
+  // 2. Render Bảng xếp hạng
+  try {
+    const board = $('board');
+    if (board) {
+      const sorted = [...(s.players || [])].sort((a, b) => cellCount(s, b.id) - cellCount(s, a.id));
+      board.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      const totalCells = Math.max(1, (s.floor || []).length);
+      sorted.forEach((p) => {
+        const n = cellCount(s, p.id);
+        const pct = Math.round((n / totalCells) * 100);
+        const row = document.createElement('div');
+        row.className = 'board-row';
+        row.innerHTML = `
+          <div class="board-row-head" style="${n === 0 ? 'opacity:0.45' : 'opacity:1'}">
+            <span>${esc(p.avatar || '🦁')}</span>
+            <span class="board-row-name">${esc(p.name || '')}</span>
+            <span class="font-num" style="color:${esc(p.color || '#2997ff')}">${n} ô</span>
+          </div>
+          <div class="board-bar"><div class="board-bar-fill" style="width:${pct}%;background:${esc(p.color || '#2997ff')}"></div></div>`;
+        frag.appendChild(row);
+      });
+      board.appendChild(frag);
+    }
+  } catch (err) {
+    console.error('Lỗi render Bảng xếp hạng:', err);
+  }
 
-  renderSetup(s);
+  // 3. Render khu vực cấu hình của Host (người chơi, chủ đề, thời gian, nút bắt đầu)
+  try {
+    renderSetup(s, cats);
+  } catch (err) {
+    console.error('Lỗi render khu vực thiết lập Host:', err);
+  }
 }
 
-function renderSetup(s) {
+function renderSetup(s, preloadedCats = null) {
   const panel = $('setupPanel');
-  const show = role === 'host' && s.phase === 'floor';
+  if (!panel) return;
+  const isLobbyPhase = !s.phase || s.phase === 'floor' || s.phase === 'lobby' || !s.duel;
+  const show = (role === 'host' || controller || requestedHost) && isLobbyPhase;
   panel.classList.toggle('hidden', !show);
   if (!show) return;
+  panel.style.opacity = '1';
+  panel.style.visibility = 'visible';
 
-  const chal = playerById(s, s.setup.chalId);
-  const def = playerById(s, s.setup.defId);
+  const setup = s.setup || {};
+  const chal = playerById(s, setup.chalId);
+  const def = playerById(s, setup.defId);
   const chalAlive = chal && cellCount(s, chal.id) > 0;
   const defAlive = def && cellCount(s, def.id) > 0;
   const validChal = chalAlive ? chal : null;
@@ -772,7 +928,7 @@ function renderSetup(s) {
   const chalNameEl = $('pairChalName');
   if (chalNameEl) {
     chalNameEl.innerHTML = validChal
-      ? `<span class="mr-1">${validChal.avatar}</span><span style="color:${validChal.color}">${esc(validChal.name)}</span>`
+      ? `<span class="mr-1">${esc(validChal.avatar)}</span><span style="color:${esc(validChal.color)}">${esc(validChal.name)}</span>`
       : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
   }
   const chalTimeWrap = $('pairChalTimeWrap');
@@ -787,7 +943,7 @@ function renderSetup(s) {
   const defNameEl = $('pairDefName');
   if (defNameEl) {
     defNameEl.innerHTML = validDef
-      ? `<span class="mr-1">${validDef.avatar}</span><span style="color:${validDef.color}">${esc(validDef.name)}</span>`
+      ? `<span class="mr-1">${esc(validDef.avatar)}</span><span style="color:${esc(validDef.color)}">${esc(validDef.name)}</span>`
       : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
   }
   const defTimeWrap = $('pairDefTimeWrap');
@@ -813,22 +969,36 @@ function renderSetup(s) {
     }
   }
 
-  const cats = getCategories100();
+  const cats = Array.isArray(preloadedCats) && preloadedCats.length ? preloadedCats : getCategories100();
   const catSel = $('selCat');
-  const catSig = JSON.stringify(cats.map((c) => [c.id, c.name, c.icon, c.items.length]));
-  if (catSel.dataset.sig !== catSig) {
-    catSel.dataset.sig = catSig;
-    catSel.innerHTML = cats.map((c) => `<option value="${c.id}" ${c.items.length ? '' : 'disabled'}>${c.icon} ${esc(c.name)} (${c.items.length})</option>`).join('');
+  if (catSel) {
+    const catSig = JSON.stringify(cats.map((c) => [c.id, c.name, c.icon, (c.items || []).length]));
+    if (catSel.dataset.sig !== catSig) {
+      catSel.dataset.sig = catSig;
+      catSel.innerHTML = cats.map((c) => {
+        const count = Array.isArray(c.items) ? c.items.length : 0;
+        return `<option value="${esc(c.id)}" ${count ? '' : 'disabled'}>${esc(c.icon || '🖼️')} ${esc(c.name || c.id)} (${count})</option>`;
+      }).join('');
+    }
+    const preferredCat = setup.catId || (validDef && validDef.categoryId) || (cats[0] ? cats[0].id : '');
+    if (preferredCat && cats.some((c) => c.id === preferredCat)) {
+      catSel.value = preferredCat;
+    } else if (cats[0]) {
+      catSel.value = cats[0].id;
+    }
+    const chosen = cats.find((c) => c.id === catSel.value);
+    if ($('btnStartDuel')) {
+      $('btnStartDuel').disabled = !(validChal && validDef && chosen && Array.isArray(chosen.items) && chosen.items.length) || !!s.championId;
+    }
   }
-  catSel.value = s.setup.catId || (cats[0] ? cats[0].id : '');
-  const chosen = cats.find((c) => c.id === catSel.value);
-  $('btnStartDuel').disabled = !(validChal && validDef && chosen && chosen.items.length) || !!s.championId;
+
   document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => {
     b.classList.toggle('active', Number(b.dataset.pc) === s.players.length);
   });
 
   // Roster editor (dùng event delegation trên #roster tránh gắn lại listener mỗi lần render)
   const roster = $('roster');
+  if (!roster) return;
   if (!roster.dataset.bound) {
     roster.dataset.bound = '1';
     roster.addEventListener('change', (e) => {
@@ -843,7 +1013,7 @@ function renderSetup(s) {
       dispatch('updatePlayer', { id: row.dataset.pid, patch: { [field]: val } });
     });
   }
-  const sig = JSON.stringify([s.players, cats.map((c) => c.id + c.name)]);
+  const sig = JSON.stringify([s.players, cats.map((c) => `${c.id}:${c.name}`)]);
   if (roster.dataset.sig !== sig && !roster.contains(document.activeElement)) {
     roster.dataset.sig = sig;
     roster.innerHTML = '';
@@ -852,14 +1022,16 @@ function renderSetup(s) {
       const row = document.createElement('div');
       row.dataset.pid = p.id;
       row.className = 'roster-grid roster-row';
+      row.style.opacity = '1';
+      row.style.visibility = 'visible';
       row.innerHTML = `
         <div class="roster-col-id">
-          <span class="roster-num" style="background:${p.color}">${idx + 1}</span>
-          <input type="color" data-f="color" value="${p.color}" class="roster-color" title="Màu đại diện" />
+          <span class="roster-num" style="background:${esc(p.color)}">${idx + 1}</span>
+          <input type="color" data-f="color" value="${esc(p.color)}" class="roster-color" title="Màu đại diện" />
           <input class="input roster-avatar-inp" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" title="Biểu tượng" />
         </div>
         <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" placeholder="Tên…" />
-        <select class="input" data-f="categoryId" title="Chủ đề sở trường">${cats.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>
+        <select class="input" data-f="categoryId" title="Chủ đề sở trường">${cats.map((c) => `<option value="${esc(c.id)}" ${c.id === p.categoryId ? 'selected' : ''}>${esc(c.icon || '🖼️')} ${esc(c.name)}</option>`).join('')}</select>
         <input type="number" min="10" max="600" step="5" class="input text-center font-num" data-f="durationSec" value="${clampDurationSec(p.durationSec)}" title="Thời gian thi đấu (giây)" />`;
       rFrag.appendChild(row);
     });
@@ -1115,30 +1287,39 @@ function renderControls(s) {
   const passWaiting = isPassWaiting(s, now);
 
   // Dock (host) hoặc mini panel (xem)
-  $('dock').classList.toggle('hidden', !(isHostScreen && inDuel));
-  $('miniPanel').classList.toggle('hidden', isHostScreen);
+  if ($('dock')) $('dock').classList.toggle('hidden', !(isHostScreen && inDuel));
+  if ($('miniPanel')) $('miniPanel').classList.toggle('hidden', isHostScreen);
   if (!isHostScreen) {
-    $('miniLock').classList.toggle('hidden', controller);
-    $('miniCtrl').classList.toggle('hidden', !controller);
+    if ($('miniLock')) $('miniLock').classList.toggle('hidden', controller);
+    if ($('miniCtrl')) $('miniCtrl').classList.toggle('hidden', !controller);
     const bar = $('ctrlBar');
-    if (bar.parentElement.id !== 'miniButtons') $('miniButtons').appendChild(bar);
-    bar.classList.toggle('hidden', !(controller && inDuel));
+    const miniBtns = $('miniButtons');
+    if (bar && miniBtns && bar.parentElement !== miniBtns) miniBtns.appendChild(bar);
+    if (bar) bar.classList.toggle('hidden', !(controller && inDuel));
   } else {
     const bar = $('ctrlBar');
-    if (bar.parentElement.id !== 'dockInner') $('dockInner').appendChild(bar);
+    const dockIn = $('dockInner');
+    if (bar && dockIn && bar.parentElement !== dockIn) dockIn.appendChild(bar);
+    if (bar) bar.classList.remove('hidden');
   }
 
-  $('cdSelect').classList.toggle('hidden', phase !== 'ready');
-  $('cBegin').classList.toggle('hidden', phase !== 'ready');
-  $('cOk').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
-  $('cPass').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
-  $('cPause').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
-  $('cOk').disabled = phase !== 'playing' || passWaiting;
-  $('cPass').disabled = phase !== 'playing' || passWaiting;
-  $('cPause').innerHTML = phase === 'paused' ? `${ICONS.play} Tiếp tục <kbd>T</kbd>` : `${ICONS.pause} Tạm dừng <kbd>T</kbd>`;
-  $('cBack').classList.toggle('hidden', phase !== 'finished');
-  $('cAbort').classList.toggle('hidden', phase === 'finished' || phase === 'floor');
-  if (isHostScreen) $('dockInner').classList.toggle('hidden', !inDuel);
+  if ($('cdSelect')) $('cdSelect').classList.toggle('hidden', phase !== 'ready');
+  if ($('cBegin')) $('cBegin').classList.toggle('hidden', phase !== 'ready');
+  if ($('cOk')) {
+    $('cOk').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
+    $('cOk').disabled = phase !== 'playing' || passWaiting;
+  }
+  if ($('cPass')) {
+    $('cPass').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
+    $('cPass').disabled = phase !== 'playing' || passWaiting;
+  }
+  if ($('cPause')) {
+    $('cPause').classList.toggle('hidden', !(phase === 'playing' || phase === 'paused'));
+    $('cPause').innerHTML = phase === 'paused' ? `${ICONS.play} Tiếp tục <kbd>T</kbd>` : `${ICONS.pause} Tạm dừng <kbd>T</kbd>`;
+  }
+  if ($('cBack')) $('cBack').classList.toggle('hidden', phase !== 'finished');
+  if ($('cAbort')) $('cAbort').classList.toggle('hidden', phase === 'finished' || phase === 'floor');
+  if (isHostScreen && $('dockInner')) $('dockInner').classList.toggle('hidden', !inDuel);
 
   // Cập nhật tức thì đáp án nhắc bài của Host (luôn sắc nét, bảo mật phía Người xem)
   syncHostAnswer(s);
@@ -1268,29 +1449,136 @@ function frame() {
   }
 }
 
+// ---------- Điều phối chuyển trang mượt, Staggered Cascade & Chế độ máy cấu hình thấp ----------
+export function detectLowPowerMotion() {
+  const lowCores = Boolean(navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
+  const smartTv = /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '');
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const lowPower = lowCores || smartTv || reducedMotion;
+  if (document.body) {
+    document.body.classList.toggle('low-power-motion', lowPower);
+  }
+  return lowPower;
+}
+
+function clearStaggerProps(el) {
+  if (!el || !el.classList) return;
+  ANIM_CLASSES.forEach((cls) => el.classList.remove(cls));
+  el.style.removeProperty('--stagger-index');
+  el.style.removeProperty('--stagger-step');
+  el.style.removeProperty('--stagger-delay');
+}
+
+export function initStaggeredEntrance(root = document) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  const candidates = [...root.querySelectorAll(STAGGER_SELECTOR)];
+  if (root !== document && root.matches && root.matches(STAGGER_SELECTOR)) {
+    candidates.unshift(root);
+  }
+  const visible = [];
+  candidates.forEach((el) => {
+    if (!el || el.classList.contains('hidden') || el.closest('#soundGate')) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    visible.push({ el, top: Math.round(rect.top), left: Math.round(rect.left) });
+  });
+  if (!visible.length) return;
+
+  // Sắp xếp từ trên xuống dưới theo getBoundingClientRect().top (nếu ngang hàng thì theo left)
+  visible.sort((a, b) => (a.top - b.top) || (a.left - b.left));
+
+  const isLongListOrGrid = visible.length > 7;
+  const stepMs = isLongListOrGrid ? 35 : 55;
+
+  visible.forEach(({ el }, index) => {
+    const staggerIdx = Math.min(index, 10);
+    const delayMs = staggerIdx * stepMs;
+    el.style.setProperty('--stagger-index', String(staggerIdx));
+    el.style.setProperty('--stagger-step', `${stepMs}ms`);
+    el.style.setProperty('--stagger-delay', `${delayMs}ms`);
+    el.classList.remove('stagger-item');
+    void el.offsetWidth;
+    el.classList.add('stagger-item');
+    setTimeout(() => clearStaggerProps(el), delayMs + 560);
+  });
+}
+window.initStaggeredEntrance = initStaggeredEntrance;
+
+export function navigateSmoothly(url) {
+  if (!url) return;
+  if (document.body) {
+    document.body.classList.add('page-exiting');
+  }
+  setTimeout(() => {
+    window.location.href = url;
+  }, 180);
+}
+window.navigateSmoothly = navigateSmoothly;
+
+function setupPageTransitions() {
+  if (document.body) document.body.classList.remove('page-exiting');
+  detectLowPowerMotion();
+  initStaggeredEntrance(document);
+  document.addEventListener('animationend', (e) => {
+    clearStaggerProps(e.target);
+  });
+  window.addEventListener('pageshow', () => {
+    if (document.body) document.body.classList.remove('page-exiting');
+    initStaggeredEntrance(document);
+  });
+  document.querySelectorAll('a[href="index.html"], #linkCms').forEach((link) => {
+    link.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      navigateSmoothly(link.href);
+    });
+  });
+}
+
 // ---------- UI tĩnh & phím tắt ----------
 function bindStaticUi() {
-  const unlock = () => {
-    Sfx.unlock();
-    $('soundGate').classList.add('hidden');
+  const unlock = (e) => {
+    if (e) e.stopPropagation();
+    const gate = $('soundGate');
+    if (gate) {
+      gate.classList.add('hidden');
+      gate.style.display = 'none';
+      gate.style.pointerEvents = 'none';
+    }
+    try { Sfx.unlock(); } catch { /* ignore */ }
+    if (state) render(state);
   };
-  $('soundGate').addEventListener('click', unlock);
-  window.addEventListener('keydown', () => Sfx.unlock(), { once: true });
+  ['soundGate', 'btnSoundGate'].forEach((id) => {
+    const el = $(id);
+    if (el) {
+      el.addEventListener('pointerdown', unlock);
+      el.addEventListener('click', unlock);
+    }
+  });
+  window.addEventListener('keydown', () => {
+    try { Sfx.unlock(); } catch { /* ignore */ }
+  }, { once: true });
+
+  setupPageTransitions();
 
   window.addEventListener('storage', (e) => {
     if (e.key === TOPICS_KEY && state) render(state);
   });
   window.addEventListener('pageshow', () => { if (state) render(state); });
 
-  $('btnFirebase').addEventListener('click', openFirebaseSettings);
-  $('btnMute').addEventListener('click', () => {
-    Sfx.setMuted(!Sfx.isMuted());
-    $('btnMute').textContent = Sfx.isMuted() ? '🔇' : '🔊';
-  });
-  $('btnFull').addEventListener('click', () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen().catch(() => {});
-  });
+  if ($('btnFirebase')) $('btnFirebase').addEventListener('click', openFirebaseSettings);
+  if ($('btnMute')) {
+    $('btnMute').addEventListener('click', () => {
+      Sfx.setMuted(!Sfx.isMuted());
+      $('btnMute').textContent = Sfx.isMuted() ? '🔇' : '🔊';
+    });
+  }
+  if ($('btnFull')) {
+    $('btnFull').addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+    });
+  }
 
   onPreloadProgress(updatePreloadBadges);
   Sfx.onVictoryAudioChange(paintVictoryButtons);
@@ -1384,7 +1672,10 @@ function bindStaticUi() {
     });
   });
 
-  const press = (id, fn) => $(id).addEventListener('click', (e) => { fn(); e.currentTarget.blur(); });
+  const press = (id, fn) => {
+    const el = $(id);
+    if (el) el.addEventListener('click', (e) => { fn(); e.currentTarget.blur(); });
+  };
   press('cBegin', () => dispatch('begin', { durationMs: cdDurationMs }));
   press('cOk', () => dispatch('correct'));
   press('cPass', () => dispatch('pass'));
@@ -1440,24 +1731,26 @@ function bindStaticUi() {
   if ($('selCat')) $('selCat').addEventListener('change', (e) => dispatch('setCategory', { id: e.target.value }));
 
   // Mini panel
-  $('miniToggle').addEventListener('click', () => {
-    const c = $('miniPanel').classList.toggle('collapsed');
-    $('miniArrow').textContent = c ? '▲' : '▼';
-  });
+  if ($('miniToggle')) {
+    $('miniToggle').addEventListener('click', () => {
+      const c = $('miniPanel') && $('miniPanel').classList.toggle('collapsed');
+      if ($('miniArrow')) $('miniArrow').textContent = c ? '▲' : '▼';
+    });
+  }
   const tryUnlock = () => {
-    const pin = $('miniPin').value;
+    const pin = $('miniPin') ? $('miniPin').value : '';
     if (state && (!state.pin || state.pin === pin)) {
       sessionStorage.setItem(`${pinKey}:unlocked`, state.pin || '');
       controller = true;
-      $('miniErr').classList.add('hidden');
+      if ($('miniErr')) $('miniErr').classList.add('hidden');
       render(state);
-      $('roleLabel').textContent = 'Màn hình · đã mở khóa Host';
-    } else {
+      if ($('roleLabel')) $('roleLabel').textContent = 'Màn hình · đã mở khóa Host';
+    } else if ($('miniErr')) {
       $('miniErr').classList.remove('hidden');
     }
   };
-  $('miniUnlock').addEventListener('click', tryUnlock);
-  $('miniPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); tryUnlock(); } });
+  if ($('miniUnlock')) $('miniUnlock').addEventListener('click', tryUnlock);
+  if ($('miniPin')) $('miniPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); tryUnlock(); } });
 
   window.addEventListener('keydown', (e) => {
     if (!controller || !state) return;
@@ -1496,3 +1789,6 @@ function pulse(id) {
 function esc(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// Khởi chạy ứng dụng sau khi toàn bộ biến const/let và hàm đã khai báo đầy đủ
+init();

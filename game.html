@@ -9,21 +9,52 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/style.css?v=hostclear1" />
+  <link rel="stylesheet" href="css/style.css?v=fiximg4" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
   <canvas id="fx"></canvas>
 
-  <!-- Cổng bật âm thanh -->
-  <div id="soundGate" class="fixed inset-0 z-[80] grid place-items-center scrim cursor-pointer p-4">
+  <!-- Cổng bật âm thanh (Tầng cao nhất z-index: 9999, tách biệt hoàn toàn khỏi transform/contain) -->
+  <div id="soundGate" class="sound-gate scrim cursor-pointer p-4" role="dialog" aria-modal="true" aria-label="Bật âm thanh và vào phòng">
     <div class="glass px-10 py-12 text-center max-w-md w-full">
       <div class="eyebrow">Game show</div>
       <div class="font-display wordmark text-5xl md:text-6xl mt-2">The Floor</div>
       <div class="t-2 mt-4 text-base">Chạm để bật âm thanh &amp; vào phòng <b class="t-1">PIN <span id="gateRoom"></span></b></div>
-      <div class="btn btn-ok btn-lg mt-6">Bắt đầu</div>
+      <button id="btnSoundGate" type="button" class="btn btn-ok btn-lg mt-6 w-full">Bắt đầu</button>
     </div>
   </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var rm = (params.get('room') || 'FLOOR').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20) || 'FLOOR';
+      var gr = document.getElementById('gateRoom');
+      var rl = document.getElementById('roomLabel');
+      if (gr) gr.textContent = rm;
+      if (rl) rl.textContent = rm;
+      var gate = document.getElementById('soundGate');
+      var btn = document.getElementById('btnSoundGate');
+      function dismissGate(e) {
+        if (e) e.stopPropagation();
+        if (gate) {
+          gate.classList.add('hidden');
+          gate.style.display = 'none';
+          gate.style.pointerEvents = 'none';
+        }
+        if (typeof window.__unlockFloorAudio === 'function') {
+          try { window.__unlockFloorAudio(); } catch (_) {}
+        }
+      }
+      if (gate) {
+        gate.addEventListener('pointerdown', dismissGate);
+        gate.addEventListener('click', dismissGate);
+      }
+      if (btn) {
+        btn.addEventListener('pointerdown', dismissGate);
+        btn.addEventListener('click', dismissGate);
+      }
+    })();
+  </script>
 
   <header class="appbar">
     <div class="appbar-inner">
@@ -47,24 +78,24 @@
     <div id="waiting" class="hidden text-center text-2xl mt-28 t-2 font-display">Đang chờ Host tạo phòng…</div>
 
     <!-- ===== SÀN THE FLOOR ===== -->
-    <section id="viewFloor" class="hidden">
-      <div class="grid gap-6 lg:grid-cols-[1fr_420px] xl:grid-cols-[1fr_450px] items-start">
-        <div>
+    <section id="viewFloor">
+      <div class="floor-layout grid gap-6 lg:grid-cols-[1fr_420px] xl:grid-cols-[1fr_450px] items-start">
+        <div class="floor-col-main">
           <div class="floor-header">
             <div class="eyebrow">Sàn đấu The Floor</div>
-            <h1 id="floorHint" class="font-display text-2xl md:text-4xl mt-1.5 t-1">The Floor</h1>
+            <h1 id="floorHint" class="font-display text-2xl md:text-4xl mt-1.5 t-1">Chạm 2 ô trên sàn để chọn cặp đấu</h1>
           </div>
           <div class="floor-stage"><div id="floorGrid" class="floor-grid"></div></div>
         </div>
 
-        <aside class="space-y-4 min-w-0">
-          <div class="panel p-5">
+        <aside class="floor-col-side space-y-4 min-w-0">
+          <div class="panel p-5 board-panel">
             <div class="eyebrow mb-3">Bảng xếp hạng</div>
             <div id="board" class="space-y-3"></div>
           </div>
 
-          <!-- Chuẩn bị trận (chỉ Host) -->
-          <div id="setupPanel" class="panel p-5 hidden space-y-4">
+          <!-- Chuẩn bị trận (Host / Phòng chờ) -->
+          <div id="setupPanel" class="panel p-5 space-y-4">
             <div>
               <div class="eyebrow">Cặp đấu hiện tại</div>
               <p class="t-3 text-xs mt-1">Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.</p>
@@ -183,10 +214,10 @@
           </div>
         </div>
 
-        <!-- Khung ảnh câu hỏi trung tâm (75%–82% 100dvh) -->
+        <!-- Khung ảnh câu hỏi trung tâm (hiển thị trọn vẹn 100% tỷ lệ ảnh) -->
         <div id="qWrap" class="q-wrap">
           <div id="qInner" class="q-inner">
-            <div id="qContent"></div>
+            <div id="qContent" class="flex items-center justify-center overflow-hidden min-h-0 w-full h-full"></div>
             <!-- Lớp phủ X đỏ & Đáp án giữa khung ảnh khi bấm Bỏ qua (2s) -->
             <div id="passOverlay" class="pass-overlay hidden">
               <div class="pass-overlay-card">
@@ -227,80 +258,82 @@
                 </div>
               </div>
             </div>
+            <!-- Khung hiển thị đáp án công khai khi bấm Bỏ qua -->
+            <div id="passRevealBox" class="pass-reveal-box hidden">
+              <div class="pass-reveal-pill">
+                <span class="eyebrow text-[#ff9f0a]">Đáp án:</span>
+                <span id="passRevealText" class="font-display text-xl md:text-2xl t-1"></span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Khung hiển thị đáp án công khai khi bấm Bỏ qua -->
-        <div id="passRevealBox" class="pass-reveal-box hidden">
-          <div class="pass-reveal-pill">
-            <span class="eyebrow text-[#ff9f0a]">Đáp án:</span>
-            <span id="passRevealText" class="font-display text-xl md:text-2xl t-1"></span>
+        <!-- Tầng 3: Đồng hồ 2 người chơi & Nút bấm Đúng / Bỏ qua của Host (flex-shrink: 0, không đè nhau) -->
+        <div class="arena-bottom-bar">
+          <!-- Thí sinh A (Compact HUD bên trái) -->
+          <div id="cardA" class="side-card hud-card hud-left" style="--sc: var(--a)">
+            <div class="hud-card-main">
+              <div id="avatarA" class="avatar"></div>
+              <div class="hud-info">
+                <div class="eyebrow hud-role">Thách đấu</div>
+                <div id="nameA" class="hud-name font-display truncate"></div>
+                <div class="hud-cells t-2 text-xs font-medium">▦ <span id="cellsA" class="t-1 font-semibold">0</span> ô</div>
+              </div>
+              <div class="ring-wrap hud-clock-wrap">
+                <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringA" class="ring-fill" cx="100" cy="100" r="88"/></svg>
+                <div id="clockA" class="clock">60.0</div>
+              </div>
+            </div>
+            <div class="capsule"><div id="barA" class="capsule-fill"></div></div>
           </div>
-        </div>
 
-        <!-- Thí sinh A (Compact HUD góc dưới bên trái) -->
-        <div id="cardA" class="side-card hud-card hud-left" style="--sc: var(--a)">
-          <div class="hud-card-main">
-            <div id="avatarA" class="avatar"></div>
-            <div class="hud-info">
-              <div class="eyebrow hud-role">Thách đấu</div>
-              <div id="nameA" class="hud-name font-display truncate"></div>
-              <div class="hud-cells t-2 text-xs font-medium">▦ <span id="cellsA" class="t-1 font-semibold">0</span> ô</div>
-            </div>
-            <div class="ring-wrap hud-clock-wrap">
-              <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringA" class="ring-fill" cx="100" cy="100" r="88"/></svg>
-              <div id="clockA" class="clock">60.0</div>
+          <!-- HOST DOCK (Nút bấm Đúng / Bỏ qua của Host ở tầng đáy) -->
+          <div id="dock" class="hidden">
+            <div id="dockInner" class="island">
+              <div id="ctrlBar" class="ctrl-bar">
+                <div id="cdSelect" class="seg hidden" title="Thời gian đếm ngược chuẩn bị">
+                  <button type="button" data-cd="5000">5s</button>
+                  <button type="button" data-cd="10000" class="active">10s</button>
+                </div>
+                <button id="cBegin" class="btn btn-gold btn-lg hidden">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+                  Bắt đầu trận <kbd>␣ Space</kbd>
+                </button>
+                <button id="cOk" class="btn btn-ok btn-lg">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+                  Đúng <kbd>␣ Space</kbd>
+                </button>
+                <button id="cPass" class="btn btn-pass btn-lg">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                  Bỏ qua <kbd>P / ↓</kbd>
+                </button>
+                <button id="cPause" class="btn btn-ghost"></button>
+                <button id="cBack" class="btn btn-gold btn-lg hidden">Về sàn The Floor</button>
+                <button id="cAbort" class="btn btn-ghost btn-sm">Hủy trận</button>
+              </div>
             </div>
           </div>
-          <div class="capsule"><div id="barA" class="capsule-fill"></div></div>
-        </div>
 
-        <!-- Thí sinh B (Compact HUD góc dưới bên phải) -->
-        <div id="cardB" class="side-card hud-card hud-right" style="--sc: var(--b)">
-          <div class="hud-card-main">
-            <div class="ring-wrap hud-clock-wrap">
-              <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringB" class="ring-fill" cx="100" cy="100" r="88"/></svg>
-              <div id="clockB" class="clock">60.0</div>
+          <!-- Thí sinh B (Compact HUD bên phải) -->
+          <div id="cardB" class="side-card hud-card hud-right" style="--sc: var(--b)">
+            <div class="hud-card-main">
+              <div class="ring-wrap hud-clock-wrap">
+                <svg viewBox="0 0 200 200"><circle class="ring-track" cx="100" cy="100" r="88"/><circle id="ringB" class="ring-fill" cx="100" cy="100" r="88"/></svg>
+                <div id="clockB" class="clock">60.0</div>
+              </div>
+              <div class="hud-info text-right">
+                <div class="eyebrow hud-role">Bị thách</div>
+                <div id="nameB" class="hud-name font-display truncate"></div>
+                <div class="hud-cells t-2 text-xs font-medium">▦ <span id="cellsB" class="t-1 font-semibold">0</span> ô</div>
+              </div>
+              <div id="avatarB" class="avatar"></div>
             </div>
-            <div class="hud-info text-right">
-              <div class="eyebrow hud-role">Bị thách</div>
-              <div id="nameB" class="hud-name font-display truncate"></div>
-              <div class="hud-cells t-2 text-xs font-medium">▦ <span id="cellsB" class="t-1 font-semibold">0</span> ô</div>
-            </div>
-            <div id="avatarB" class="avatar"></div>
+            <div class="capsule"><div id="barB" class="capsule-fill"></div></div>
           </div>
-          <div class="capsule"><div id="barB" class="capsule-fill"></div></div>
         </div>
       </div>
     </section>
   </main>
-
-  <!-- ===== HOST DOCK (Dynamic Island ở giữa 2 thẻ người chơi dưới cùng) ===== -->
-  <div id="dock" class="hidden">
-    <div id="dockInner" class="island">
-      <div id="ctrlBar" class="ctrl-bar">
-        <div id="cdSelect" class="seg hidden" title="Thời gian đếm ngược chuẩn bị">
-          <button type="button" data-cd="5000">5s</button>
-          <button type="button" data-cd="10000" class="active">10s</button>
-        </div>
-        <button id="cBegin" class="btn btn-gold btn-lg hidden">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
-          Bắt đầu trận <kbd>␣ Space</kbd>
-        </button>
-        <button id="cOk" class="btn btn-ok btn-lg">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
-          Đúng <kbd>␣ Space</kbd>
-        </button>
-        <button id="cPass" class="btn btn-pass btn-lg">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
-          Bỏ qua <kbd>P / ↓</kbd>
-        </button>
-        <button id="cPause" class="btn btn-ghost"></button>
-        <button id="cBack" class="btn btn-gold btn-lg hidden">Về sàn The Floor</button>
-        <button id="cAbort" class="btn btn-ghost btn-sm">Hủy trận</button>
-      </div>
-    </div>
-  </div>
 
   <!-- ===== MINI PANEL (màn hình xem) ===== -->
   <div id="miniPanel" class="mini-panel panel hidden collapsed">
@@ -321,7 +354,7 @@
     </div>
   </div>
 
-  <script type="module" src="js/theme.js?v=hostclear1"></script>
-  <script type="module" src="js/app.js?v=hostclear1"></script>
+  <script type="module" src="js/theme.js?v=fixfloor3"></script>
+  <script type="module" src="js/app.js?v=fixfloor3"></script>
 </body>
 </html>
