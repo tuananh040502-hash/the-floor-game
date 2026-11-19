@@ -1,36 +1,38 @@
 <!DOCTYPE html>
-<html lang="vi" data-theme="dark">
+<html lang="vi" data-theme="christmas">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>The Floor — Vào phòng</title>
-  <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <script>(function(){try{if(localStorage.getItem('thefloor:themeSeasonInit')!=='xmas2026'){localStorage.setItem('thefloor:themeSeasonInit','xmas2026');localStorage.setItem('thefloor:theme','christmas');}var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark'&&t!=='christmas'&&t!=='tet')t='christmas';document.documentElement.dataset.theme=t;}catch(_){document.documentElement.dataset.theme='christmas';}})();</script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=bgm1" />
+  <link rel="stylesheet" href="css/style.css?v=xmas2" />
 </head>
-<body class="min-h-screen page-fill">
+<body class="min-h-screen page-fill" data-page="index">
+  <div id="seasonalBgLayer" data-slot="bg1" aria-hidden="true"></div>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
 
-  <div class="fixed top-4 right-4 flex gap-2 z-10 anim-from-top">
-    <a href="topics.html" class="btn btn-ghost btn-sm">Chủ đề</a>
+  <div class="top-right-toolbar fixed top-4 right-4 flex gap-2 z-10 anim-from-top">
+    <a href="topics.html" class="btn btn-ghost btn-sm nav-topic-link">Chủ đề</a>
     <button id="btnFirebase" class="btn btn-ghost btn-sm">⚙︎ Firebase</button>
     <div class="bgm-header-pill" role="group" aria-label="Nhạc nền">
       <button id="btnBgmMute" type="button" class="btn btn-ghost btn-sm btn-icon" title="Bật / tắt tiếng nhạc nền">🎵</button>
       <button id="btnBgmModal" type="button" class="btn btn-ghost btn-sm btn-icon" title="Danh sách &amp; Quản lý nhạc nền">☰</button>
     </div>
-    <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
+    <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối / lễ hội">★</button>
+    <button id="btnFullscreenHome" type="button" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
   </div>
 
   <main class="page-fill grid place-items-center p-4">
     <div class="w-full max-w-md anim-zoom-center">
-      <div class="text-center mb-8">
-        <div class="eyebrow">Fox · Game show</div>
+      <div class="text-center mb-8 hero-head">
+        <div class="eyebrow hero-eyebrow">Fox · Game show</div>
         <h1 class="font-display wordmark hero-title mt-2">The Floor</h1>
-        <p class="t-2 mt-3 text-base">Đấu trường 60 giây · Realtime Host &amp; Màn hình xem</p>
+        <p class="t-2 mt-3 text-base hero-sub">Đấu trường 60 giây · Realtime Host &amp; Màn hình xem</p>
       </div>
 
-      <div class="glass p-6 space-y-5" style="border-radius:32px">
-        <label class="field-label"><span class="eyebrow">Game PIN · mã phòng 4 số</span>
+      <div class="glass lobby-card p-6 space-y-5" style="border-radius:32px">
+        <label class="field-label"><span class="eyebrow pin-eyebrow">Game PIN · mã phòng 4 số</span>
           <div class="flex gap-2">
             <input id="room" class="input font-num text-center" style="font-size:2rem;letter-spacing:.35em;padding:10px 12px" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off" data-lpignore="true" data-1p-ignore="true" />
             <button id="btnRandom" class="btn btn-ghost btn-icon" title="Tạo mã ngẫu nhiên">🎲</button>

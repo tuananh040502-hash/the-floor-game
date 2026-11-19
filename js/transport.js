@@ -12,8 +12,111 @@ export const SHARED_TOPICS_PATH = 'shared_topics';
 export const DELETED_TOPICS_KEY = 'deleted_topic_ids';
 export const SHARED_BGM_PATH = 'shared_bgm';
 export const BGM_CACHE_KEY = 'thefloor:bgm';
+export const SHARED_THEME_PATH = 'shared_theme';
+export const THEME_CONFIG_KEY = 'thefloor:themeConfig';
 const MAX_CLOUD_IMAGES = 100;
 const MAX_INLINE_STR_LEN = 2048;
+
+export const THEME_PRESET_DEFAULTS = {
+  christmas: {
+    preset: 'christmas',
+    bg1Url: 'assets/christmas/bg-1.webp',
+    bg2Url: 'assets/christmas/bg-2.webp',
+    bg3Url: 'assets/christmas/bg-3.webp',
+    bgMobileUrl: 'assets/christmas/bg-mobile.webp',
+    cardBg: '#FBF6EC',
+    borderColor: '#D8B979',
+    accentColor: '#B91C2C',
+    borderStyle: 'solid',
+    effect: 'snow',
+  },
+  tet: {
+    preset: 'tet',
+    bg1Url: '',
+    bg2Url: '',
+    bg3Url: '',
+    bgMobileUrl: '',
+    cardBg: '#FFF5E1',
+    borderColor: '#E5A93C',
+    accentColor: '#B81414',
+    borderStyle: 'gold',
+    effect: 'blossom',
+  },
+  default: {
+    preset: 'default',
+    bg1Url: '',
+    bg2Url: '',
+    bg3Url: '',
+    bgMobileUrl: '',
+    cardBg: '#181D24',
+    borderColor: '#30353B',
+    accentColor: '#0071E3',
+    borderStyle: 'solid',
+    effect: 'none',
+  },
+};
+
+export function normalizeThemeAssetUrl(rawUrl, fallback = '') {
+  if (typeof rawUrl !== 'string') return fallback;
+  const s = rawUrl.trim();
+  if (!s) return fallback;
+  if (/^data:/i.test(s) || s.length > MAX_INLINE_STR_LEN) return fallback;
+  const driveId = extractDriveId(s);
+  if (driveId && (/(?:drive\.google\.com|docs\.google\.com|googleusercontent\.com)/i.test(s) || /^[a-zA-Z0-9_-]{25,}$/.test(s))) {
+    return `https://lh3.googleusercontent.com/d/${driveId}=s0`;
+  }
+  if (/^https?:\/\//i.test(s) || /^assets\//i.test(s) || /^\.?\//i.test(s)) {
+    return s.replace(/(https:\/\/lh3\.googleusercontent\.com\/d\/[a-zA-Z0-9_-]+)=(?:w\d+|s\d+)/i, '$1=s0');
+  }
+  return fallback;
+}
+
+export function sanitizeCloudThemeConfig(raw) {
+  const basePreset = (raw && (raw.preset === 'christmas' || raw.preset === 'tet' || raw.preset === 'default'))
+    ? raw.preset
+    : 'christmas';
+  const def = THEME_PRESET_DEFAULTS[basePreset] || THEME_PRESET_DEFAULTS.christmas;
+  if (!raw || typeof raw !== 'object') {
+    return {
+      ...def,
+      ownerScriptUrl: '',
+      ownerFolderId: '',
+      updatedAt: 0,
+    };
+  }
+  const cleanColor = (val, fb) => {
+    const s = String(val || '').trim();
+    return /^#[0-9a-fA-F]{3,8}$/.test(s) ? s : fb;
+  };
+  const borderStyle = ['candy', 'gold', 'solid'].includes(raw.borderStyle) ? raw.borderStyle : def.borderStyle;
+  const effect = ['snow', 'blossom', 'none'].includes(raw.effect) ? raw.effect : def.effect;
+  return {
+    preset: basePreset,
+    bg1Url: normalizeThemeAssetUrl(raw.bg1Url, def.bg1Url),
+    bg2Url: normalizeThemeAssetUrl(raw.bg2Url, def.bg2Url),
+    bg3Url: normalizeThemeAssetUrl(raw.bg3Url, def.bg3Url),
+    bgMobileUrl: normalizeThemeAssetUrl(raw.bgMobileUrl, def.bgMobileUrl),
+    cardBg: cleanColor(raw.cardBg, def.cardBg),
+    borderColor: cleanColor(raw.borderColor, def.borderColor),
+    accentColor: cleanColor(raw.accentColor, def.accentColor),
+    borderStyle,
+    effect,
+    ownerScriptUrl: normalizeScriptUrl(raw.ownerScriptUrl).slice(0, MAX_INLINE_STR_LEN),
+    ownerFolderId: normalizeFolderId(raw.ownerFolderId).slice(0, 128),
+    updatedAt: Number(raw.updatedAt) || Date.now(),
+  };
+}
+
+export function canIdentityModifyTheme(themeCfg, identity) {
+  const scriptUrl = normalizeScriptUrl(identity && identity.scriptUrl);
+  const folderId = normalizeFolderId(identity && identity.folderId);
+  if (!scriptUrl || !folderId) return false;
+  if (!themeCfg || typeof themeCfg !== 'object') return true;
+  const ownerUrl = normalizeScriptUrl(themeCfg.ownerScriptUrl);
+  const ownerFolder = normalizeFolderId(themeCfg.ownerFolderId);
+  if (!ownerUrl || !ownerFolder) return true;
+  return scriptUrl === ownerUrl && folderId === ownerFolder;
+}
 
 export function normalizeScriptUrl(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -926,6 +1029,227 @@ function localSharedBgm() {
       const cleanId = String(bgmId || '').trim();
       const list = readBgmCache().filter((x) => x.id !== cleanId);
       writeBgmCache(list);
+      if (channel) channel.postMessage(1);
+      emitAll();
+      return true;
+    },
+    dispose() {
+      dataListeners.clear();
+      if (storageHandler) {
+        window.removeEventListener('storage', storageHandler);
+        storageHandler = null;
+      }
+      if (channel) channel.close();
+    },
+  };
+}
+
+/**
+ * Kết nối nhánh `shared_theme` trên Firebase Realtime Database & cache `thefloor:themeConfig`.
+ */
+export function readThemeConfigCache() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(THEME_CONFIG_KEY) || 'null');
+    return sanitizeCloudThemeConfig(raw);
+  } catch {
+    return sanitizeCloudThemeConfig(null);
+  }
+}
+
+export function writeThemeConfigCache(cfg) {
+  const clean = sanitizeCloudThemeConfig(cfg);
+  try {
+    localStorage.setItem(THEME_CONFIG_KEY, JSON.stringify(clean));
+  } catch { /* ignore */ }
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('thefloor:shared_theme');
+      bc.postMessage(clean);
+      bc.close();
+    }
+  } catch { /* ignore */ }
+  return clean;
+}
+
+export async function createSharedThemeSync(config) {
+  if (config && config.databaseURL) {
+    try {
+      return await firebaseSharedTheme(config);
+    } catch (err) {
+      console.error('Không kết nối được shared_theme trên Firebase, chuyển sang chế độ cục bộ:', err);
+      const local = localSharedTheme();
+      local.fallbackReason = err.message || String(err);
+      return local;
+    }
+  }
+  return localSharedTheme();
+}
+
+async function firebaseSharedTheme(config) {
+  const { appMod, db } = await loadSdk();
+  const app = getOrInitApp(appMod, config);
+  const database = db.getDatabase(app);
+  const themeRef = db.ref(database, SHARED_THEME_PATH);
+
+  const statusListeners = [];
+  let currentStatus = { state: 'syncing', message: 'Đang kết nối cấu hình giao diện…' };
+  const emitStatus = (st) => {
+    currentStatus = st;
+    statusListeners.forEach((cb) => {
+      try { cb(st); } catch (e) { console.error(e); }
+    });
+  };
+
+  let themeUnsub = null;
+  let connUnsub = null;
+  let channel = null;
+  let storageHandler = null;
+  let disposed = false;
+
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('thefloor:shared_theme');
+    }
+  } catch { /* ignore */ }
+
+  connUnsub = subscribeConnected(db, database, (connected) => {
+    if (connected) {
+      emitStatus({ state: 'synced', message: 'Đã đồng bộ Giao diện Cloud' });
+    } else {
+      emitStatus({ state: 'offline', message: 'Mất kết nối — dùng giao diện lưu trên máy' });
+    }
+  });
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    if (themeUnsub) { try { themeUnsub(); } catch { /* ignore */ } themeUnsub = null; }
+    if (connUnsub) { try { connUnsub(); } catch { /* ignore */ } connUnsub = null; }
+    if (storageHandler) {
+      window.removeEventListener('storage', storageHandler);
+      storageHandler = null;
+    }
+    if (channel) { try { channel.close(); } catch { /* ignore */ } channel = null; }
+  };
+  window.addEventListener('pagehide', dispose);
+
+  return {
+    mode: 'firebase',
+    onStatus(cb) {
+      statusListeners.push(cb);
+      try { cb(currentStatus); } catch { /* ignore */ }
+    },
+    subscribe(cb) {
+      if (themeUnsub) { try { themeUnsub(); } catch { /* ignore */ } themeUnsub = null; }
+      emitStatus({ state: 'syncing', message: 'Đang đồng bộ giao diện…' });
+      const emitLocal = () => {
+        const cached = readThemeConfigCache();
+        try { cb(cached, cached); } catch (e) { console.error(e); }
+      };
+      if (channel) channel.onmessage = emitLocal;
+      if (!storageHandler) {
+        storageHandler = (e) => {
+          if (e.key === THEME_CONFIG_KEY) emitLocal();
+        };
+        window.addEventListener('storage', storageHandler);
+      }
+      themeUnsub = db.onValue(themeRef, (snap) => {
+        const val = snap.val();
+        const localCached = readThemeConfigCache();
+        let cfg = localCached;
+        if (val && typeof val === 'object') {
+          const remoteClean = sanitizeCloudThemeConfig(val);
+          // Ưu tiên bản có updatedAt mới hơn giữa Cloud và Local
+          if (!localCached.updatedAt || (remoteClean.updatedAt || 0) >= (localCached.updatedAt || 0)) {
+            cfg = writeThemeConfigCache(remoteClean);
+          }
+        }
+        emitStatus({ state: 'synced', message: 'Đã đồng bộ Giao diện Cloud' });
+        try { cb(cfg, val || cfg); } catch (e) { console.error(e); }
+      }, (err) => {
+        emitStatus({ state: 'error', message: `Đang dùng cấu hình trên máy (${err.message})` });
+        emitLocal();
+      });
+    },
+    async fetchTheme() {
+      try {
+        const snap = await db.get(themeRef);
+        const val = snap.val();
+        return val ? writeThemeConfigCache(val) : readThemeConfigCache();
+      } catch {
+        return readThemeConfigCache();
+      }
+    },
+    async putTheme(rawCfg, identity = null) {
+      const clean = sanitizeCloudThemeConfig(rawCfg);
+      if (identity && !canIdentityModifyTheme(clean, identity)) {
+        emitStatus({ state: 'error', message: 'Từ chối ghi: Không khớp quyền Drive.' });
+        return false;
+      }
+      if (identity) {
+        clean.ownerScriptUrl = normalizeScriptUrl(identity.scriptUrl);
+        clean.ownerFolderId = normalizeFolderId(identity.folderId);
+      }
+      clean.updatedAt = Date.now();
+      writeThemeConfigCache(clean);
+      emitStatus({ state: 'syncing', message: 'Đang lưu giao diện lên Cloud…' });
+      try {
+        await db.set(themeRef, clean);
+        emitStatus({ state: 'synced', message: 'Đã đồng bộ Giao diện Cloud' });
+        return true;
+      } catch (err) {
+        emitStatus({ state: 'local', message: `Đã lưu trên máy (Cloud: ${err.message})` });
+        return true;
+      }
+    },
+    dispose,
+  };
+}
+
+function localSharedTheme() {
+  let channel = null;
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('thefloor:shared_theme');
+    }
+  } catch { /* ignore */ }
+  const statusListeners = [];
+  const dataListeners = new Set();
+  const currentStatus = { state: 'local', message: 'Chế độ cục bộ' };
+  const emitAll = () => {
+    const cfg = readThemeConfigCache();
+    dataListeners.forEach((cb) => {
+      try { cb(cfg, cfg); } catch (e) { console.error(e); }
+    });
+  };
+  let storageHandler = null;
+  return {
+    mode: 'local',
+    onStatus(cb) {
+      statusListeners.push(cb);
+      try { cb(currentStatus); } catch { /* ignore */ }
+    },
+    subscribe(cb) {
+      dataListeners.add(cb);
+      if (channel) channel.onmessage = emitAll;
+      if (!storageHandler) {
+        storageHandler = (e) => {
+          if (e.key === THEME_CONFIG_KEY) emitAll();
+        };
+        window.addEventListener('storage', storageHandler);
+      }
+      setTimeout(emitAll, 0);
+    },
+    async fetchTheme() {
+      return readThemeConfigCache();
+    },
+    async putTheme(rawCfg, identity = null) {
+      const clean = sanitizeCloudThemeConfig(rawCfg);
+      if (!identity || !canIdentityModifyTheme(clean, identity)) return false;
+      clean.ownerScriptUrl = normalizeScriptUrl(identity.scriptUrl);
+      clean.ownerFolderId = normalizeFolderId(identity.folderId);
+      clean.updatedAt = Date.now();
+      writeThemeConfigCache(clean);
       if (channel) channel.postMessage(1);
       emitAll();
       return true;

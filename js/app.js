@@ -1024,44 +1024,25 @@ function renderFloor(s) {
     console.error('Lỗi render lưới bàn cờ:', err);
   }
 
-  // 2. Render Bảng xếp hạng (Differential DOM theo board.dataset.sig)
-  try {
-    const board = $('board');
-    if (board) {
-      const totalCells = Math.max(1, (s.floor || []).length);
-      const sorted = [...(s.players || [])].sort((a, b) => (countMap.get(b.id) || 0) - (countMap.get(a.id) || 0));
-      const boardSig = JSON.stringify(sorted.map((p) => [p.id, p.name, p.avatar, p.color, countMap.get(p.id) || 0, totalCells]));
-      if (board.dataset.sig !== boardSig) {
-        board.dataset.sig = boardSig;
-        board.innerHTML = '';
-        const frag = document.createDocumentFragment();
-        sorted.forEach((p) => {
-          const n = countMap.get(p.id) || 0;
-          const pct = Math.round((n / totalCells) * 100);
-          const row = document.createElement('div');
-          row.className = 'board-row';
-          row.innerHTML = `
-            <div class="board-row-head" style="${n === 0 ? 'opacity:0.45' : 'opacity:1'}">
-              <span>${esc(p.avatar || '🦁')}</span>
-              <span class="board-row-name">${esc(p.name || '')}</span>
-              <span class="font-num" style="color:${esc(p.color || '#2997ff')}">${n} ô</span>
-            </div>
-            <div class="board-bar"><div class="board-bar-fill" style="width:${pct}%;background:${esc(p.color || '#2997ff')}"></div></div>`;
-          frag.appendChild(row);
-        });
-        board.appendChild(frag);
-      }
-    }
-  } catch (err) {
-    console.error('Lỗi render Bảng xếp hạng:', err);
-  }
-
-  // 3. Render khu vực cấu hình của Host (người chơi, chủ đề, thời gian, nút bắt đầu)
+  // 2. Render khu vực cấu hình của Host (cặp đấu, số người chơi, thiết lập tên & màu, chủ đề, nút bắt đầu)
   try {
     renderSetup(s, cats);
   } catch (err) {
     console.error('Lỗi render khu vực thiết lập Host:', err);
   }
+}
+
+function isLightColor(hex) {
+  const raw = String(hex || '').trim().replace(/^#/, '');
+  let full = raw;
+  if (raw.length === 3) {
+    full = raw[0] + raw[0] + raw[1] + raw[1] + raw[2] + raw[2];
+  }
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return false;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 175;
 }
 
 function renderSetup(s, preloadedCats = null) {
@@ -1085,8 +1066,8 @@ function renderSetup(s, preloadedCats = null) {
   const chalNameEl = $('pairChalName');
   if (chalNameEl) {
     chalNameEl.innerHTML = validChal
-      ? `<span class="mr-1">${esc(validChal.avatar)}</span><span style="color:${esc(validChal.color)}">${esc(validChal.name)}</span>`
-      : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
+      ? `<span class="pair-avatar">${esc(validChal.avatar)}</span><span class="pair-name-text">${esc(validChal.name)}</span>`
+      : '<span class="pair-placeholder">Chạm ô để chọn</span>';
   }
   const chalTimeWrap = $('pairChalTimeWrap');
   const chalSecInp = $('pairChalSec');
@@ -1100,8 +1081,8 @@ function renderSetup(s, preloadedCats = null) {
   const defNameEl = $('pairDefName');
   if (defNameEl) {
     defNameEl.innerHTML = validDef
-      ? `<span class="mr-1">${esc(validDef.avatar)}</span><span style="color:${esc(validDef.color)}">${esc(validDef.name)}</span>`
-      : '<span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>';
+      ? `<span class="pair-avatar">${esc(validDef.avatar)}</span><span class="pair-name-text">${esc(validDef.name)}</span>`
+      : '<span class="pair-placeholder">Chạm ô để chọn</span>';
   }
   const defTimeWrap = $('pairDefTimeWrap');
   const defSecInp = $('pairDefSec');
@@ -1115,15 +1096,6 @@ function renderSetup(s, preloadedCats = null) {
   const swapBtn = $('btnSwapPair');
   if (swapBtn) {
     swapBtn.disabled = !(validChal && validDef);
-  }
-  const vsRow = $('pairVsRow');
-  const vsText = $('pairVsText');
-  if (vsRow && vsText) {
-    const hasBoth = !!(validChal && validDef);
-    vsRow.classList.toggle('hidden', !hasBoth);
-    if (hasBoth) {
-      vsText.textContent = `${validChal.name} (${clampDurationSec(validChal.durationSec)}s) ⚔️ ${validDef.name} (${clampDurationSec(validDef.durationSec)}s)`;
-    }
   }
 
   const cats = Array.isArray(preloadedCats) && preloadedCats.length ? preloadedCats : getCategories100();
@@ -1158,11 +1130,22 @@ function renderSetup(s, preloadedCats = null) {
     b.classList.toggle('active', Number(b.dataset.pc) === s.players.length);
   });
 
-  // Roster editor (dùng event delegation trên #roster tránh gắn lại listener mỗi lần render)
+  // Roster editor tinh gọn: ô liền khối [Badge Số+Màu] + [Tên người chơi] (dùng event delegation trên #roster)
   const roster = $('roster');
   if (!roster) return;
   if (!roster.dataset.bound) {
     roster.dataset.bound = '1';
+    roster.addEventListener('input', (e) => {
+      const inp = e.target.closest('[data-f="color"]');
+      if (!inp) return;
+      const badge = inp.closest('.roster-color-badge');
+      if (badge) {
+        const lightBg = isLightColor(inp.value);
+        badge.style.background = inp.value;
+        badge.style.color = lightBg ? '#1D1D1F' : '#FFFFFF';
+        badge.classList.toggle('is-light', lightBg);
+      }
+    });
     roster.addEventListener('change', (e) => {
       const inp = e.target.closest('[data-f]');
       const row = e.target.closest('[data-pid]');
@@ -1172,44 +1155,36 @@ function renderSetup(s, preloadedCats = null) {
       if (!raw) return;
       const val = field === 'durationSec' ? clampDurationSec(raw) : raw;
       if (field === 'durationSec') inp.value = String(val);
+      if (field === 'color') {
+        const badge = inp.closest('.roster-color-badge');
+        if (badge) {
+          const lightBg = isLightColor(val);
+          badge.style.background = val;
+          badge.style.color = lightBg ? '#1D1D1F' : '#FFFFFF';
+          badge.classList.toggle('is-light', lightBg);
+        }
+      }
       dispatch('updatePlayer', { id: row.dataset.pid, patch: { [field]: val } });
     });
-    roster.addEventListener('click', (e) => {
-      const topicBtn = e.target.closest('[data-open-player-topic]');
-      if (!topicBtn) return;
-      e.preventDefault();
-      openTopicPickerModal({ mode: 'player', playerId: topicBtn.dataset.openPlayerTopic });
-    });
   }
-  const sig = JSON.stringify([s.players, cats.map((c) => `${c.id}:${c.name}:${c.coverUrl || ''}:${(c.items || []).length}`)]);
+  const sig = JSON.stringify(s.players.map((p) => [p.id, p.name, p.color]));
   if (roster.dataset.sig !== sig && !roster.contains(document.activeElement)) {
     roster.dataset.sig = sig;
     roster.innerHTML = '';
     const rFrag = document.createDocumentFragment();
-    const catById = new Map(cats.map((c) => [c.id, c]));
     s.players.forEach((p, idx) => {
-      const pCat = catById.get(p.categoryId) || cats[0] || null;
-      const pCatLabel = pCat ? (pCat.name || pCat.id) : (p.categoryId || 'Chọn chủ đề');
       const row = document.createElement('div');
       row.dataset.pid = p.id;
-      row.className = 'roster-grid roster-row';
+      row.className = 'roster-compact-row';
       row.style.opacity = '1';
       row.style.visibility = 'visible';
+      const lightBg = isLightColor(p.color);
       row.innerHTML = `
-        <div class="roster-col-id">
-          <span class="roster-num" style="background:${esc(p.color)}">${idx + 1}</span>
-          <input type="color" data-f="color" value="${esc(p.color)}" class="roster-color" title="Màu đại diện" />
-          <input class="input roster-avatar-inp" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" title="Biểu tượng" />
-        </div>
-        <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" placeholder="Tên…" />
-        <div class="min-w-0">
-          <select class="input hidden" style="display:none" data-f="categoryId" title="Chủ đề sở trường" tabindex="-1" aria-hidden="true">${cats.map((c) => `<option value="${esc(c.id)}" ${c.id === p.categoryId ? 'selected' : ''}>${esc(c.name || c.id)}</option>`).join('')}</select>
-          <button type="button" class="roster-topic-btn" data-open-player-topic="${esc(p.id)}" title="Chọn chủ đề sở trường cho ${esc(p.name)}">
-            <span class="roster-topic-btn-label">${esc(pCatLabel)}</span>
-            <span class="roster-topic-btn-caret" aria-hidden="true">▾</span>
-          </button>
-        </div>
-        <input type="number" min="10" max="600" step="5" class="input text-center font-num" data-f="durationSec" value="${clampDurationSec(p.durationSec)}" title="Thời gian thi đấu (giây)" />`;
+        <label class="roster-color-badge${lightBg ? ' is-light' : ''}" style="background:${esc(p.color)};color:${lightBg ? '#1D1D1F' : '#FFFFFF'}" title="Chạm để đổi màu đại diện">
+          <span>${idx + 1}</span>
+          <input type="color" data-f="color" value="${esc(p.color)}" class="roster-color-hidden" />
+        </label>
+        <input class="roster-name-inp" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" placeholder="Tên người chơi…" />`;
       rFrag.appendChild(row);
     });
     roster.appendChild(rFrag);
@@ -1459,10 +1434,10 @@ function renderArena(s) {
     content.innerHTML = '';
     if (s.phase === 'ready') {
       content.innerHTML = `
-        <div class="cd-stage">
-          <div class="eyebrow">${esc(d.catName || '')}</div>
-          <div class="font-display text-5xl md:text-7xl t-1">SẴN SÀNG?</div>
-          <div class="t-2 text-base md:text-lg">Chờ Host bấm <b>Bắt đầu trận</b></div>
+        <div class="cd-stage cd-stage-ready">
+          <div class="eyebrow cd-ready-eyebrow">${esc(d.catName || '')}</div>
+          <div class="font-display text-5xl md:text-7xl t-1 cd-ready-title">SẴN SÀNG?</div>
+          <div class="t-2 text-base md:text-lg cd-ready-sub">Chờ Host bấm <b>Bắt đầu trận</b></div>
           <div class="cd-status"><span id="cdLoadDot" class="cd-dot"></span><span id="cdLoadText">Đang nạp dữ liệu câu hỏi...</span></div>
           <div class="cd-bar"><div id="cdLoadBar" class="cd-bar-fill"></div></div>
         </div>`;
@@ -1973,8 +1948,14 @@ function bindStaticUi() {
   }
   if ($('btnFull')) {
     $('btnFull').addEventListener('click', () => {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else document.documentElement.requestFullscreen().catch(() => {});
+      const docEl = document.documentElement;
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (typeof document.exitFullscreen === 'function') document.exitFullscreen().catch(() => {});
+        else if (typeof document.webkitExitFullscreen === 'function') { try { document.webkitExitFullscreen(); } catch { /* ignore */ } }
+      } else if (docEl) {
+        if (typeof docEl.requestFullscreen === 'function') docEl.requestFullscreen().catch(() => {});
+        else if (typeof docEl.webkitRequestFullscreen === 'function') { try { docEl.webkitRequestFullscreen(); } catch { /* ignore */ } }
+      }
     });
   }
 

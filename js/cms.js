@@ -3,7 +3,10 @@ import {
   createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl, toThumbUrl400,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, extractDriveId,
   canIdentityModifyTopic, getDeletedTopicIds, markTopicDeleted,
+  THEME_PRESET_DEFAULTS, sanitizeCloudThemeConfig, readThemeConfigCache, writeThemeConfigCache,
+  createSharedThemeSync, canIdentityModifyTheme, normalizeThemeAssetUrl,
 } from './transport.js?v=bgm1';
+import { applyThemeConfig } from './theme.js?v=auth17';
 import {
   TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
   parseVictoryAudio, normalizeVictoryAudioUrl,
@@ -1041,8 +1044,169 @@ function saveDriveCfg() {
     }
   }
   render();
+  renderThemeStudio();
   if (bgm) bgm.refreshDriveIdentity();
   toast('Đã lưu cấu hình Google Drive.');
+}
+
+// ---------- Seasonal Theme Studio (Giao diện & Mùa lễ hội: Noel / Tết / Mặc định) ----------
+let themeStudioCfg = readThemeConfigCache();
+let themeStudioSync = null;
+
+function canEditThemeStudio() {
+  if (!hasValidDriveIdentity()) return false;
+  return canIdentityModifyTheme(themeStudioCfg, getCurrentDriveIdentity());
+}
+
+function renderThemeStudio() {
+  const unlocked = canEditThemeStudio();
+  const lockNotice = $('themeStudioLockNotice');
+  if (lockNotice) lockNotice.classList.toggle('hidden', unlocked);
+
+  const cfg = themeStudioCfg || THEME_PRESET_DEFAULTS.christmas;
+  const setValIfNotFocused = (id, val) => {
+    const el = $(id);
+    if (el && document.activeElement !== el) el.value = val || '';
+  };
+  setValIfNotFocused('themePresetSelect', cfg.preset || 'christmas');
+  setValIfNotFocused('themeBg1Url', cfg.bg1Url || '');
+  setValIfNotFocused('themeBg2Url', cfg.bg2Url || '');
+  setValIfNotFocused('themeBg3Url', cfg.bg3Url || '');
+  setValIfNotFocused('themeBgMobileUrl', cfg.bgMobileUrl || '');
+  setValIfNotFocused('themeBorderStyle', cfg.borderStyle || 'candy');
+  setValIfNotFocused('themeEffect', cfg.effect || 'snow');
+  setValIfNotFocused('themeCardBg', cfg.cardBg || '#FAF3E3');
+  setValIfNotFocused('themeBorderColor', cfg.borderColor || '#D8B979');
+  setValIfNotFocused('themeAccentColor', cfg.accentColor || '#C81E2B');
+
+  [
+    'themePresetSelect', 'themeBg1Url', 'themeBg2Url', 'themeBg3Url', 'themeBgMobileUrl',
+    'btnUploadBg1', 'btnUploadBg2', 'btnUploadBg3', 'btnUploadBgMobile',
+    'themeBorderStyle', 'themeEffect', 'themeCardBg', 'themeBorderColor', 'themeAccentColor',
+    'btnSaveThemeStudio', 'btnResetThemePreset',
+  ].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = !unlocked;
+  });
+}
+
+function collectThemeStudioDraft() {
+  const preset = ($('themePresetSelect') && $('themePresetSelect').value) || 'christmas';
+  const def = THEME_PRESET_DEFAULTS[preset] || THEME_PRESET_DEFAULTS.christmas;
+  const rawBg1 = $('themeBg1Url') ? $('themeBg1Url').value.trim() : def.bg1Url;
+  const rawBg2 = $('themeBg2Url') ? $('themeBg2Url').value.trim() : def.bg2Url;
+  const rawBg3 = $('themeBg3Url') ? $('themeBg3Url').value.trim() : def.bg3Url;
+  const rawBgMob = $('themeBgMobileUrl') ? $('themeBgMobileUrl').value.trim() : def.bgMobileUrl;
+
+  const bg1Url = normalizeThemeAssetUrl(rawBg1, def.bg1Url);
+  const bg2Url = normalizeThemeAssetUrl(rawBg2, def.bg2Url);
+  const bg3Url = normalizeThemeAssetUrl(rawBg3, def.bg3Url);
+  const bgMobileUrl = normalizeThemeAssetUrl(rawBgMob, def.bgMobileUrl);
+
+  if ($('themeBg1Url') && document.activeElement !== $('themeBg1Url')) $('themeBg1Url').value = bg1Url;
+  if ($('themeBg2Url') && document.activeElement !== $('themeBg2Url')) $('themeBg2Url').value = bg2Url;
+  if ($('themeBg3Url') && document.activeElement !== $('themeBg3Url')) $('themeBg3Url').value = bg3Url;
+  if ($('themeBgMobileUrl') && document.activeElement !== $('themeBgMobileUrl')) $('themeBgMobileUrl').value = bgMobileUrl;
+
+  return sanitizeCloudThemeConfig({
+    ...themeStudioCfg,
+    preset,
+    bg1Url,
+    bg2Url,
+    bg3Url,
+    bgMobileUrl,
+    borderStyle: $('themeBorderStyle') ? $('themeBorderStyle').value : def.borderStyle,
+    effect: $('themeEffect') ? $('themeEffect').value : def.effect,
+    cardBg: $('themeCardBg') ? $('themeCardBg').value : def.cardBg,
+    borderColor: $('themeBorderColor') ? $('themeBorderColor').value : def.borderColor,
+    accentColor: $('themeAccentColor') ? $('themeAccentColor').value : def.accentColor,
+  });
+}
+
+async function saveThemeStudioToCloud(draftCfg, msg = '🎨 Đã lưu & đồng bộ Giao diện lễ hội lên Cloud.') {
+  if (!canEditThemeStudio()) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để lưu giao diện lễ hội.', true);
+    renderThemeStudio();
+    return false;
+  }
+  const identity = getCurrentDriveIdentity();
+  const clean = sanitizeCloudThemeConfig({
+    ...draftCfg,
+    ownerScriptUrl: identity.scriptUrl,
+    ownerFolderId: identity.folderId,
+    updatedAt: Date.now(),
+  });
+  themeStudioCfg = writeThemeConfigCache(clean);
+  applyThemeConfig(themeStudioCfg, { switchActiveTheme: true });
+  renderThemeStudio();
+
+  if (themeStudioSync) {
+    const ok = await themeStudioSync.putTheme(themeStudioCfg, identity);
+    if (!ok) {
+      toast('Không thể ghi cấu hình giao diện lên Cloud (kiểm tra quyền Drive).', true);
+      return false;
+    }
+  }
+  toast(msg);
+  return true;
+}
+
+async function uploadThemeBgSlot(slotKey, fileInputId, urlInputId, label) {
+  const fileInp = $(fileInputId);
+  const file = fileInp && fileInp.files && fileInp.files[0];
+  if (fileInp) fileInp.value = '';
+  if (!file || uploading) return;
+  if (!canEditThemeStudio()) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Cần nhập Apps Script Web App URL và Folder ID hợp lệ trước khi tải ảnh nền.', true);
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    toast('Vui lòng chọn file hình ảnh hợp lệ.', true);
+    return;
+  }
+  const cfg = loadDrive();
+  try {
+    uploading = true;
+    toast(`Đang tải ảnh nền ${label} (100% chất lượng gốc) lên Google Drive…`);
+    // Đọc trực tiếp file gốc qua FileReader.readAsDataURL (không nén / không thu nhỏ qua canvas)
+    const origName = `theme_${slotKey}_${file.name || 'background.webp'}`;
+    let rawId;
+    try {
+      rawId = await uploadToDrive(cfg, file, origName);
+    } catch {
+      rawId = await uploadToDrive(cfg, file, origName);
+    }
+    const cleanId = extractDriveId(String(rawId || '')) || String(rawId || '').trim();
+    const cdnUrl = normalizeThemeAssetUrl(`https://lh3.googleusercontent.com/d/${cleanId}=s0`);
+    if ($(urlInputId)) $(urlInputId).value = cdnUrl;
+    themeStudioCfg = { ...themeStudioCfg, [slotKey]: cdnUrl };
+    const draft = collectThemeStudioDraft();
+    draft[slotKey] = cdnUrl;
+    await saveThemeStudioToCloud(draft, `🎨 Đã tải ảnh nền ${label} (độ phân giải gốc =s0) lên Drive & đồng bộ giao diện.`);
+  } catch (err) {
+    toast(`Lỗi tải ảnh nền ${label}: ${err.message || err}`, true);
+  } finally {
+    uploading = false;
+  }
+}
+
+async function initThemeStudioSync() {
+  try {
+    themeStudioSync = await createSharedThemeSync(loadFirebaseConfig());
+    themeStudioSync.onStatus((st) => {
+      const el = $('themeStudioStatus');
+      if (el && st && st.message) el.textContent = `☁️ ${st.message}`;
+    });
+    themeStudioSync.subscribe((cloudCfg, rawVal) => {
+      if (rawVal) {
+        themeStudioCfg = sanitizeCloudThemeConfig(cloudCfg);
+        applyThemeConfig(themeStudioCfg);
+      }
+      renderThemeStudio();
+    });
+  } catch { /* ignore */ }
 }
 
 // ---------- Xuất / Nhập ----------
@@ -1933,6 +2097,86 @@ function bind() {
     navigator.clipboard.writeText($('scriptCode').textContent).then(() => toast('Đã sao chép mã Apps Script.'));
   });
 
+  // --- Gắn sự kiện Bảng điều khiển Giao diện & Mùa lễ hội (Seasonal Theme Studio) ---
+  if ($('themePresetSelect')) {
+    $('themePresetSelect').addEventListener('change', () => {
+      if (!canEditThemeStudio()) return renderThemeStudio();
+      const preset = $('themePresetSelect').value || 'christmas';
+      const def = THEME_PRESET_DEFAULTS[preset] || THEME_PRESET_DEFAULTS.christmas;
+      themeStudioCfg = sanitizeCloudThemeConfig({
+        ...def,
+        ownerScriptUrl: themeStudioCfg.ownerScriptUrl,
+        ownerFolderId: themeStudioCfg.ownerFolderId,
+      });
+      renderThemeStudio();
+      saveThemeStudioToCloud(themeStudioCfg, `🎨 Đã chuyển giao diện sang chế độ “${preset === 'christmas' ? 'Giáng Sinh - Noel' : preset === 'tet' ? 'Tết Nguyên Đán' : 'Mặc định'}”.`);
+    });
+  }
+  if ($('btnSaveThemeStudio')) {
+    $('btnSaveThemeStudio').addEventListener('click', () => {
+      saveThemeStudioToCloud(collectThemeStudioDraft());
+    });
+  }
+  if ($('btnResetThemePreset')) {
+    $('btnResetThemePreset').addEventListener('click', () => {
+      if (!canEditThemeStudio()) return;
+      const preset = ($('themePresetSelect') && $('themePresetSelect').value) || 'christmas';
+      const def = THEME_PRESET_DEFAULTS[preset] || THEME_PRESET_DEFAULTS.christmas;
+      themeStudioCfg = sanitizeCloudThemeConfig({
+        ...def,
+        ownerScriptUrl: themeStudioCfg.ownerScriptUrl,
+        ownerFolderId: themeStudioCfg.ownerFolderId,
+      });
+      renderThemeStudio();
+      saveThemeStudioToCloud(themeStudioCfg, '🎨 Đã khôi phục thông số mẫu gốc của giao diện lễ hội.');
+    });
+  }
+  [
+    ['bg1Url', 'btnUploadBg1', 'fileBg1', 'themeBg1Url', 'Trang 1'],
+    ['bg2Url', 'btnUploadBg2', 'fileBg2', 'themeBg2Url', 'Trang 2'],
+    ['bg3Url', 'btnUploadBg3', 'fileBg3', 'themeBg3Url', 'Trang 3'],
+    ['bgMobileUrl', 'btnUploadBgMobile', 'fileBgMobile', 'themeBgMobileUrl', 'Mobile dọc'],
+  ].forEach(([slotKey, btnId, fileId, urlId, label]) => {
+    if ($(btnId) && $(fileId)) {
+      $(btnId).addEventListener('click', () => {
+        if (!canEditThemeStudio()) {
+          if ($('drivePanel')) $('drivePanel').open = true;
+          toast('Vui lòng nhập Apps Script Web App URL và Folder ID để tải ảnh nền.', true);
+          return;
+        }
+        $(fileId).click();
+      });
+      $(fileId).addEventListener('change', () => {
+        uploadThemeBgSlot(slotKey, fileId, urlId, label);
+      });
+    }
+    if ($(urlId)) {
+      $(urlId).addEventListener('change', () => {
+        if (!canEditThemeStudio()) return;
+        const draft = collectThemeStudioDraft();
+        if ($(urlId)) $(urlId).value = draft[slotKey] || '';
+        saveThemeStudioToCloud(draft, `🎨 Đã cập nhật ảnh nền ${label} & đồng bộ giao diện.`);
+      });
+    }
+  });
+  ['themeBorderStyle', 'themeEffect', 'themeCardBg', 'themeBorderColor', 'themeAccentColor'].forEach((id) => {
+    if ($(id)) {
+      $(id).addEventListener('change', () => {
+        if (!canEditThemeStudio()) return;
+        saveThemeStudioToCloud(collectThemeStudioDraft());
+      });
+    }
+  });
+  ['driveUrl', 'driveFolder'].forEach((id) => {
+    if ($(id)) $(id).addEventListener('input', () => renderThemeStudio());
+  });
+  window.addEventListener('thefloor:theme-config-updated', (e) => {
+    if (e && e.detail) {
+      themeStudioCfg = sanitizeCloudThemeConfig(e.detail);
+      renderThemeStudio();
+    }
+  });
+
   $('btnPreviewAll').addEventListener('click', () => {
     if (!cur() || !cur().items.length) return toast('Chủ đề chưa có ảnh.', true);
     pvI = 0;
@@ -1964,4 +2208,6 @@ window.addEventListener('beforeunload', (e) => {
 bind();
 bgm = initBgm({ autoPlay: false, page: 'topics', getDriveIdentity: getCurrentDriveIdentity });
 render();
+renderThemeStudio();
 initCloudSync();
+initThemeStudioSync();

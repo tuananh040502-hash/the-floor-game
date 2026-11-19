@@ -147,7 +147,7 @@ body {
   min-height: 100dvh;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-top: max(12px, env(safe-area-inset-top));
+  padding-top: 0;
   padding-bottom: max(12px, env(safe-area-inset-bottom));
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
@@ -278,18 +278,29 @@ main.app-main {
 .appbar {
   position: sticky;
   top: 0;
-  z-index: 40;
+  left: 0;
+  right: 0;
   width: 100%;
   min-height: 52px;
+  margin: 0 !important;
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-bottom: 10px;
   background: var(--surface-glass);
-  border: none;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
   border-bottom: 1px solid var(--border);
-  border-radius: var(--r-none);
+  border-radius: 0 !important;
+  z-index: 30;
 }
 .appbar-inner {
   max-width: 1560px;
   margin: 0 auto;
-  padding: 6px 16px;
+  padding: 0 16px;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -503,51 +514,296 @@ html[data-theme='light'] .seg { background: var(--surface-raised); }
 .floor-col-side {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
-.board-panel {
-  min-height: 200px;
-  padding: 20px;
+.setup-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
 }
-#board {
-  min-height: 200px;
+.setup-card {
+  width: 100%;
+  padding: 16px;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.board-row {
+.setup-card-title-block {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  opacity: 1;
-  visibility: visible;
+  gap: 3px;
 }
-.board-row-head {
+.setup-card-title-block p {
+  margin: 0;
+  line-height: 1.35;
+}
+.setup-card-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
 }
-.board-row-name {
-  flex: 1;
+.setup-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.setup-mini-btn {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+/* Lưới cặp đấu 3 cột đối xứng: 1fr auto 1fr */
+.pair-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  width: 100%;
+}
+.pair-slot {
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
+}
+.pair-slot-role {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+.pair-player-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--t1);
+  min-width: 0;
+}
+.pair-avatar {
+  flex-shrink: 0;
+  line-height: 1;
+}
+.pair-name-text {
+  color: var(--t1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--t1);
 }
-.board-bar {
-  height: 6px;
+.pair-placeholder {
+  color: var(--t3);
+  font-size: 12px;
+  font-weight: 400;
+  font-style: italic;
+}
+.pair-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pair-time-inp {
+  width: 58px;
+  padding: 4px 6px !important;
+  min-height: 28px;
+  text-align: center;
+  font-size: 12px !important;
+  font-weight: 600;
+  border-radius: 8px !important;
+}
+.pair-time-unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--t3);
+}
+.pair-swap-btn {
+  align-self: center;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 3 hàng đều nhau dưới lưới cặp đấu: Chủ đề, Thanh preload 32px, Nút Bắt đầu trận 44px */
+.setup-actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   width: 100%;
-  border-radius: var(--r-full);
-  background: var(--fill);
-  overflow: hidden;
 }
-.board-bar-fill {
+.setup-topic-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.setup-topic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.setup-preload-strip {
+  min-height: 32px;
+  height: 32px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+.setup-preload-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1;
+}
+.setup-preload-label {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-preload-count {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.setup-preload-track {
+  height: 3px !important;
+}
+.setup-start-btn {
+  min-height: 44px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* Quản lý người chơi: hàng chọn số lượng 2–6 + lưới 2 cột liền khối */
+.player-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.player-count-label {
+  flex-shrink: 0;
+}
+.player-count-row .seg {
+  flex: 1;
+  min-width: 0;
+}
+.player-count-row .seg button {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 6px;
+}
+.roster-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+.roster-compact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  min-width: 0;
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.roster-compact-row:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+.roster-color-badge {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  flex-shrink: 0;
+  cursor: pointer;
+  overflow: hidden;
+  user-select: none;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  transition: transform 0.14s var(--ease);
+}
+.roster-color-badge:hover {
+  transform: scale(1.05);
+}
+.roster-color-badge.is-light {
+  color: #1D1D1F;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+.roster-color-hidden {
+  position: absolute;
+  inset: 0;
+  width: 100%;
   height: 100%;
-  border-radius: var(--r-full);
-  transition: width 0.5s var(--ease);
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.roster-compact-row .roster-name-inp {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 3px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--t1);
+  outline: none;
+}
+.roster-compact-row .roster-name-inp::placeholder {
+  color: var(--t3);
+  font-weight: 400;
+}
+@media (max-width: 420px) {
+  .player-count-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .roster-compact-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .floor-header {
@@ -1771,7 +2027,7 @@ body.in-arena {
   max-height: 100dvh;
   min-height: 100dvh;
   overflow: hidden;
-  padding-top: max(8px, env(safe-area-inset-top));
+  padding-top: 0 !important;
   padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
 body.in-arena .appbar {
@@ -2756,7 +3012,7 @@ html[data-theme='light'] .photo-input:focus { background: #ffffff; }
     font-size: clamp(14px, 3.8vw, 16px);
   }
   .appbar-inner {
-    padding: 6px 10px;
+    padding: 0 10px;
     gap: 8px;
   }
   .arena-layout {
@@ -3122,4 +3378,467 @@ body.low-power-motion .anim-zoom-center {
 @media (min-width: 1280px) {
   .xl\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .xl\:grid-cols-\[1fr_450px\] { grid-template-columns: 1fr 450px; }
+}
+
+/* =====================================================================
+   SEASONAL THEME STUDIO — GIÁNG SINH (data-theme="christmas") & TẾT (data-theme="tet")
+   - Tối giản, tinh gọn theo chuẩn Apple Design System (0 họa tiết SVG/vector rườm rà)
+   - Lớp nền động #seasonalBgLayer (Trang 1: bg1Url, Trang 2: bg2Url, Trang 3: bg3Url)
+   - Lớp tuyết rơi #seasonalSnowLayer rõ nét, 60fps GPU (transform + opacity)
+   ===================================================================== */
+
+:root {
+  --seasonal-card-bg: #FBF6EC;
+  --seasonal-border: #D8B979;
+  --seasonal-accent: #B91C2C;
+}
+
+/* ---------- Cụm nút cố định góc trên bên phải Trang 1 (index.html) ---------- */
+.top-right-toolbar {
+  position: fixed !important;
+  top: 16px !important;
+  right: 20px !important;
+  left: auto !important;
+  z-index: 40 !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- Lớp Background động toàn màn hình (#seasonalBgLayer) ---------- */
+#seasonalBgLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-color: #FBF6EC;
+  display: none;
+}
+
+html[data-theme='christmas'] #seasonalBgLayer,
+html[data-theme='tet'] #seasonalBgLayer {
+  display: block;
+}
+
+html[data-theme='tet'] #seasonalBgLayer {
+  background-color: #6B0D0D;
+  background-image:
+    radial-gradient(circle at 50% 18%, rgba(255, 206, 84, 0.22) 0%, transparent 55%),
+    linear-gradient(180deg, #7C1010 0%, #580A0A 65%, #3D0606 100%);
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  html[data-theme='christmas'] #seasonalBgLayer {
+    background-position: center top;
+  }
+}
+
+/* Nội dung chính & toàn bộ khung Quản lý chủ đề (topics.html) nằm trên lớp nền (z-index: 2) mà KHÔNG làm lệch các phần tử position: fixed */
+body > main,
+.cms-shell,
+body[data-page='topics'] > div:not(#seasonalBgLayer):not(#seasonalSnowLayer):not(.ambient):not(.fixed):not(#toast),
+.window,
+.window-side,
+.window-main,
+#editorBody,
+#emptyState,
+.window .group,
+.window .dropzone,
+.window .photo-card {
+  position: relative;
+  z-index: 2;
+}
+.cms-shell,
+.window,
+.window-side,
+.window-main,
+#editorBody:not(.hidden),
+#emptyState:not(.hidden) {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+html[data-theme='christmas'] .ambient,
+html[data-theme='tet'] .ambient {
+  opacity: 0;
+  background: transparent;
+}
+
+/* ---------- Lớp Hạt Tuyết Rơi Rõ Nét & Mượt 60fps (#seasonalSnowLayer) ---------- */
+#seasonalSnowLayer,
+.seasonal-snow-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+  display: none;
+}
+
+html[data-theme='christmas']:not([data-effect='none']) #seasonalSnowLayer,
+html[data-theme='tet']:not([data-effect='none']) #seasonalSnowLayer {
+  display: block;
+}
+
+/* Tự động ẩn tuyết rơi khi vào Trang 3 Đấu trường hoặc thiết bị tiết kiệm chuyển động */
+body.in-arena #seasonalSnowLayer,
+body.low-power-motion #seasonalSnowLayer {
+  display: none !important;
+}
+
+.snow-flake {
+  position: absolute;
+  top: -16px;
+  left: var(--snow-x, 50vw);
+  width: var(--snow-size, 6px);
+  height: var(--snow-size, 6px);
+  border-radius: 9999px;
+  background: #FFFFFF;
+  border: 1px solid rgba(175, 200, 225, 0.72);
+  box-shadow: 0 0 6px rgba(160, 185, 210, 0.85);
+  opacity: var(--snow-op, 0.85);
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: snowFall60fps var(--snow-dur, 11s) linear var(--snow-delay, 0s) infinite;
+}
+
+html[data-theme='tet'] .snow-flake,
+html[data-effect='blossom'] .snow-flake {
+  background: #FFD166;
+  border-color: rgba(212, 136, 6, 0.75);
+  box-shadow: 0 0 6px rgba(255, 190, 60, 0.85);
+}
+
+@keyframes snowFall60fps {
+  0% {
+    transform: translate3d(0, -16px, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: var(--snow-op, 0.88);
+  }
+  88% {
+    opacity: var(--snow-op, 0.82);
+  }
+  100% {
+    transform: translate3d(var(--snow-drift, 24px), 104dvh, 0);
+    opacity: 0;
+  }
+}
+
+/* =====================================================================
+   BẢNG MÀU & BIẾN GIAO DIỆN GIÁNG SINH (html[data-theme='christmas'])
+   Phong cách Kem Ấm & Vàng Champagne thanh thoát chuẩn Apple Design System
+   ===================================================================== */
+html[data-theme='christmas'] {
+  color-scheme: light;
+  --bg: #FBF6EC;
+  --surface: rgba(251, 246, 236, 0.88);
+  --surface-raised: rgba(245, 236, 218, 0.92);
+  --surface-glass: rgba(251, 246, 236, 0.88);
+  --surface-glass-strong: rgba(251, 246, 236, 0.94);
+  --glass: rgba(251, 246, 236, 0.88);
+  --glass-strong: rgba(251, 246, 236, 0.94);
+  --glass-solid: #FBF6EC;
+  --border: rgba(216, 185, 121, 0.65);
+  --glass-border: rgba(216, 185, 121, 0.65);
+  --specular: rgba(255, 255, 255, 0.85);
+
+  --t1: #2C1E14;
+  --t2: #5C4430;
+  --t3: #876D52;
+  --fill: rgba(184, 142, 74, 0.11);
+  --fill-hover: rgba(184, 142, 74, 0.18);
+  --stage: #0E241E;
+
+  --blue: #B91C2C;
+  --sapphire: #1E6B43;
+  --accent-1: #B91C2C;
+  --accent-2: #B57C1E;
+  --coral: #B91C2C;
+  --gold: #C8962E;
+  --red: #B91C2C;
+  --green: #1E6B43;
+}
+
+/* =====================================================================
+   BẢNG MÀU & BIẾN GIAO DIỆN TẾT NGUYÊN ĐÁN (html[data-theme='tet'])
+   ===================================================================== */
+html[data-theme='tet'] {
+  color-scheme: light;
+  --bg: #6B0D0D;
+  --surface: rgba(255, 245, 225, 0.92);
+  --surface-raised: rgba(249, 229, 190, 0.94);
+  --surface-glass: rgba(255, 245, 225, 0.92);
+  --surface-glass-strong: rgba(255, 245, 225, 0.96);
+  --glass: rgba(255, 245, 225, 0.92);
+  --glass-strong: rgba(255, 245, 225, 0.96);
+  --glass-solid: #FFF5E1;
+  --border: rgba(229, 169, 60, 0.7);
+  --glass-border: rgba(229, 169, 60, 0.7);
+
+  --t1: #3A140B;
+  --t2: #6B2D1A;
+  --t3: #96543A;
+  --fill: rgba(212, 148, 36, 0.14);
+  --fill-hover: rgba(212, 148, 36, 0.24);
+  --stage: #3D0808;
+
+  --blue: #B81414;
+  --sapphire: #D48806;
+  --gold: #D48806;
+  --red: #B81414;
+  --green: #2B7A3E;
+}
+
+/* ---------- Các thẻ & bề mặt Kem Ấm viền mảnh 1px chuẩn Apple ---------- */
+html[data-theme='christmas'] .lobby-card,
+html[data-theme='christmas'] .setup-card,
+html[data-theme='christmas'] .side-card.hud-card {
+  background: rgba(251, 246, 236, 0.88);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  box-shadow: 0 8px 24px rgba(44, 30, 20, 0.08);
+}
+
+html[data-theme='christmas'] .window {
+  background: rgba(251, 246, 236, 0.92);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  box-shadow: 0 8px 24px rgba(44, 30, 20, 0.08);
+}
+html[data-theme='christmas'] .window-side {
+  background: rgba(246, 238, 220, 0.94);
+  border-right-color: rgba(216, 185, 121, 0.65);
+}
+html[data-theme='christmas'] .window-main {
+  background: rgba(251, 246, 236, 0.92);
+}
+html[data-theme='christmas'] .window .group,
+html[data-theme='christmas'] .window .photo-card {
+  background: rgba(255, 252, 245, 0.94);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+}
+html[data-theme='christmas'] .window .dropzone {
+  background: rgba(248, 239, 220, 0.9);
+  border-color: rgba(185, 28, 44, 0.45);
+}
+
+html[data-theme='christmas'] .surface-sub,
+html[data-theme='christmas'] .player-toolbar,
+html[data-theme='christmas'] .pair-box {
+  background: rgba(246, 238, 220, 0.85);
+  border: 1px solid rgba(216, 185, 121, 0.55);
+}
+html[data-theme='christmas'] .pair-slot {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(216, 185, 121, 0.45);
+}
+html[data-theme='christmas'] .roster-compact-row {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(216, 185, 121, 0.45);
+}
+html[data-theme='christmas'] .roster-compact-row:focus-within {
+  border-color: #B91C2C;
+  box-shadow: 0 0 0 2px rgba(185, 28, 44, 0.16);
+}
+html[data-theme='christmas'] .pair-player-name,
+html[data-theme='christmas'] .pair-name-text,
+html[data-theme='christmas'] .roster-compact-row .roster-name-inp {
+  color: #2C1E14;
+}
+
+/* ---------- Header & Nút phụ ---------- */
+html[data-theme='christmas'] .appbar {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  margin: 0 !important;
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-bottom: 10px;
+  border-radius: 0 !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 1px solid rgba(216, 185, 121, 0.65);
+  background: rgba(251, 246, 236, 0.88);
+  box-shadow: 0 4px 16px rgba(44, 30, 20, 0.06);
+  z-index: 30;
+}
+
+html[data-theme='christmas'] .btn-ghost,
+html[data-theme='christmas'] .chip,
+html[data-theme='christmas'] .bgm-header-pill {
+  background: rgba(251, 246, 236, 0.9);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  color: #2C1E14;
+}
+html[data-theme='christmas'] .btn-ghost:hover {
+  background: rgba(245, 235, 212, 0.96);
+  border-color: rgba(196, 155, 78, 0.85);
+}
+
+html[data-theme='christmas'] #roleLabel {
+  background: #B91C2C;
+  border: 1px solid rgba(216, 185, 121, 0.5);
+  color: #FFFFFF;
+}
+
+/* ---------- Nút bấm chính (Vào làm Host, Bắt đầu trận): Đỏ trầm #B91C2C ---------- */
+html[data-theme='christmas'] .btn-ok,
+html[data-theme='christmas'] #goHost,
+html[data-theme='christmas'] #btnStartDuel,
+html[data-theme='christmas'] #cBegin {
+  background: #B91C2C;
+  border: 1px solid rgba(216, 185, 121, 0.5);
+  color: #FFFFFF;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(185, 28, 44, 0.18);
+}
+html[data-theme='christmas'] .btn-ok:hover:not(:disabled),
+html[data-theme='christmas'] #goHost:hover:not(:disabled),
+html[data-theme='christmas'] #btnStartDuel:hover:not(:disabled),
+html[data-theme='christmas'] #cBegin:hover:not(:disabled) {
+  background: #991B1B;
+}
+
+html[data-theme='christmas'] #goView {
+  background: rgba(238, 222, 188, 0.92);
+  border: 1px solid rgba(216, 185, 121, 0.75);
+  color: #2C1E14;
+  font-weight: 600;
+}
+html[data-theme='christmas'] #goView:hover {
+  background: rgba(230, 210, 170, 0.98);
+}
+
+/* ---------- Ô nhập liệu & Segmented Controls ---------- */
+html[data-theme='christmas'] .input {
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  color: #2C1E14;
+}
+html[data-theme='christmas'] .input::placeholder {
+  color: #8F765A;
+}
+html[data-theme='christmas'] .input:focus {
+  outline: 2px solid #B91C2C;
+  border-color: #B91C2C;
+}
+
+html[data-theme='christmas'] .seg {
+  background: rgba(238, 224, 195, 0.75);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+}
+html[data-theme='christmas'] .seg button {
+  color: #4A3522;
+}
+html[data-theme='christmas'] .seg button.active {
+  background: #B91C2C;
+  color: #FFFFFF;
+}
+
+/* ---------- Sàn đấu (#floorGrid & .cell): Viền mảnh 1px, giữ màu định danh ở badge/thanh điểm ---------- */
+html[data-theme='christmas'] #floorGrid,
+html[data-theme='christmas'] .floor-grid {
+  background: rgba(251, 246, 236, 0.55);
+  border: 1px solid rgba(216, 185, 121, 0.55);
+  box-shadow: 0 8px 24px rgba(44, 30, 20, 0.06);
+}
+
+html[data-theme='christmas'] .cell {
+  background: rgba(251, 246, 236, 0.88);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  box-shadow: 0 8px 24px rgba(44, 30, 20, 0.08);
+}
+html[data-theme='christmas'] .host .cell:hover {
+  border-color: color-mix(in srgb, var(--c) 55%, #D8B979);
+  background: rgba(255, 251, 242, 0.96);
+}
+html[data-theme='christmas'] .cell-bot {
+  border-top: 1px solid rgba(216, 185, 121, 0.45);
+}
+html[data-theme='christmas'] .cell-territory {
+  background: color-mix(in srgb, var(--c) 14%, rgba(245, 235, 214, 0.9));
+  border: 1px solid color-mix(in srgb, var(--c) 40%, rgba(216, 185, 121, 0.65));
+  color: #2C1E14;
+}
+
+html[data-theme='christmas'] .topic-picker-trigger {
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  color: #2C1E14;
+}
+html[data-theme='christmas'] .topic-picker-trigger:hover {
+  background: #FFFDF9;
+  border-color: #C49B4E;
+}
+html[data-theme='christmas'] .topic-picker-trigger-badge {
+  background: rgba(185, 28, 44, 0.12);
+  border-color: rgba(185, 28, 44, 0.3);
+  color: #B91C2C;
+}
+
+/* ---------- Đấu trường Trang 3 (game.html Arena): Xanh thông tối sâu #0E241E, viền mảnh 1.5px #D8B979 ---------- */
+html[data-theme='christmas'] #turnBanner {
+  background: rgba(251, 246, 236, 0.92);
+  border: 1px solid rgba(216, 185, 121, 0.75);
+  color: #2C1E14;
+}
+html[data-theme='christmas'] #catBadge {
+  background: #0E241E;
+  border: 1px solid #D8B979;
+  color: #F3DC99;
+}
+
+html[data-theme='christmas'] #qWrap {
+  background: #0E241E;
+  border: 1.5px solid #D8B979 !important;
+  box-shadow: 0 12px 32px rgba(20, 14, 8, 0.18);
+}
+html[data-theme='christmas'] #qInner {
+  background: #0E241E;
+}
+
+html[data-theme='christmas'] .cd-ready-eyebrow {
+  color: rgba(243, 220, 153, 0.78) !important;
+}
+html[data-theme='christmas'] .cd-ready-title {
+  color: #F3DC99 !important;
+  font-weight: 700;
+}
+html[data-theme='christmas'] .cd-ready-sub {
+  color: rgba(251, 246, 236, 0.82) !important;
+}
+html[data-theme='christmas'] .cd-status {
+  background: rgba(251, 246, 236, 0.12);
+  border: 1px solid rgba(216, 185, 121, 0.45);
+  color: #FBF6EC;
+}
+html[data-theme='christmas'] .cd-dot {
+  background: #D8B979;
+}
+html[data-theme='christmas'] .cd-bar {
+  height: 5px;
+  background: rgba(255, 255, 255, 0.14);
+}
+html[data-theme='christmas'] .cd-bar-fill,
+html[data-theme='christmas'] #setupPreloadBar {
+  background: #D8B979;
+}
+
+html[data-theme='christmas'] #dockInner.island {
+  background: rgba(14, 36, 30, 0.94);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+  box-shadow: 0 8px 24px rgba(20, 14, 8, 0.18);
+}
+
+@media (max-width: 600px) {
+  .top-right-toolbar {
+    top: 12px !important;
+    right: 12px !important;
+    gap: 6px;
+  }
 }

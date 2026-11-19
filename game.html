@@ -1,19 +1,20 @@
 <!DOCTYPE html>
-<html lang="vi" data-theme="dark">
+<html lang="vi" data-theme="christmas">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>The Floor — Đấu trường</title>
-  <script>(function(){try{var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';document.documentElement.dataset.theme=t;}catch(_){document.documentElement.dataset.theme='dark';}})();</script>
+  <script>(function(){try{if(localStorage.getItem('thefloor:themeSeasonInit')!=='xmas2026'){localStorage.setItem('thefloor:themeSeasonInit','xmas2026');localStorage.setItem('thefloor:theme','christmas');}var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark'&&t!=='christmas'&&t!=='tet')t='christmas';document.documentElement.dataset.theme=t;}catch(_){document.documentElement.dataset.theme='christmas';}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=bgm1" />
+  <link rel="stylesheet" href="css/style.css?v=xmas5" />
 </head>
-<body>
+<body data-page="game">
+  <div id="seasonalBgLayer" data-slot="bg2" aria-hidden="true"></div>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
   <canvas id="fx"></canvas>
 
@@ -29,19 +30,19 @@
   <header class="appbar">
     <div class="appbar-inner">
       <div class="flex items-center gap-3 flex-wrap">
-        <a href="index.html" class="font-display wordmark text-xl md:text-2xl">The Floor</a>
+        <a href="index.html" class="font-display wordmark appbar-logo text-xl md:text-2xl">The Floor</a>
         <span class="chip">PIN <b id="roomLabel">FLOOR</b></span>
         <span id="roleLabel" class="chip">Host</span>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <span id="connLabel" class="chip">…</span>
-        <a id="linkCms" class="hidden btn btn-ghost btn-sm" href="topics.html">Chủ đề</a>
+        <a id="linkCms" class="hidden btn btn-ghost btn-sm nav-topic-link" href="topics.html">Chủ đề</a>
         <button id="btnFirebase" class="btn btn-ghost btn-sm" title="Cấu hình Firebase &amp; Đám Mây">⚙︎ Firebase</button>
         <div class="bgm-header-pill" role="group" aria-label="Nhạc nền">
           <button id="btnBgmMute" type="button" class="btn btn-ghost btn-sm btn-icon" title="Bật / tắt tiếng nhạc nền">🎵</button>
           <button id="btnBgmModal" type="button" class="btn btn-ghost btn-sm btn-icon" title="Danh sách &amp; Quản lý nhạc nền">☰</button>
         </div>
-        <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
+        <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối / lễ hội">★</button>
         <button id="btnMute" class="btn btn-ghost btn-sm btn-icon" title="Bật/tắt âm">🔊</button>
         <button id="btnFull" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
       </div>
@@ -96,117 +97,96 @@
           <div class="floor-stage"><div id="floorGrid" class="floor-grid"></div></div>
         </div>
 
-        <aside class="floor-col-side space-y-4 min-w-0">
-          <div class="panel p-5 board-panel">
-            <div class="eyebrow mb-3">Bảng xếp hạng</div>
-            <div id="board" class="space-y-3"></div>
-          </div>
+        <aside class="floor-col-side min-w-0">
+          <!-- Chuẩn bị trận & Thiết lập (Host / Phòng chờ) -->
+          <div id="setupPanel" class="setup-stack">
+            <!-- 1. Thẻ Cặp đấu hiện tại -->
+            <div class="panel setup-card">
+              <div class="setup-card-title-block">
+                <div class="eyebrow">Cặp đấu hiện tại</div>
+                <p class="t-3 text-xs">Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.</p>
+              </div>
 
-          <!-- Chuẩn bị trận (Host / Phòng chờ) -->
-          <div id="setupPanel" class="panel p-5 space-y-4">
-            <div>
-              <div class="eyebrow">Cặp đấu hiện tại</div>
-              <p class="t-3 text-xs mt-1">Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.</p>
+              <!-- Lưới 3 cột đối xứng: Thách đấu | ⇄ | Bị thách -->
+              <div id="pairCard" class="pair-grid">
+                <div class="pair-slot pair-slot-chal">
+                  <div class="eyebrow pair-slot-role pair-side-chal">⚔ THÁCH ĐẤU</div>
+                  <div id="pairChalName" class="pair-player-name font-display truncate">
+                    <span class="pair-placeholder">Chạm ô để chọn</span>
+                  </div>
+                  <div id="pairChalTimeWrap" class="hidden pair-time-row">
+                    <input id="pairChalSec" type="number" min="10" max="600" step="5" value="60" class="input pair-time-inp font-num" title="Thời gian người thách đấu (giây)" />
+                    <span class="pair-time-unit">giây</span>
+                  </div>
+                </div>
+
+                <button id="btnSwapPair" type="button" class="btn btn-ghost pair-swap-btn" title="Đổi vai Thách đấu / Bị thách" aria-label="Đổi vai Thách đấu và Bị thách" disabled>⇄</button>
+
+                <div class="pair-slot pair-slot-def">
+                  <div class="eyebrow pair-slot-role pair-side-def">🛡 BỊ THÁCH</div>
+                  <div id="pairDefName" class="pair-player-name font-display truncate">
+                    <span class="pair-placeholder">Chạm ô để chọn</span>
+                  </div>
+                  <div id="pairDefTimeWrap" class="hidden pair-time-row">
+                    <input id="pairDefSec" type="number" min="10" max="600" step="5" value="60" class="input pair-time-inp font-num" title="Thời gian người bị thách (giây)" />
+                    <span class="pair-time-unit">giây</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="setup-actions-stack">
+                <div class="setup-topic-block">
+                  <div class="setup-topic-head">
+                    <span class="eyebrow">Chủ đề thi đấu</span>
+                    <span id="gameTopicsCloudBadge" class="text-[11px] font-medium t-2">☁️ Đang đồng bộ chủ đề…</span>
+                  </div>
+                  <select id="selCat" class="input hidden" style="display:none" aria-hidden="true" tabindex="-1"></select>
+                  <button id="btnOpenTopicModal" type="button" class="topic-picker-trigger" title="Bấm để mở bảng chọn chủ đề thi đấu">
+                    <span class="topic-picker-trigger-main">
+                      <span id="selectedTopicName" class="topic-picker-trigger-name">Quốc kỳ</span>
+                    </span>
+                    <span class="topic-picker-trigger-meta">
+                      <span id="selectedTopicCount" class="topic-picker-trigger-badge">6 câu</span>
+                      <span class="topic-picker-trigger-chevron" aria-hidden="true">▾</span>
+                    </span>
+                  </button>
+                </div>
+
+                <div id="setupPreload" class="hidden setup-preload-strip surface-sub">
+                  <div class="setup-preload-row">
+                    <span id="setupPreloadText" class="setup-preload-label t-2">Đang tải ngầm ảnh…</span>
+                    <span id="setupPreloadCount" class="setup-preload-count font-num t-1">0/0</span>
+                  </div>
+                  <div class="progress setup-preload-track"><div id="setupPreloadBar" class="progress-fill"></div></div>
+                </div>
+
+                <button id="btnStartDuel" class="btn btn-ok setup-start-btn w-full" disabled>Bắt đầu trận</button>
+              </div>
             </div>
 
-            <!-- Cặp đấu trực quan: Thách đấu ⚔️ Bị thách -->
-            <div id="pairCard" class="pair-box space-y-3">
-              <div class="flex items-center justify-between gap-2">
-                <div class="flex-1 min-w-0">
-                  <div class="eyebrow text-[10px] pair-side-chal">⚔️ THÁCH ĐẤU</div>
-                  <div id="pairChalName" class="font-display text-sm md:text-base truncate t-1 mt-1">
-                    <span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>
-                  </div>
-                  <div id="pairChalTimeWrap" class="hidden flex items-center gap-1.5 mt-2">
-                    <input id="pairChalSec" type="number" min="10" max="600" step="5" value="60" class="input !py-1 !px-2 w-16 text-center font-num text-xs" title="Thời gian người thách đấu (giây)" />
-                    <span class="t-3 text-[11px] font-medium">giây</span>
-                  </div>
-                </div>
-                <button id="btnSwapPair" type="button" class="btn btn-ghost btn-sm !px-3 text-xs shrink-0" title="Đổi vai Thách đấu / Bị thách" disabled>
-                  ⇄ Đổi vai
-                </button>
-                <div class="flex-1 min-w-0 text-right">
-                  <div class="eyebrow text-[10px] pair-side-def">🛡️ BỊ THÁCH</div>
-                  <div id="pairDefName" class="font-display text-sm md:text-base truncate t-1 mt-1">
-                    <span class="t-3 text-xs font-normal italic">Chạm ô để chọn</span>
-                  </div>
-                  <div id="pairDefTimeWrap" class="hidden flex items-center justify-end gap-1.5 mt-2">
-                    <input id="pairDefSec" type="number" min="10" max="600" step="5" value="60" class="input !py-1 !px-2 w-16 text-center font-num text-xs" title="Thời gian người bị thách (giây)" />
-                    <span class="t-3 text-[11px] font-medium">giây</span>
-                  </div>
+            <!-- 2. Thẻ Quản lý người chơi (gộp Số người chơi 2–6 & Danh sách 2 cột) -->
+            <div class="panel setup-card">
+              <div class="setup-card-head">
+                <span class="eyebrow">Quản lý người chơi</span>
+                <div class="setup-head-actions">
+                  <button id="btnShuffleFloor" type="button" class="btn btn-ghost btn-sm setup-mini-btn">Chia lại sàn</button>
+                  <button id="btnResetAll" type="button" class="btn btn-ghost btn-sm setup-mini-btn">Đặt lại</button>
                 </div>
               </div>
-              <div id="pairVsRow" class="hidden pt-2.5 hairline-t text-center">
-                <span class="text-xs font-medium t-3">Đối đầu:</span>
-                <span id="pairVsText" class="text-xs font-semibold t-1 ml-1.5"></span>
+
+              <div class="player-count-row">
+                <span class="eyebrow player-count-label">Số người chơi (2–6)</span>
+                <div id="playerCountSeg" class="seg" role="group" aria-label="Số người chơi">
+                  <button type="button" data-pc="2">2</button>
+                  <button type="button" data-pc="3">3</button>
+                  <button type="button" data-pc="4">4</button>
+                  <button type="button" data-pc="5">5</button>
+                  <button type="button" data-pc="6">6</button>
+                </div>
               </div>
+
+              <div id="roster" class="roster-compact-grid"></div>
             </div>
-
-            <div class="field-label">
-              <div class="flex items-center justify-between gap-2 mb-1.5">
-                <span class="eyebrow !mb-0">Chủ đề thi đấu</span>
-                <span id="gameTopicsCloudBadge" class="text-[11px] font-medium t-2">☁️ Đang đồng bộ chủ đề…</span>
-              </div>
-              <select id="selCat" class="input hidden" style="display:none" aria-hidden="true" tabindex="-1"></select>
-              <button id="btnOpenTopicModal" type="button" class="topic-picker-trigger" title="Bấm để mở bảng chọn chủ đề thi đấu">
-                <span class="topic-picker-trigger-main">
-                  <span id="selectedTopicName" class="topic-picker-trigger-name">Quốc kỳ</span>
-                </span>
-                <span class="topic-picker-trigger-meta">
-                  <span id="selectedTopicCount" class="topic-picker-trigger-badge">6 câu</span>
-                  <span class="topic-picker-trigger-chevron" aria-hidden="true">▾</span>
-                </span>
-              </button>
-            </div>
-            <div id="setupPreload" class="hidden surface-sub rounded-2xl px-3.5 py-2.5 space-y-1.5">
-              <div class="flex items-center justify-between text-xs">
-                <span id="setupPreloadText" class="t-2 font-medium">Đang tải ngầm ảnh…</span>
-                <span id="setupPreloadCount" class="font-num t-1">0/0</span>
-              </div>
-              <div class="progress"><div id="setupPreloadBar" class="progress-fill"></div></div>
-            </div>
-            <button id="btnStartDuel" class="btn btn-ok btn-lg w-full" disabled>Bắt đầu trận</button>
-
-            <!-- Bảng thiết lập người chơi (2–6 người) -->
-            <details class="text-sm hairline-t pt-4" open>
-              <summary class="cursor-pointer t-2 font-semibold select-none">Thiết lập người chơi (2–6 người)</summary>
-              <div class="mt-3 space-y-3">
-                <div class="player-toolbar">
-                  <div class="player-toolbar-block">
-                    <span class="eyebrow">Số người chơi (2–6)</span>
-                    <div id="playerCountSeg" class="seg w-full mt-1.5" role="group" aria-label="Số người chơi">
-                      <button type="button" data-pc="2" class="flex-1">2</button>
-                      <button type="button" data-pc="3" class="flex-1">3</button>
-                      <button type="button" data-pc="4" class="flex-1">4</button>
-                      <button type="button" data-pc="5" class="flex-1">5</button>
-                      <button type="button" data-pc="6" class="flex-1">6</button>
-                    </div>
-                  </div>
-                  <div class="player-toolbar-block">
-                    <span class="eyebrow">Đặt chung thời gian (giây)</span>
-                    <div class="flex items-center gap-2 mt-1.5">
-                      <input id="bulkTimeInput" type="number" min="10" max="600" step="5" value="60" class="input !py-1.5 !px-2 flex-1 min-w-0 text-center font-num text-xs" />
-                      <button id="btnBulkTime" type="button" class="btn btn-ghost btn-sm shrink-0">Áp dụng</button>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="roster-table">
-                  <div class="roster-grid roster-header">
-                    <span># / Màu</span>
-                    <span>Tên người chơi</span>
-                    <span>Chủ đề sở trường</span>
-                    <span class="text-center">Giây</span>
-                  </div>
-                  <div id="roster" class="space-y-1.5 mt-2"></div>
-                </div>
-
-                <div class="flex gap-2 pt-1">
-                  <button id="btnShuffleFloor" class="btn btn-ghost btn-sm flex-1">Chia lại sàn</button>
-                  <button id="btnResetAll" class="btn btn-ghost btn-sm flex-1">Đặt lại</button>
-                </div>
-              </div>
-            </details>
           </div>
         </aside>
       </div>
@@ -397,6 +377,6 @@
   </div>
 
   <script type="module" src="js/theme.js?v=perf16"></script>
-  <script type="module" src="js/app.js?v=bgm1"></script>
+  <script type="module" src="js/app.js?v=hud1"></script>
 </body>
 </html>

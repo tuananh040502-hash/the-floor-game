@@ -1,20 +1,21 @@
 <!DOCTYPE html>
-<html lang="vi" data-theme="dark">
+<html lang="vi" data-theme="christmas">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>The Floor — Quản lý chủ đề</title>
-  <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <script>(function(){try{if(localStorage.getItem('thefloor:themeSeasonInit')!=='xmas2026'){localStorage.setItem('thefloor:themeSeasonInit','xmas2026');localStorage.setItem('thefloor:theme','christmas');}var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark'&&t!=='christmas'&&t!=='tet')t='christmas';document.documentElement.dataset.theme=t;}catch(_){document.documentElement.dataset.theme='christmas';}})();</script>
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=bgm1" />
+  <link rel="stylesheet" href="css/style.css?v=xmas4" />
 </head>
-<body>
+<body data-page="topics">
+  <div id="seasonalBgLayer" data-slot="bg2" aria-hidden="true"></div>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
 
-  <div class="p-3 md:p-5">
+  <div class="cms-shell p-3 md:p-5">
     <div class="window">
       <!-- Sidebar -->
       <aside class="window-side anim-from-left">
@@ -90,6 +91,101 @@
               <div class="flex justify-end mt-2"><button id="btnCopyScript" class="btn btn-ghost btn-sm">Sao chép mã</button></div>
               <pre id="scriptCode" class="mt-2 p-3 surface-sub rounded-xl overflow-auto" style="max-height:220px;font-size:11px"></pre>
             </details>
+          </div>
+        </details>
+
+        <!-- Bảng điều khiển Giao diện & Mùa lễ hội (Seasonal Theme Studio: Noel / Tết / Mặc định) -->
+        <details id="themeStudioPanel" class="group">
+          <summary>🎨 Giao diện &amp; Mùa lễ hội</summary>
+          <div class="group-pad pt-0 space-y-3 text-sm">
+            <div id="themeStudioLockNotice" class="topic-readonly-notice hidden" style="font-size:11.5px;padding:9px 11px">
+              🔒 Nhập Apps Script Web App URL &amp; Folder ID ở mục Google Drive để mở khóa chỉnh sửa giao diện lễ hội.
+            </div>
+
+            <label class="field-label"><span class="eyebrow">Chế độ Mùa lễ hội (Preset)</span>
+              <select id="themePresetSelect" class="input">
+                <option value="christmas">🎄 Giáng Sinh - Noel</option>
+                <option value="tet">🧧 Tết Nguyên Đán - Tết</option>
+                <option value="default">🍎 Mặc định (Apple Sáng / Tối)</option>
+              </select>
+            </label>
+
+            <div class="space-y-2">
+              <div class="eyebrow">Ảnh nền 3 trang (Tải lên Drive hoặc dán URL)</div>
+              <div class="space-y-1.5">
+                <span class="text-xs t-2 font-medium block">1. Trang 1 — Sảnh lập phòng (index.html)</span>
+                <div class="flex gap-1.5">
+                  <input id="themeBg1Url" class="input flex-1 text-xs" placeholder="assets/christmas/bg-1.webp hoặc URL Drive" />
+                  <button id="btnUploadBg1" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền Trang 1 lên Google Drive">⬆ Ảnh</button>
+                  <input id="fileBg1" type="file" accept="image/*" class="hidden" />
+                </div>
+              </div>
+              <div class="space-y-1.5">
+                <span class="text-xs t-2 font-medium block">2. Trang 2 — Sàn đấu (game.html)</span>
+                <div class="flex gap-1.5">
+                  <input id="themeBg2Url" class="input flex-1 text-xs" placeholder="assets/christmas/bg-2.webp hoặc URL Drive" />
+                  <button id="btnUploadBg2" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền Trang 2 lên Google Drive">⬆ Ảnh</button>
+                  <input id="fileBg2" type="file" accept="image/*" class="hidden" />
+                </div>
+              </div>
+              <div class="space-y-1.5">
+                <span class="text-xs t-2 font-medium block">3. Trang 3 — Đấu trường (game.html Arena)</span>
+                <div class="flex gap-1.5">
+                  <input id="themeBg3Url" class="input flex-1 text-xs" placeholder="assets/christmas/bg-3.webp hoặc URL Drive" />
+                  <button id="btnUploadBg3" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền Trang 3 lên Google Drive">⬆ Ảnh</button>
+                  <input id="fileBg3" type="file" accept="image/*" class="hidden" />
+                </div>
+              </div>
+              <div class="space-y-1.5">
+                <span class="text-xs t-2 font-medium block">4. Màn hình dọc iPad/iPhone (Tùy chọn)</span>
+                <div class="flex gap-1.5">
+                  <input id="themeBgMobileUrl" class="input flex-1 text-xs" placeholder="assets/christmas/bg-mobile.webp" />
+                  <button id="btnUploadBgMobile" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền màn hình dọc lên Google Drive">⬆ Ảnh</button>
+                  <input id="fileBgMobile" type="file" accept="image/*" class="hidden" />
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <label class="field-label"><span class="eyebrow">Kiểu viền</span>
+                <select id="themeBorderStyle" class="input text-xs">
+                  <option value="candy">🍬 Kẹo gậy Noel</option>
+                  <option value="gold">✨ Vàng lễ hội / Tết</option>
+                  <option value="solid">▬ Viền đơn chuẩn</option>
+                </select>
+              </label>
+              <label class="field-label"><span class="eyebrow">Hiệu ứng rơi</span>
+                <select id="themeEffect" class="input text-xs">
+                  <option value="snow">❄️ Tuyết rơi nhẹ</option>
+                  <option value="blossom">🌸 Hoa mai / đào</option>
+                  <option value="none">✕ Tắt hiệu ứng</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="space-y-1.5">
+              <span class="eyebrow block">Bảng màu Khung · Viền · Nút chính</span>
+              <div class="flex items-center justify-between gap-2 surface-sub rounded-xl p-2">
+                <label class="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                  <input id="themeCardBg" type="color" value="#FAF3E3" />
+                  <span>Nền thẻ</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                  <input id="themeBorderColor" type="color" value="#D8B979" />
+                  <span>Viền</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
+                  <input id="themeAccentColor" type="color" value="#C81E2B" />
+                  <span>Nút đỏ</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="flex gap-2 pt-1">
+              <button id="btnSaveThemeStudio" type="button" class="btn btn-ok btn-sm flex-1">💾 Lưu &amp; Đồng bộ</button>
+              <button id="btnResetThemePreset" type="button" class="btn btn-ghost btn-sm" title="Khôi phục thông số gốc của preset đang chọn">Mặc định</button>
+            </div>
+            <div id="themeStudioStatus" class="t-3 text-[11px] leading-relaxed">Đồng bộ trực tiếp qua nhánh <code>shared_theme</code> (Firebase).</div>
           </div>
         </details>
 
