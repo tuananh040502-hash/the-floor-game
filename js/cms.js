@@ -1,13 +1,16 @@
-import { CATEGORIES } from './data.js';
 import { loadFirebaseConfig } from './firebase-config.js';
-import { createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl } from './transport.js';
+import {
+  createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
+  normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds,
+  getDeletedTopicIds, markTopicDeleted,
+} from './transport.js';
 import {
   TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
   parseVictoryAudio, normalizeVictoryAudioUrl,
   saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
   clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
-import { normalizeImageUrl, driveFallbackUrl } from './engine.js';
+import { normalizeImageUrl, driveFallbackUrl, isLegacyEmojiSampleTopic } from './engine.js';
 import { Sfx } from './audio.js';
 
 export const MAX_TOPIC_IMAGES = 100;
@@ -17,8 +20,45 @@ const params = new URLSearchParams(location.search);
 const room = params.get('room');
 $('backLink').href = room ? `game.html?role=host&room=${encodeURIComponent(room)}` : 'index.html';
 
+const DELETE_DENIED_MSG = 'Không thể xóa: Bạn cần nhập đúng Apps Script Web App URL và Folder ID đã dùng để đăng chủ đề này.';
+
+function getCurrentDriveIdentity() {
+  const cfg = loadDrive();
+  const inpUrl = $('driveUrl') ? $('driveUrl').value : '';
+  const inpFolder = $('driveFolder') ? $('driveFolder').value : '';
+  return {
+    scriptUrl: normalizeScriptUrl(inpUrl || cfg.url),
+    folderId: normalizeFolderId(inpFolder || cfg.folderId),
+  };
+}
+
+/** Gắn thông tin quyền sở hữu (ownerScriptUrl, ownerFolderId) & danh sách fileIds Drive cho chủ đề. */
+function stampOwnership(topic) {
+  if (!topic || typeof topic !== 'object') return topic;
+  const { scriptUrl, folderId } = getCurrentDriveIdentity();
+  const existingUrl = normalizeScriptUrl(topic.ownerScriptUrl);
+  const existingFolder = normalizeFolderId(topic.ownerFolderId);
+  topic.ownerScriptUrl = existingUrl || scriptUrl || '';
+  topic.ownerFolderId = existingFolder || folderId || '';
+  topic.driveFolderId = normalizeFolderId(topic.driveFolderId || '');
+  topic.fileIds = extractTopicDriveFileIds(topic);
+  return topic;
+}
+
+/** Chỉ cho phép xóa khi máy hiện tại có cấu hình Drive hợp lệ VÀ trùng khớp cả Apps Script URL lẫn Folder ID của người đăng. */
+function canDeleteTopic(topic) {
+  if (!topic || typeof topic !== 'object') return false;
+  const { scriptUrl, folderId } = getCurrentDriveIdentity();
+  const ownerUrl = normalizeScriptUrl(topic.ownerScriptUrl);
+  const ownerFolder = normalizeFolderId(topic.ownerFolderId);
+  if (!scriptUrl || !folderId || !ownerUrl || !ownerFolder) return false;
+  return scriptUrl === ownerUrl && folderId === ownerFolder;
+}
+
 function loadTopicsUpToLimit() {
   const base = loadCustom();
+  const deletedIds = getDeletedTopicIds();
+  let needsRewrite = false;
   try {
     const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
     if (Array.isArray(raw)) {
@@ -30,25 +70,46 @@ function loadTopicsUpToLimit() {
             t.items = src.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
           }
           t.coverUrl = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
+          t.ownerScriptUrl = normalizeScriptUrl(src.ownerScriptUrl);
+          t.ownerFolderId = normalizeFolderId(src.ownerFolderId);
+          t.driveFolderId = normalizeFolderId(src.driveFolderId);
+          t.fileIds = extractTopicDriveFileIds(src);
         } else {
           t.coverUrl = normalizeCoverUrl(t.coverUrl) || normalizeImageUrl(t.coverUrl) || '';
+          t.ownerScriptUrl = normalizeScriptUrl(t.ownerScriptUrl);
+          t.ownerFolderId = normalizeFolderId(t.ownerFolderId);
+          t.driveFolderId = normalizeFolderId(t.driveFolderId);
+          t.fileIds = extractTopicDriveFileIds(t);
         }
       });
     }
   } catch { /* ignore */ }
-  return base;
+  const cleaned = base.filter((t) => {
+    if (!t || !t.id || isLegacyEmojiSampleTopic(t) || deletedIds.has(t.id)) {
+      needsRewrite = true;
+      return false;
+    }
+    return true;
+  });
+  if (needsRewrite) {
+    try { localStorage.setItem(TOPICS_KEY, JSON.stringify(cleaned)); } catch { /* ignore */ }
+  }
+  return cleaned;
 }
 
 let topics = loadTopicsUpToLimit();
 let currentId = topics[0] ? topics[0].id : null;
 let uploading = false;
+let deletingTopic = false;
 let cloudSync = null;
 let initialMigrationDone = false;
 let pendingDeleteId = null;
+const cleanedLegacyCloudIds = new Set();
+const ownerBackfilledIds = new Set();
 
 const cur = () => topics.find((t) => t.id === currentId) || null;
 
-/** Lưu bản đệm cục bộ vào localStorage (giữ tối đa 100 ảnh mỗi chủ đề và bảo toàn coverUrl). */
+/** Lưu bản đệm cục bộ vào localStorage (giữ tối đa 100 ảnh, bảo toàn coverUrl, ownerScriptUrl, ownerFolderId, driveFolderId, fileIds). */
 function persistLocalCache() {
   saveCustom(topics);
   try {
@@ -64,8 +125,22 @@ function persistLocalCache() {
           changed = true;
         }
         const cleanCover = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
-        if ((st.coverUrl || '') !== cleanCover) {
+        const cleanOwnerUrl = normalizeScriptUrl(src.ownerScriptUrl);
+        const cleanOwnerFolder = normalizeFolderId(src.ownerFolderId);
+        const cleanDriveFolder = normalizeFolderId(src.driveFolderId);
+        const cleanFileIds = extractTopicDriveFileIds(src);
+        if (
+          (st.coverUrl || '') !== cleanCover
+          || (st.ownerScriptUrl || '') !== cleanOwnerUrl
+          || (st.ownerFolderId || '') !== cleanOwnerFolder
+          || (st.driveFolderId || '') !== cleanDriveFolder
+          || JSON.stringify(st.fileIds || []) !== JSON.stringify(cleanFileIds)
+        ) {
           st.coverUrl = cleanCover;
+          st.ownerScriptUrl = cleanOwnerUrl;
+          st.ownerFolderId = cleanOwnerFolder;
+          st.driveFolderId = cleanDriveFolder;
+          st.fileIds = cleanFileIds;
           changed = true;
         }
       });
@@ -79,6 +154,11 @@ function persistLocalCache() {
  * @param {object|'all'|null} target - Chủ đề cần đẩy lên Cloud, hoặc 'all' để đồng bộ toàn bộ.
  */
 function persist(target = cur()) {
+  if (target === 'all') {
+    topics.forEach((t) => stampOwnership(t));
+  } else if (target && typeof target === 'object' && target.id) {
+    stampOwnership(target);
+  }
   persistLocalCache();
   updateCloudCountBadge();
   if (!cloudSync || cloudSync.mode !== 'firebase') return;
@@ -141,14 +221,43 @@ async function handleCloudSnapshot(cloudList) {
     }
   });
 
-  const cloudById = new Map((cloudList || []).map((t) => [t.id, t]));
+  const deletedIds = getDeletedTopicIds();
+  const cloudById = new Map();
+  const legacyToRemove = [];
+  (cloudList || []).forEach((t) => {
+    if (!t || !t.id) return;
+    if (isLegacyEmojiSampleTopic(t)) {
+      if (!cleanedLegacyCloudIds.has(t.id)) {
+        cleanedLegacyCloudIds.add(t.id);
+        legacyToRemove.push(t.id);
+      }
+      return;
+    }
+    if (deletedIds.has(t.id)) {
+      if (!cleanedLegacyCloudIds.has(t.id)) {
+        cleanedLegacyCloudIds.add(t.id);
+        legacyToRemove.push(t.id);
+      }
+      return;
+    }
+    cloudById.set(t.id, t);
+  });
 
-  // Auto-Migration ngay khi khởi tạo: đẩy các chủ đề cục bộ chưa có trên shared_topics lên Firebase
+  if (legacyToRemove.length && cloudSync && cloudSync.mode === 'firebase') {
+    legacyToRemove.forEach((legacyId) => {
+      cloudSync.removeTopic(legacyId).catch(() => {});
+    });
+  }
+
+  // Auto-Migration ngay khi khởi tạo: đẩy các chủ đề cục bộ hợp lệ chưa có trên shared_topics lên Firebase (bỏ qua ID đã xóa trong deleted_topic_ids)
   if (!initialMigrationDone) {
     initialMigrationDone = true;
-    const missingOnCloud = localBefore.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
+    const missingOnCloud = localBefore.filter((lt) => (
+      lt && lt.id && !isLegacyEmojiSampleTopic(lt) && !deletedIds.has(lt.id) && !cloudById.has(lt.id)
+    ));
     if (missingOnCloud.length && cloudSync && cloudSync.mode === 'firebase') {
       missingOnCloud.forEach((lt) => {
+        stampOwnership(lt);
         const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
         if (clean) cloudById.set(clean.id, clean);
       });
@@ -159,12 +268,35 @@ async function handleCloudSnapshot(cloudList) {
     }
   }
 
+  const { scriptUrl: curScriptUrl, folderId: curFolderId } = getCurrentDriveIdentity();
+  const toBackfillOwner = [];
+
   const merged = [...cloudById.values()].map((ct) => {
     const sanitized = sanitizeTopic({ ...ct, items: [] });
     if (!sanitized) return null;
+    sanitized.icon = '';
     sanitized.items = (ct.items || []).map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
     sanitized.coverUrl = normalizeCoverUrl(ct.coverUrl) || normalizeImageUrl(ct.coverUrl) || '';
+    sanitized.ownerScriptUrl = normalizeScriptUrl(ct.ownerScriptUrl);
+    sanitized.ownerFolderId = normalizeFolderId(ct.ownerFolderId);
+    sanitized.driveFolderId = normalizeFolderId(ct.driveFolderId);
+    sanitized.fileIds = extractTopicDriveFileIds({
+      coverUrl: sanitized.coverUrl,
+      items: sanitized.items,
+      fileIds: ct.fileIds,
+    });
     sanitized.updatedAt = ct.updatedAt || 0;
+
+    // Tự động bổ sung ownerScriptUrl / ownerFolderId cho chủ đề cũ trên Cloud nếu máy hiện tại có cấu hình Drive hợp lệ
+    if ((!sanitized.ownerScriptUrl || !sanitized.ownerFolderId) && curScriptUrl && curFolderId) {
+      if (!sanitized.ownerScriptUrl) sanitized.ownerScriptUrl = curScriptUrl;
+      if (!sanitized.ownerFolderId) sanitized.ownerFolderId = curFolderId;
+      if (!ownerBackfilledIds.has(sanitized.id)) {
+        ownerBackfilledIds.add(sanitized.id);
+        toBackfillOwner.push(sanitized);
+      }
+    }
+
     const vc = voiceCache.get(sanitized.id);
     if (vc) {
       if (vc.victoryVoiceData) sanitized.victoryVoiceData = vc.victoryVoiceData;
@@ -172,6 +304,10 @@ async function handleCloudSnapshot(cloudList) {
     }
     return sanitized;
   }).filter(Boolean);
+
+  if (toBackfillOwner.length && cloudSync && cloudSync.mode === 'firebase') {
+    cloudSync.putMany(toBackfillOwner).catch(() => {});
+  }
 
   topics = merged;
   if (!topics.some((t) => t.id === currentId)) {
@@ -199,13 +335,16 @@ async function manualSyncCloud() {
   }
   try {
     renderCloudStatus({ state: 'syncing', message: 'Đang đồng bộ thủ công...' });
+    const deletedIds = getDeletedTopicIds();
     const remoteList = await cloudSync.fetchAll();
     const remoteIds = new Set(remoteList.map((r) => r.id));
-    const localUnsynced = topics.filter((t) => t && t.id && !remoteIds.has(t.id));
+    const localUnsynced = topics.filter((t) => t && t.id && !deletedIds.has(t.id) && !isLegacyEmojiSampleTopic(t) && !remoteIds.has(t.id));
+    localUnsynced.forEach((t) => stampOwnership(t));
     if (localUnsynced.length) {
       await cloudSync.putMany(localUnsynced);
     }
-    if (cur()) {
+    if (cur() && !deletedIds.has(cur().id)) {
+      stampOwnership(cur());
       await cloudSync.putTopic(cur());
     }
     const latest = await cloudSync.fetchAll();
@@ -399,6 +538,10 @@ function render() {
   $('tShuffle').checked = !!t.shuffle;
   $('countNow').textContent = t.items.length;
   $('countMax').textContent = MAX_TOPIC_IMAGES;
+  if ($('btnDeleteTopic')) {
+    $('btnDeleteTopic').disabled = false;
+    $('btnDeleteTopic').classList.remove('hidden');
+  }
   renderItems();
 }
 
@@ -743,13 +886,31 @@ async function testDrive() {
 }
 
 function saveDriveCfg() {
-  const url = $('driveUrl').value.trim();
-  const folderId = $('driveFolder').value.trim();
+  const url = normalizeScriptUrl($('driveUrl').value);
+  const folderId = normalizeFolderId($('driveFolder').value);
   if (url && !/^https:\/\/script\.google\.com\/(macros\/s\/|a\/)/.test(url)) {
     toast('URL phải bắt đầu bằng https://script.google.com/macros/s/…/exec', true);
     return;
   }
+  $('driveUrl').value = url;
+  $('driveFolder').value = folderId;
   saveDrive({ url, folderId });
+  // Nếu có chủ đề cũ chưa gắn thông tin chủ sở hữu, tự động bổ sung ngay khi người dùng lưu cấu hình Drive hợp lệ
+  if (url && folderId) {
+    const backfilled = [];
+    topics.forEach((t) => {
+      if (t && (!t.ownerScriptUrl || !t.ownerFolderId)) {
+        stampOwnership(t);
+        backfilled.push(t);
+      }
+    });
+    if (backfilled.length) {
+      persistLocalCache();
+      if (cloudSync && cloudSync.mode === 'firebase') {
+        cloudSync.putMany(backfilled).catch(() => {});
+      }
+    }
+  }
   toast('Đã lưu cấu hình Google Drive.');
 }
 
@@ -788,6 +949,8 @@ function importFile(file) {
       incoming.forEach((t) => {
         if (used.has(t.id)) t.id = newId();
         used.add(t.id);
+        t.icon = '';
+        stampOwnership(t);
         if (t.victoryVoiceData) {
           saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '');
         }
@@ -808,50 +971,138 @@ function importFile(file) {
   reader.readAsText(file);
 }
 
-// ---------- Xác nhận xóa chủ đề (Chống xóa nhầm trên Cloud) ----------
+// ---------- Xác nhận xóa chủ đề (Kiểm tra quyền sở hữu & Xóa đồng bộ Drive + Firebase + localStorage) ----------
+function setDeleteModalBusy(busy, statusText = '') {
+  const statusEl = $('delModalStatus');
+  const confirmBtn = $('btnConfirmDeleteTopic');
+  const cancelBtn = $('btnCancelDeleteTopic');
+  const checkEl = $('delConfirmCheck');
+  if (statusEl) {
+    statusEl.textContent = statusText || '';
+    statusEl.classList.toggle('hidden', !statusText);
+  }
+  if (confirmBtn) {
+    confirmBtn.disabled = busy || !(checkEl && checkEl.checked);
+    confirmBtn.textContent = busy ? 'Đang xóa…' : 'Xóa vĩnh viễn';
+  }
+  if (cancelBtn) cancelBtn.disabled = busy;
+  if (checkEl) checkEl.disabled = busy;
+}
+
 function openDeleteModal(t) {
-  if (!t) return;
+  if (!t || deletingTopic) return;
+  if (!canDeleteTopic(t)) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast(DELETE_DENIED_MSG, true);
+    return;
+  }
   const modal = $('deleteConfirmModal');
+  const fileCount = extractTopicDriveFileIds(t).length;
   if (!modal) {
-    // Fallback an toàn nếu thiếu modal
-    if (confirm(`Xác nhận xóa chủ đề dùng chung “${t.name}” (${t.items.length} ảnh) khỏi tất cả thiết bị?`)) {
+    if (confirm(`Xác nhận xóa vĩnh viễn chủ đề “${t.name}” (${t.items.length} ảnh) khỏi Google Drive, Firebase và máy?`)) {
       executeDeleteTopic(t.id);
     }
     return;
   }
   pendingDeleteId = t.id;
   if ($('delModalTopicName')) $('delModalTopicName').textContent = t.name;
-  if ($('delModalTopicCount')) $('delModalTopicCount').textContent = `Gồm ${t.items.length} câu hỏi ảnh · Nhánh shared_topics`;
-  if ($('delConfirmCheck')) $('delConfirmCheck').checked = false;
-  if ($('btnConfirmDeleteTopic')) $('btnConfirmDeleteTopic').disabled = true;
+  if ($('delModalTopicCount')) {
+    $('delModalTopicCount').textContent = `Gồm ${t.items.length} câu hỏi · ${fileCount} ảnh Drive · Nhánh shared_topics`;
+  }
+  if ($('delConfirmCheck')) {
+    $('delConfirmCheck').checked = false;
+    $('delConfirmCheck').disabled = false;
+  }
+  setDeleteModalBusy(false, '');
   modal.classList.remove('hidden');
 }
 
 function closeDeleteModal() {
+  if (deletingTopic) return;
   pendingDeleteId = null;
+  setDeleteModalBusy(false, '');
   const modal = $('deleteConfirmModal');
   if (modal) modal.classList.add('hidden');
 }
 
 async function executeDeleteTopic(targetId) {
+  if (deletingTopic) return;
   const t = topics.find((x) => x.id === targetId);
   if (!t) {
     closeDeleteModal();
     return;
   }
+  if (!canDeleteTopic(t)) {
+    closeDeleteModal();
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast(DELETE_DENIED_MSG, true);
+    return;
+  }
+
+  const { scriptUrl, folderId: currentFolderId } = getCurrentDriveIdentity();
+  const extractedDriveFileIds = extractTopicDriveFileIds(t);
   const removedName = t.name;
+
+  deletingTopic = true;
   Sfx.stopVictory();
-  closeDeleteModal();
-  await deleteTopicAudioIDB(t.id);
-  topics = topics.filter((x) => x.id !== t.id);
-  currentId = topics[0] ? topics[0].id : null;
-  persistLocalCache();
-  updateCloudCountBadge();
-  render();
+  setDeleteModalBusy(true, '⏳ Đang xóa ảnh trên Drive và dữ liệu...');
+  toast('Đang xóa ảnh trên Drive và dữ liệu...');
+
+  // 1. Gửi yêu cầu POST tới Apps Script để xóa thư mục / các file ảnh của chủ đề trên Google Drive
+  let driveWarning = '';
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'deleteTopicFolder',
+        folderId: currentFolderId,
+        topicFolderId: t.driveFolderId || '',
+        topicName: t.name,
+        fileIds: extractedDriveFileIds,
+      }),
+    });
+    if (!res.ok) {
+      driveWarning = `HTTP ${res.status}`;
+    } else {
+      try {
+        const json = await res.json();
+        if (json && json.ok === false) {
+          driveWarning = json.error || 'Apps Script báo lỗi';
+        }
+      } catch { /* ignore non-JSON body */ }
+    }
+  } catch (err) {
+    driveWarning = err?.message || 'Không gọi được Apps Script';
+  }
+
+  // 2. Lưu tombstone chống hồi sinh trước khi xóa trên Firebase & localStorage
+  markTopicDeleted(t.id);
+
+  // 3. Xóa hẳn node trên Firebase Realtime Database (`shared_topics/<topicId>`)
   if (cloudSync && cloudSync.mode === 'firebase') {
     await cloudSync.removeTopic(t.id);
   }
-  toast(`Đã xóa chủ đề “${removedName}” khỏi Kho chủ đề dùng chung.`);
+
+  // 4. Xóa âm thanh IndexedDB và ghi đè mảng sạch vào localStorage ngay lập tức
+  await deleteTopicAudioIDB(t.id);
+  topics = topics.filter((x) => x.id !== t.id);
+  currentId = topics[0] ? topics[0].id : null;
+  try {
+    localStorage.setItem(TOPICS_KEY, JSON.stringify(topics));
+  } catch { /* ignore */ }
+  persistLocalCache();
+
+  deletingTopic = false;
+  closeDeleteModal();
+  updateCloudCountBadge();
+  render();
+
+  if (driveWarning) {
+    toast(`Đã xóa “${removedName}” trên Firebase & máy (Lưu ý Drive: ${driveWarning}).`, true);
+  } else {
+    toast(`Đã xóa vĩnh viễn “${removedName}” khỏi Google Drive, Firebase và bộ nhớ máy.`);
+  }
 }
 
 // ---------- Chạy thử ----------
@@ -1029,15 +1280,20 @@ function bind() {
   });
 
   $('btnClone').addEventListener('click', () => {
-    const menu = CATEGORIES.map((c, i) => `${i + 1}. ${c.name} (${c.items.length})`).join('\n');
+    if (!topics.length) {
+      toast('Chưa có chủ đề nào để nhân bản. Hãy tạo chủ đề mới trước.', true);
+      return;
+    }
+    const menu = topics.map((c, i) => `${i + 1}. ${c.name} (${(c.items || []).length})`).join('\n');
     const n = parseInt(prompt(`Nhân bản chủ đề nào? Nhập số:\n${menu}`), 10);
-    const src = CATEGORIES[n - 1];
+    const src = topics[n - 1];
     if (!src) return;
     const t = sanitizeTopic({
-      id: newId(), name: `${src.name} (bản sao)`, icon: '', shuffle: true,
-      items: src.items.slice(0, MAX_TOPIC_IMAGES),
+      id: newId(), name: `${src.name} (bản sao)`, icon: '', shuffle: !!src.shuffle,
+      items: (src.items || []).slice(0, MAX_TOPIC_IMAGES),
     });
     t.icon = '';
+    t.coverUrl = src.coverUrl || '';
     topics.push(t);
     currentId = t.id;
     persist(t);

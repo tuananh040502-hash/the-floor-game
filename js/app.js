@@ -1,13 +1,17 @@
 import { loadFirebaseConfig } from './firebase-config.js';
 import { openFirebaseSettings } from './settings.js';
-import { createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl } from './transport.js';
-import { allCategories, TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
+import {
+  createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
+  normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, getDeletedTopicIds,
+} from './transport.js';
+import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
-} from './engine.js?v=topicmodal5';
+  isLegacyEmojiSampleTopic,
+} from './engine.js?v=clean8';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
@@ -54,6 +58,7 @@ let sharedCustomTopics = null;
 let initialTopicsMigrated = false;
 let topicModalContext = { mode: 'duel', playerId: null };
 let topicModalSearchQuery = '';
+const cleanedLegacyCloudIds = new Set();
 const conn = { base: '…', latency: '', error: '' };
 const ANIM_CLASSES = [
   'stagger-item', 'anim-from-top', 'anim-from-bottom', 'anim-from-left',
@@ -127,7 +132,7 @@ async function initSharedTopics(fbCfg) {
       if (!badge) return;
       if (st.state === 'synced') {
         const n = Array.isArray(sharedCustomTopics) ? sharedCustomTopics.length : (st.count ?? 0);
-        badge.textContent = `☁️ Kho dùng chung (${n} chủ đề riêng)`;
+        badge.textContent = `☁️ Kho dùng chung (${n} chủ đề)`;
       } else if (st.state === 'syncing') {
         badge.textContent = '⏳ Đang đồng bộ chủ đề…';
       } else if (st.state === 'local') {
@@ -137,17 +142,39 @@ async function initSharedTopics(fbCfg) {
       }
     });
     topicsSync.subscribe(async (cloudList) => {
-      const cloudById = new Map((cloudList || []).map((t) => [t.id, t]));
+      const deletedIds = getDeletedTopicIds();
+      const cloudById = new Map();
+      const legacyToRemove = [];
+      (cloudList || []).forEach((t) => {
+        if (!t || !t.id) return;
+        if (isLegacyEmojiSampleTopic(t) || deletedIds.has(t.id)) {
+          if (!cleanedLegacyCloudIds.has(t.id)) {
+            cleanedLegacyCloudIds.add(t.id);
+            legacyToRemove.push(t.id);
+          }
+          return;
+        }
+        cloudById.set(t.id, t);
+      });
+      if (legacyToRemove.length && topicsSync && topicsSync.mode === 'firebase') {
+        legacyToRemove.forEach((legacyId) => {
+          topicsSync.removeTopic(legacyId).catch(() => {});
+        });
+      }
       if (!initialTopicsMigrated) {
         initialTopicsMigrated = true;
         try {
           const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || '[]');
           if (Array.isArray(localRaw) && topicsSync.mode === 'firebase') {
-            const missing = localRaw.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
+            const missing = localRaw.filter((lt) => (
+              lt && lt.id && !isLegacyEmojiSampleTopic(lt) && !deletedIds.has(lt.id) && !cloudById.has(lt.id)
+            ));
             if (missing.length) {
               missing.forEach((lt) => {
                 const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
-                if (clean) cloudById.set(clean.id, clean);
+                if (clean && !isLegacyEmojiSampleTopic(clean) && !deletedIds.has(clean.id)) {
+                  cloudById.set(clean.id, clean);
+                }
               });
               await topicsSync.putMany(missing);
             }
@@ -156,7 +183,12 @@ async function initSharedTopics(fbCfg) {
       }
       sharedCustomTopics = [...cloudById.values()].map((t) => ({
         ...t,
+        icon: '',
         coverUrl: normalizeCoverUrl(t?.coverUrl) || normalizeImageUrl(t?.coverUrl) || '',
+        ownerScriptUrl: normalizeScriptUrl(t?.ownerScriptUrl),
+        ownerFolderId: normalizeFolderId(t?.ownerFolderId),
+        driveFolderId: normalizeFolderId(t?.driveFolderId),
+        fileIds: extractTopicDriveFileIds(t),
         items: Array.isArray(t?.items) ? t.items : [],
       }));
       try {
@@ -164,7 +196,7 @@ async function initSharedTopics(fbCfg) {
       } catch { /* ignore */ }
       const badge = $('gameTopicsCloudBadge');
       if (badge && topicsSync.mode === 'firebase') {
-        badge.textContent = `☁️ Kho dùng chung (${sharedCustomTopics.length} chủ đề riêng)`;
+        badge.textContent = `☁️ Kho dùng chung (${sharedCustomTopics.length} chủ đề)`;
       }
       if (state) {
         if (state.phase === 'floor' || state.phase === 'lobby') renderFloor(state);
@@ -268,14 +300,22 @@ function normalize(raw) {
     ? s.players.filter((p) => p && typeof p === 'object' && p.id)
     : [];
   const basePlayers = validPlayers.length >= 2 ? validPlayers : fallback.players;
-  s.players = basePlayers.slice(0, 6).map((p, idx) => ({
-    id: String(p.id || `p${idx + 1}`),
-    name: String(p.name || `Người chơi ${idx + 1}`),
-    avatar: String(p.avatar || '🦁'),
-    color: String(p.color || '#06b6d4'),
-    categoryId: String(p.categoryId || 'flags'),
-    durationSec: clampDurationSec(p.durationSec),
-  }));
+  const availCats = getCategories100();
+  s.players = basePlayers.slice(0, 6).map((p, idx) => {
+    const rawCatId = String(p.categoryId || '');
+    const catExists = rawCatId && availCats.some((c) => c.id === rawCatId);
+    const resolvedCatId = catExists
+      ? rawCatId
+      : (availCats.length ? availCats[idx % availCats.length].id : rawCatId);
+    return {
+      id: String(p.id || `p${idx + 1}`),
+      name: String(p.name || `Người chơi ${idx + 1}`),
+      avatar: String(p.avatar || '🦁'),
+      color: String(p.color || '#06b6d4'),
+      categoryId: resolvedCatId,
+      durationSec: clampDurationSec(p.durationSec),
+    };
+  });
 
   const validIds = new Set(s.players.map((p) => p.id));
   const cellTotal = Math.max(2, s.players.length);
@@ -475,59 +515,57 @@ function makeEvent(next, type) {
   return { id, type };
 }
 
-/** Lấy toàn bộ chủ đề (mặc định + `shared_topics` từ Firebase + dự phòng `localStorage`) và giữ tối đa MAX_TOPIC_IMAGES (100) ảnh. */
+/** Chỉ lấy kho chủ đề thực tế của người dùng từ Firebase `shared_topics` / `localStorage` (loại bỏ hoàn toàn chủ đề mẫu emoji cũ). */
 function getCategories100() {
-  const cats = safeAllCategories();
+  const cats = [];
   try {
+    const deletedIds = getDeletedTopicIds();
     const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
     const sourceList = Array.isArray(sharedCustomTopics)
       ? sharedCustomTopics
-      : (Array.isArray(localRaw) ? localRaw : []);
-    if (sourceList.length) {
-      const byId = new Map(sourceList.filter(Boolean).map((t) => [t.id, t]));
-      const existingIds = new Set(cats.map((c) => c.id));
-      sourceList.forEach((t) => {
-        if (t && t.id && !existingIds.has(t.id)) {
-          existingIds.add(t.id);
-          cats.push({
-            ...t,
-            id: String(t.id),
-            name: String(t.name || 'Chủ đề riêng'),
-            icon: String(t.icon || '🖼️'),
-            coverUrl: normalizeCoverUrl(t.coverUrl) || normalizeImageUrl(t.coverUrl) || '',
-            custom: true,
-            items: Array.isArray(t.items) ? t.items.filter(Boolean) : [],
-          });
-        }
-      });
-      cats.forEach((c) => {
-        if (!Array.isArray(c.items)) c.items = [];
-        const src = byId.get(c.id);
-        if (src) {
-          if (Array.isArray(src.items) && src.items.length > c.items.length) {
-            c.items = src.items.filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
-          }
-          if (src.coverUrl) {
-            c.coverUrl = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
-          }
-        }
-        c.coverUrl = normalizeCoverUrl(c.coverUrl) || normalizeImageUrl(c.coverUrl) || '';
-        c.items = c.items.map((it) => {
+      : (Array.isArray(localRaw) ? localRaw : safeAllCategories());
+
+    let hadLegacyInLocal = false;
+    const seen = new Set();
+    (sourceList || []).forEach((t) => {
+      if (!t || typeof t !== 'object' || !t.id) return;
+      if (isLegacyEmojiSampleTopic(t) || deletedIds.has(String(t.id))) {
+        hadLegacyInLocal = true;
+        return;
+      }
+      const id = String(t.id);
+      if (seen.has(id)) return;
+      seen.add(id);
+      const items = (Array.isArray(t.items) ? t.items : [])
+        .slice(0, MAX_TOPIC_IMAGES)
+        .map((it) => {
           if (!it || typeof it !== 'object') return null;
           if (it.type === 'img' && it.src) {
             return { ...it, src: normalizeImageUrl(it.src) || it.src };
           }
           return it;
-        }).filter(Boolean);
+        })
+        .filter(Boolean);
+      cats.push({
+        ...t,
+        id,
+        name: String(t.name || 'Chủ đề'),
+        icon: '',
+        coverUrl: normalizeCoverUrl(t.coverUrl) || normalizeImageUrl(t.coverUrl) || '',
+        custom: true,
+        items,
       });
+    });
+
+    if (hadLegacyInLocal && !Array.isArray(sharedCustomTopics) && Array.isArray(localRaw)) {
+      try {
+        localStorage.setItem(TOPICS_KEY, JSON.stringify(cats));
+      } catch { /* ignore */ }
     }
   } catch (err) {
-    console.warn('Lỗi đọc danh sách chủ đề mở rộng:', err);
+    console.warn('Lỗi đọc danh sách chủ đề người dùng:', err);
   }
-  return cats.map((c) => ({
-    ...c,
-    items: Array.isArray(c.items) ? c.items : [],
-  }));
+  return cats;
 }
 
 /** Gán thông tin chủ đề, danh sách preload ảnh và âm thanh chiến thắng vào setup */
@@ -1114,7 +1152,9 @@ function renderTopicModalGrid(preloadedCats = null) {
 
   grid.innerHTML = '';
   if (!indexed.length) {
-    grid.innerHTML = '<div class="topic-modal-empty">Không tìm thấy chủ đề phù hợp với từ khóa.</div>';
+    grid.innerHTML = cats.length
+      ? '<div class="topic-modal-empty">Không tìm thấy chủ đề phù hợp với từ khóa.</div>'
+      : '<div class="topic-modal-empty">Chưa có chủ đề nào trong kho dùng chung. Hãy vào mục “Chủ đề” để tạo mới.</div>';
     return;
   }
 

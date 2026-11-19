@@ -3,7 +3,7 @@
  * Đồng hồ dùng mô hình: remA/remB (ms còn lại tại thời điểm tStamp) + running/turn,
  * nhờ vậy mọi màn hình tự tính đồng hồ mượt mà từ cùng một trạng thái.
  */
-import { allCategories, getCategory, clampVolume01 } from './topics.js';
+import { TOPICS_KEY, clampVolume01 } from './topics.js';
 
 export const DUEL_MS = 60000;
 export const DEFAULT_DURATION_SEC = 60;
@@ -12,94 +12,84 @@ export const COUNTDOWN_MS = 10000;
 export const PRELOAD_WINDOW = 3; // Chỉ preload tối đa 3 ảnh tiếp theo (currentIndex + 1, + 2, + 3)
 export const PRELOAD_TIMEOUT_MS = 5000;
 export const PRELOAD_RETRY_COUNT = 1;
-const FALLBACK_CATEGORIES = [
-  {
-    id: 'flags', name: 'Quốc kỳ', icon: '🏳️', shuffle: true,
-    items: [
-      { type: 'emoji', emoji: '🇻🇳', answer: 'Việt Nam', aliases: ['Viet Nam'] },
-      { type: 'emoji', emoji: '🇯🇵', answer: 'Nhật Bản', aliases: ['Nhat Ban', 'Japan'] },
-      { type: 'emoji', emoji: '🇰🇷', answer: 'Hàn Quốc', aliases: ['Han Quoc', 'Korea'] },
-      { type: 'emoji', emoji: '🇺🇸', answer: 'Hoa Kỳ', aliases: ['Mỹ', 'My', 'USA'] },
-      { type: 'emoji', emoji: '🇫🇷', answer: 'Pháp', aliases: ['Phap', 'France'] },
-      { type: 'emoji', emoji: '🇬🇧', answer: 'Vương quốc Anh', aliases: ['Anh', 'UK'] },
-    ],
-  },
-  {
-    id: 'animals', name: 'Động vật', icon: '🐾', shuffle: true,
-    items: [
-      { type: 'emoji', emoji: '🦁', answer: 'Sư tử', aliases: ['Su tu'] },
-      { type: 'emoji', emoji: '🐯', answer: 'Hổ', aliases: ['Ho', 'Cọp'] },
-      { type: 'emoji', emoji: '🐘', answer: 'Voi', aliases: [] },
-      { type: 'emoji', emoji: '🦒', answer: 'Hươu cao cổ', aliases: ['Huou cao co'] },
-      { type: 'emoji', emoji: '🐼', answer: 'Gấu trúc', aliases: ['Gau truc'] },
-      { type: 'emoji', emoji: '🐬', answer: 'Cá heo', aliases: ['Ca heo'] },
-    ],
-  },
-  {
-    id: 'food', name: 'Ẩm thực', icon: '🍜', shuffle: true,
-    items: [
-      { type: 'emoji', emoji: '🍕', answer: 'Pizza', aliases: [] },
-      { type: 'emoji', emoji: '🍣', answer: 'Sushi', aliases: [] },
-      { type: 'emoji', emoji: '🍔', answer: 'Hamburger', aliases: ['Burger'] },
-      { type: 'emoji', emoji: '🍜', answer: 'Mì ramen', aliases: ['Mì', 'Phở'] },
-    ],
-  },
-  {
-    id: 'vehicles', name: 'Phương tiện', icon: '🚀', shuffle: true,
-    items: [
-      { type: 'emoji', emoji: '🚗', answer: 'Ô tô', aliases: ['Xe hơi', 'O to'] },
-      { type: 'emoji', emoji: '✈️', answer: 'Máy bay', aliases: ['May bay'] },
-      { type: 'emoji', emoji: '🚂', answer: 'Tàu hỏa', aliases: ['Tau hoa'] },
-      { type: 'emoji', emoji: '🚁', answer: 'Trực thăng', aliases: ['Truc thang'] },
-    ],
-  },
-  {
-    id: 'sports', name: 'Thể thao', icon: '⚽', shuffle: true,
-    items: [
-      { type: 'emoji', emoji: '⚽', answer: 'Bóng đá', aliases: ['Bong da'] },
-      { type: 'emoji', emoji: '🏀', answer: 'Bóng rổ', aliases: ['Bong ro'] },
-      { type: 'emoji', emoji: '🎾', answer: 'Quần vợt', aliases: ['Tennis'] },
-      { type: 'emoji', emoji: '🏸', answer: 'Cầu lông', aliases: ['Cau long'] },
-    ],
-  },
-  {
-    id: 'nature', name: 'Thiên nhiên', icon: '🌿', shuffle: true,
-    items: [
-      { type: 'emoji', emoji: '🌋', answer: 'Núi lửa', aliases: ['Nui lua'] },
-      { type: 'emoji', emoji: '🌈', answer: 'Cầu vồng', aliases: ['Cau vong'] },
-      { type: 'emoji', emoji: '🌻', answer: 'Hoa hướng dương', aliases: ['Huong duong'] },
-      { type: 'emoji', emoji: '❄️', answer: 'Bông tuyết', aliases: ['Tuyết'] },
-    ],
-  },
-];
 
+const LEGACY_EMOJI_IDS = new Set([
+  'animals', 'food', 'vehicles', 'objects', 'sports', 'nature', 'flags',
+  'weather', 'body', 'music', 'jobs', 'places',
+]);
+const LEGACY_EMOJI_NAMES = new Set([
+  'động vật', 'ẩm thực', 'phương tiện', 'đồ vật', 'thể thao', 'thiên nhiên',
+  'động vật (bản sao)', 'ẩm thực (bản sao)', 'phương tiện (bản sao)',
+  'đồ vật (bản sao)', 'thể thao (bản sao)', 'thiên nhiên (bản sao)',
+]);
+
+/** Kiểm tra chủ đề có chứa ảnh thật (coverUrl hoặc ít nhất 1 câu hỏi chứa URL ảnh http/https/data:image). */
+export function hasRealImageTopic(topic) {
+  if (!topic || typeof topic !== 'object') return false;
+  if (typeof topic.coverUrl === 'string' && /^(?:https?:\/\/|data:image\/)/i.test(topic.coverUrl.trim())) {
+    return true;
+  }
+  if (Array.isArray(topic.items)) {
+    return topic.items.some((it) => (
+      it
+      && typeof it === 'object'
+      && it.type !== 'emoji'
+      && typeof it.src === 'string'
+      && /^(?:https?:\/\/|data:image\/)/i.test(it.src.trim())
+    ));
+  }
+  return false;
+}
+
+/**
+ * Nhận diện các chủ đề mẫu cũ chỉ dùng emoji (không có ảnh thật):
+ *  - Nếu chủ đề có bất kỳ ảnh thật nào (`hasRealImageTopic`), LUÔN giữ nguyên (trả về false).
+ *  - Chỉ loại bỏ các chủ đề mẫu cũ không có ảnh (ID/tên mẫu cũ hoặc toàn bộ câu hỏi chỉ là emoji).
+ */
+export function isLegacyEmojiSampleTopic(topic) {
+  if (!topic || typeof topic !== 'object') return true;
+  if (hasRealImageTopic(topic)) return false;
+  const idLower = String(topic.id || '').trim().toLowerCase();
+  const nameLower = String(topic.name || '').trim().toLowerCase();
+  if (LEGACY_EMOJI_IDS.has(idLower) || LEGACY_EMOJI_NAMES.has(nameLower)) {
+    return true;
+  }
+  if (Array.isArray(topic.items) && topic.items.length > 0) {
+    const allEmojiOrInvalid = topic.items.every((it) => (
+      !it || it.type === 'emoji' || !it.src || !/^(?:https?:\/\/|data:image\/)/i.test(String(it.src).trim())
+    ));
+    if (allEmojiOrInvalid) return true;
+  }
+  return false;
+}
+
+/** Chỉ đọc danh sách chủ đề thực tế của người dùng từ bộ nhớ đệm (không gộp chủ đề mẫu emoji mặc định). */
 export function safeAllCategories() {
   try {
-    const raw = allCategories();
-    if (Array.isArray(raw) && raw.length) {
-      return raw.filter(Boolean).map((c) => ({
-        ...c,
-        id: String(c.id || 'flags'),
-        name: String(c.name || 'Chủ đề'),
-        icon: String(c.icon || '🖼️'),
-        items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
-      }));
+    if (typeof localStorage === 'undefined') return [];
+    const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || '[]');
+    if (Array.isArray(raw)) {
+      return raw
+        .filter((c) => c && typeof c === 'object' && c.id && !isLegacyEmojiSampleTopic(c))
+        .map((c) => ({
+          ...c,
+          id: String(c.id),
+          name: String(c.name || 'Chủ đề'),
+          icon: '',
+          coverUrl: typeof c.coverUrl === 'string' ? c.coverUrl.trim() : '',
+          custom: true,
+          items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
+        }));
     }
   } catch (err) {
-    console.warn('Fallback danh sách chủ đề mặc định do lỗi đọc topics:', err);
+    console.warn('Lỗi đọc danh sách chủ đề người dùng:', err);
   }
-  return FALLBACK_CATEGORIES.map((c) => ({ ...c, items: [...c.items] }));
+  return [];
 }
 
 export function safeGetCategory(id) {
-  try {
-    const c = getCategory(id);
-    if (c && typeof c === 'object') {
-      return { ...c, items: Array.isArray(c.items) ? c.items.filter(Boolean) : [] };
-    }
-  } catch { /* ignore */ }
   const list = safeAllCategories();
-  return list.find((c) => c.id === id) || list[0];
+  return list.find((c) => c.id === id) || list[0] || null;
 }
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 6;
@@ -120,12 +110,12 @@ export const FALLBACK_IMAGE_DATA_URL = `data:image/svg+xml;charset=utf-8,${encod
 )}`;
 
 const DEFAULT_PLAYERS = [
-  { id: 'p1', name: 'Minh', avatar: '🦁', color: '#06b6d4', categoryId: 'flags', durationSec: 60 },
-  { id: 'p2', name: 'Lan', avatar: '🐯', color: '#eab308', categoryId: 'animals', durationSec: 60 },
-  { id: 'p3', name: 'Hùng', avatar: '🦊', color: '#a855f7', categoryId: 'food', durationSec: 60 },
-  { id: 'p4', name: 'Mai', avatar: '🐼', color: '#22c55e', categoryId: 'vehicles', durationSec: 60 },
-  { id: 'p5', name: 'Tuấn', avatar: '🦄', color: '#ec4899', categoryId: 'sports', durationSec: 60 },
-  { id: 'p6', name: 'Vy', avatar: '🐲', color: '#f97316', categoryId: 'nature', durationSec: 60 },
+  { id: 'p1', name: 'Minh', avatar: '🦁', color: '#06b6d4', categoryId: '', durationSec: 60 },
+  { id: 'p2', name: 'Lan', avatar: '🐯', color: '#eab308', categoryId: '', durationSec: 60 },
+  { id: 'p3', name: 'Hùng', avatar: '🦊', color: '#a855f7', categoryId: '', durationSec: 60 },
+  { id: 'p4', name: 'Mai', avatar: '🐼', color: '#22c55e', categoryId: '', durationSec: 60 },
+  { id: 'p5', name: 'Tuấn', avatar: '🦄', color: '#ec4899', categoryId: '', durationSec: 60 },
+  { id: 'p6', name: 'Vy', avatar: '🐲', color: '#f97316', categoryId: '', durationSec: 60 },
 ];
 
 export function clampDurationSec(sec) {
@@ -156,7 +146,11 @@ function dealFloor(players) {
 
 export function createInitialState(pin, playerCount = DEFAULT_PLAYER_COUNT) {
   const n = clampPlayerCount(playerCount);
-  const players = DEFAULT_PLAYERS.slice(0, n).map((p) => ({ ...p }));
+  const availCats = safeAllCategories();
+  const players = DEFAULT_PLAYERS.slice(0, n).map((p, idx) => ({
+    ...p,
+    categoryId: availCats.length ? availCats[idx % availCats.length].id : '',
+  }));
   return {
     pin: pin || '',
     phase: 'floor', // floor | ready | countdown | playing | paused | finished
@@ -503,13 +497,15 @@ export function reduce(s, type, arg = {}, now) {
       if (s.setup.chalId === owner) delete s.setup.chalId;
       const pOwner = playerById(s, owner);
       const cat = safeGetCategory(pOwner ? pOwner.categoryId : '');
-      s.setup.catId = cat.id;
-      s.setup.preloadUrls = extractImageUrls(cat.items, null, 0, PRELOAD_WINDOW);
-      s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
-      s.setup.victoryVoiceData = cat.victoryVoiceData || '';
-      s.setup.victoryVoiceName = cat.victoryVoiceName || '';
-      s.setup.localAudioVolume = clampVolume01(cat.localAudioVolume, 1.0);
-      s.setup.onlineAudioVolume = clampVolume01(cat.onlineAudioVolume, 1.0);
+      if (cat) {
+        s.setup.catId = cat.id;
+        s.setup.preloadUrls = extractImageUrls(cat.items, null, 0, PRELOAD_WINDOW);
+        s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
+        s.setup.victoryVoiceData = cat.victoryVoiceData || '';
+        s.setup.victoryVoiceName = cat.victoryVoiceName || '';
+        s.setup.localAudioVolume = clampVolume01(cat.localAudioVolume, 1.0);
+        s.setup.onlineAudioVolume = clampVolume01(cat.onlineAudioVolume, 1.0);
+      }
       return 'click';
     }
     case 'setChallenger':
@@ -518,8 +514,8 @@ export function reduce(s, type, arg = {}, now) {
       s.setup = { ...s.setup, chalId: arg.id };
       return 'click';
     case 'setCategory': {
-      if (s.phase !== 'floor' || !safeAllCategories().some((c) => c.id === arg.id)) return false;
-      const cat = safeGetCategory(arg.id);
+      const cat = arg.cat || safeGetCategory(arg.id);
+      if (s.phase !== 'floor' || !cat) return false;
       s.setup = {
         ...s.setup,
         catId: arg.id,
@@ -716,13 +712,15 @@ export function reduce(s, type, arg = {}, now) {
       const n = clampPlayerCount(arg.count);
       if (n === s.players.length) return false;
       const keep = s.players.slice(0, n);
+      const availCats = safeAllCategories();
       for (let i = keep.length; i < n; i++) {
         const base = DEFAULT_PLAYERS[i];
-        const usedCats = new Set(keep.map((p) => p.categoryId));
+        const usedCats = new Set(keep.map((p) => p.categoryId).filter(Boolean));
+        const unusedCat = availCats.find((c) => !usedCats.has(c.id)) || availCats[0] || null;
         keep.push({
           ...base,
           durationSec: clampDurationSec(s.players[0]?.durationSec ?? base.durationSec),
-          categoryId: usedCats.has(base.categoryId) ? s.players[0].categoryId : base.categoryId,
+          categoryId: unusedCat ? unusedCat.id : (s.players[0]?.categoryId || ''),
         });
       }
       s.players = keep;

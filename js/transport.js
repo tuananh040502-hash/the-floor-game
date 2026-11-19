@@ -9,8 +9,37 @@
 const FB_VERSION = '10.12.2';
 const FB_BASE = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
 export const SHARED_TOPICS_PATH = 'shared_topics';
+export const DELETED_TOPICS_KEY = 'deleted_topic_ids';
 const MAX_CLOUD_IMAGES = 100;
 const MAX_INLINE_STR_LEN = 2048;
+
+export function normalizeScriptUrl(url) {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
+
+export function normalizeFolderId(id) {
+  return String(id || '').trim();
+}
+
+export function getDeletedTopicIds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DELETED_TOPICS_KEY) || '[]');
+    if (Array.isArray(raw)) {
+      return new Set(raw.map((x) => String(x || '').trim()).filter(Boolean));
+    }
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+export function markTopicDeleted(topicId) {
+  const cleanId = String(topicId || '').trim();
+  if (!cleanId) return;
+  try {
+    const set = getDeletedTopicIds();
+    set.add(cleanId);
+    localStorage.setItem(DELETED_TOPICS_KEY, JSON.stringify([...set]));
+  } catch { /* ignore */ }
+}
 
 export async function createTransport(room, config) {
   if (config && config.databaseURL) {
@@ -29,7 +58,7 @@ export async function createTransport(room, config) {
 /**
  * Trích xuất Google Drive File ID từ URL hoặc chuỗi ID.
  */
-function extractDriveId(raw) {
+export function extractDriveId(raw) {
   if (typeof raw !== 'string') return '';
   const s = raw.trim();
   if (!s || /^data:/i.test(s)) return '';
@@ -39,6 +68,33 @@ function extractDriveId(raw) {
   if (byQuery && byQuery[1]) return byQuery[1];
   if (/^[a-zA-Z0-9_-]{25,}$/.test(s)) return s;
   return '';
+}
+
+/**
+ * Trích xuất toàn bộ danh sách Google Drive File ID duy nhất từ coverUrl, items và fileIds của chủ đề.
+ */
+export function extractTopicDriveFileIds(topic) {
+  if (!topic || typeof topic !== 'object') return [];
+  const ids = new Set();
+  if (Array.isArray(topic.fileIds)) {
+    topic.fileIds.forEach((fid) => {
+      const clean = extractDriveId(String(fid || ''));
+      if (clean) ids.add(clean);
+    });
+  }
+  if (typeof topic.coverUrl === 'string' && topic.coverUrl.trim()) {
+    const coverId = extractDriveId(topic.coverUrl);
+    if (coverId) ids.add(coverId);
+  }
+  if (Array.isArray(topic.items)) {
+    topic.items.forEach((it) => {
+      if (it && typeof it === 'object' && it.type !== 'emoji' && typeof it.src === 'string') {
+        const fid = extractDriveId(it.src);
+        if (fid) ids.add(fid);
+      }
+    });
+  }
+  return [...ids];
 }
 
 /**
@@ -129,6 +185,10 @@ export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
   }
 
   const coverUrl = normalizeCoverUrl(raw.coverUrl);
+  const ownerScriptUrl = normalizeScriptUrl(raw.ownerScriptUrl).slice(0, MAX_INLINE_STR_LEN);
+  const ownerFolderId = normalizeFolderId(raw.ownerFolderId).slice(0, 128);
+  const driveFolderId = normalizeFolderId(raw.driveFolderId).slice(0, 128);
+  const fileIds = extractTopicDriveFileIds({ coverUrl, items, fileIds: raw.fileIds });
 
   const audioUrl = typeof raw.victoryAudioUrl === 'string' && !/^data:/i.test(raw.victoryAudioUrl) && raw.victoryAudioUrl.length <= MAX_INLINE_STR_LEN
     ? raw.victoryAudioUrl.trim()
@@ -143,8 +203,12 @@ export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
   return {
     id,
     name,
-    icon: String(raw.icon || '🖼️').trim().slice(0, 8) || '🖼️',
+    icon: '',
     coverUrl,
+    ownerScriptUrl,
+    ownerFolderId,
+    driveFolderId,
+    fileIds,
     shuffle: !!raw.shuffle,
     victoryAudioUrl: audioUrl,
     victoryVoiceName: String(raw.victoryVoiceName || '').trim().slice(0, 80),
