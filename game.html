@@ -11,7 +11,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=xmas5" />
+  <link rel="stylesheet" href="css/style.css?v=xmas7" />
 </head>
 <body data-page="game">
   <div id="seasonalBgLayer" data-slot="bg2" aria-hidden="true"></div>
@@ -66,6 +66,10 @@
           cmsEl.classList.toggle('hidden', !isHost);
           cmsEl.href = 'topics.html?room=' + encodeURIComponent(rm);
         }
+        if (document.body) {
+          document.body.classList.toggle('host', isHost);
+          document.body.classList.toggle('is-viewer', !isHost);
+        }
         var gate = document.getElementById('soundGate');
         if (gate) {
           gate.classList.add('hidden');
@@ -100,14 +104,20 @@
         <aside class="floor-col-side min-w-0">
           <!-- Chuẩn bị trận & Thiết lập (Host / Phòng chờ) -->
           <div id="setupPanel" class="setup-stack">
-            <!-- 1. Thẻ Cặp đấu hiện tại -->
+            <!-- 1. Thẻ Cặp đấu hiện tại / Chế độ thi đấu -->
             <div class="panel setup-card">
               <div class="setup-card-title-block">
                 <div class="eyebrow">Cặp đấu hiện tại</div>
-                <p class="t-3 text-xs">Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.</p>
+                <p id="setupModeSubtitle" class="t-3 text-xs">Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.</p>
               </div>
 
-              <!-- Lưới 3 cột đối xứng: Thách đấu | ⇄ | Bị thách -->
+              <!-- Bộ chuyển chế độ: Đấu 1v1 (Cổ điển) | Xoay vòng (2–6 người) -->
+              <div id="duelModeSeg" class="seg duel-mode-seg" role="group" aria-label="Chế độ thi đấu">
+                <button type="button" data-duel-mode="1v1" class="active">⚔ Đấu 1v1</button>
+                <button type="button" data-duel-mode="multi">🔄 Xoay vòng (2–6)</button>
+              </div>
+
+              <!-- Lưới 3 cột đối xứng: Thách đấu | ⇄ | Bị thách (chế độ 1v1) -->
               <div id="pairCard" class="pair-grid">
                 <div class="pair-slot pair-slot-chal">
                   <div class="eyebrow pair-slot-role pair-side-chal">⚔ THÁCH ĐẤU</div>
@@ -132,6 +142,28 @@
                     <span class="pair-time-unit">giây</span>
                   </div>
                 </div>
+              </div>
+
+              <!-- Khung chọn luật & người chơi cho chế độ Xoay vòng (2–6 người) -->
+              <div id="multiCard" class="multi-setup-card hidden">
+                <div class="multi-rule-block">
+                  <div id="multiRuleSeg" class="seg multi-rule-seg" role="group" aria-label="Luật kết thúc xoay vòng">
+                    <button type="button" data-multi-rule="first_out" class="active">⚡ 1 người thua là hết</button>
+                    <button type="button" data-multi-rule="last_standing">🏆 Loại dần đến cuối</button>
+                  </div>
+                  <p id="multiRuleHint" class="multi-rule-hint">Ai hết giờ đầu tiên sẽ thua, những người còn lại cùng thắng ngay lập tức.</p>
+                </div>
+                <div class="multi-setup-top">
+                  <span id="multiCountLabel" class="multi-count-label">Đã chọn 0/0 người</span>
+                  <div class="multi-setup-tools">
+                    <button id="btnMultiSelectAll" type="button" class="btn btn-ghost btn-sm setup-mini-btn">Chọn tất cả</button>
+                    <label class="multi-time-box" title="Thời gian chung cho mỗi người tham gia (giây)">
+                      <input id="multiSecInp" type="number" min="10" max="600" step="5" value="60" class="input pair-time-inp font-num" />
+                      <span class="pair-time-unit">giây</span>
+                    </label>
+                  </div>
+                </div>
+                <div id="multiPlayerChips" class="multi-chip-grid"></div>
               </div>
 
               <div class="setup-actions-stack">
@@ -200,6 +232,7 @@
           <div class="flex items-center justify-center gap-2.5 flex-wrap">
             <span id="turnBanner" class="turn-banner">—</span>
             <span id="catBadge" class="chip"></span>
+            <span id="multiRuleBadge" class="chip multi-rule-badge hidden"></span>
           </div>
           <!-- Đáp án nhắc bài cho Host (luôn hiển thị rõ nét) -->
           <div id="answerWrap" class="hidden">
@@ -265,9 +298,12 @@
           </div>
         </div>
 
-        <!-- Tầng 3: Đồng hồ 2 người chơi & Nút bấm Đúng / Bỏ qua của Host (flex-shrink: 0, không đè nhau) -->
-        <div class="arena-bottom-bar">
-          <!-- Thí sinh A (Compact HUD bên trái) -->
+        <!-- Tầng 3: Đồng hồ người chơi (1v1 hoặc Xoay vòng 2–6) & Nút bấm Đúng / Bỏ qua của Host -->
+        <div id="arenaBottomBar" class="arena-bottom-bar">
+          <!-- Thanh thẻ xoay vòng cho tối đa 6 người chơi -->
+          <div id="multiHudBar" class="multi-hud-bar hidden" aria-label="Bảng đồng hồ xoay vòng"></div>
+
+          <!-- Thí sinh A (Compact HUD bên trái - 1v1) -->
           <div id="cardA" class="side-card hud-card hud-left" style="--sc: var(--a)">
             <div class="hud-card-main">
               <div id="avatarA" class="avatar"></div>
@@ -377,6 +413,6 @@
   </div>
 
   <script type="module" src="js/theme.js?v=perf16"></script>
-  <script type="module" src="js/app.js?v=hud1"></script>
+  <script type="module" src="js/app.js?v=multi2"></script>
 </body>
 </html>

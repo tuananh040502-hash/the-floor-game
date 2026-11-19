@@ -9,7 +9,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=xmas4" />
+  <link rel="stylesheet" href="css/style.css?v=xmas6" />
 </head>
 <body data-page="topics">
   <div id="seasonalBgLayer" data-slot="bg2" aria-hidden="true"></div>
@@ -229,7 +229,6 @@
                 <input id="tName" class="input" style="font-size:17px;font-weight:600" maxlength="60" placeholder="Nhập tên chủ đề…" />
               </label>
               <div class="flex items-center gap-4 flex-wrap">
-                <label class="flex items-center gap-2 text-sm t-2 font-medium cursor-pointer"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
                 <span class="font-display text-2xl font-num"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">100</span></span></span>
                 <button id="btnDeleteTopic" class="btn btn-pass btn-sm">Xóa chủ đề</button>
               </div>
@@ -271,86 +270,19 @@
                 </div>
               </div>
             </div>
-
-            <div class="divider"></div>
-
-            <div class="space-y-3">
-              <div class="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <div class="eyebrow">🎧 Hệ thống Âm thanh Chiến thắng Kép</div>
-                  <p class="t-3 mt-0.5 text-[12px]">Tự động nạp sẵn bộ đệm (0ms) ở màn đếm ngược. Tùy chỉnh độc lập âm lượng từng nguồn âm thanh.</p>
-                </div>
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span id="dualAudioModeBadge" class="chip">Mặc định (Fanfare)</span>
-                  <button id="btnTestVictoryAudio" type="button" class="btn btn-gold btn-sm">▶ Nghe thử phối âm</button>
-                  <button id="btnStopVictoryAudio" type="button" class="btn btn-ghost btn-sm hidden">⏹ Dừng</button>
-                </div>
-              </div>
-
-              <div class="grid gap-3 lg:grid-cols-2">
-                <!-- Kênh 1: File âm thanh từ máy -->
-                <div class="surface-sub rounded-xl p-4 space-y-3">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="eyebrow">🎙️ 1. File ghi âm / SFX từ máy</span>
-                    <span id="voiceAudioBadge" class="chip">Chưa có file</span>
-                  </div>
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <button id="btnPickVoiceAudio" type="button" class="btn btn-ok btn-sm">⬆ Chọn file âm thanh…</button>
-                    <input id="fileVoiceAudio" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.aac" class="hidden" />
-                    <button id="btnTestVoiceOnly" type="button" class="btn btn-ghost btn-sm hidden">▶ Nghe thử file</button>
-                    <button id="btnClearVoiceAudio" type="button" class="btn btn-pass btn-sm hidden" title="Xóa file âm thanh đã tải">✕ Xóa</button>
-                  </div>
-                  <div class="vol-slider-box">
-                    <div class="flex items-center justify-between text-xs font-medium mb-1.5">
-                      <span class="t-2">Âm lượng âm thanh từ máy</span>
-                      <span id="tLocalAudioVolLabel" class="font-num t-accent text-sm">100%</span>
-                    </div>
-                    <input id="tLocalAudioVol" type="range" min="0" max="100" step="1" value="100" class="vol-range" />
-                  </div>
-                </div>
-
-                <!-- Kênh 2: Link nhạc ngoài -->
-                <div class="surface-sub rounded-xl p-4 space-y-3">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="eyebrow">🎵 2. Link nhạc ngoài</span>
-                    <span id="victoryAudioBadge" class="chip">Không dùng</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input id="tVictoryAudio" class="input flex-1" placeholder="Dán link YouTube, SoundCloud, hoặc link .mp3 / .wav / Google Drive" />
-                    <button id="btnTestExternalOnly" type="button" class="btn btn-ghost btn-sm shrink-0">▶ Nghe thử</button>
-                  </div>
-                  <div class="vol-slider-box">
-                    <div class="flex items-center justify-between text-xs font-medium mb-1.5">
-                      <span class="t-2">Âm lượng nhạc ngoài</span>
-                      <span id="tOnlineAudioVolLabel" class="font-num t-gold text-sm">100%</span>
-                    </div>
-                    <input id="tOnlineAudioVol" type="range" min="0" max="100" step="1" value="100" class="vol-range vol-range-gold" />
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
 
-          <!-- Thêm ảnh -->
-          <div id="addImagesSection" class="grid gap-4 xl:grid-cols-2">
+          <!-- Thêm ảnh trực tiếp lên Google Drive -->
+          <div id="addImagesSection" class="space-y-4">
             <div id="dropzone" class="dropzone p-6 text-center space-y-3 flex flex-col items-center justify-center">
               <div class="text-4xl">☁️</div>
               <div class="font-display text-xl t-1">Kéo thả ảnh vào đây</div>
-              <div class="t-2 text-sm">Tối đa 100 ảnh · tự động tải lên Google Drive của bạn.</div>
+              <div class="t-2 text-sm">Tối đa 100 ảnh · tự động tải trực tiếp từ máy lên Google Drive của bạn.</div>
               <button id="btnPick" class="btn btn-ok btn-sm">Chọn ảnh…</button>
               <input id="filePick" type="file" accept="image/*" multiple class="hidden" />
               <div id="progressWrap" class="hidden text-left space-y-2 pt-1 w-full">
                 <div id="progressText" class="t-2 text-xs font-semibold"></div>
                 <div class="progress"><div id="progressBar" class="progress-fill"></div></div>
-              </div>
-            </div>
-
-            <div class="group group-pad space-y-3">
-              <div class="eyebrow">Dán link ảnh</div>
-              <textarea id="linkArea" rows="4" class="input" placeholder="Mỗi dòng một ảnh, có thể kèm đáp án:&#10;https://example.com/messi.jpg | Lionel Messi&#10;https://drive.google.com/file/d/ID/view | Ronaldo"></textarea>
-              <div class="flex items-center justify-between gap-3">
-                <span class="t-3 text-[12px]">Hỗ trợ link online và link chia sẻ Google Drive (“Bất kỳ ai có link”).</span>
-                <button id="btnAddLinks" class="btn btn-gold btn-sm shrink-0">Thêm</button>
               </div>
             </div>
           </div>
@@ -421,7 +353,7 @@
   <div id="toast" class="hidden"></div>
 
   <script type="module" src="js/theme.js?v=auth17"></script>
-  <script type="module" src="js/cms.js?v=bgm1"></script>
+  <script type="module" src="js/cms.js?v=cms2"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')

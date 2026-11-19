@@ -340,7 +340,7 @@ export function sanitizeTopic(t) {
     id: str(t.id, 40) || newId(),
     name,
     icon: str(t.icon, 8) || '🖼️',
-    shuffle: t.shuffle === true,
+    shuffle: true,
     victoryAudioUrl: normalizeVictoryAudioUrl(t.victoryAudioUrl),
     victoryVoiceName: voiceData ? (str(t.victoryVoiceName, 80) || 'Ghi âm chiến thắng') : str(t.victoryVoiceName, 80),
     victoryVoiceData: voiceData,

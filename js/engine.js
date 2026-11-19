@@ -136,6 +136,7 @@ export function safeAllCategories() {
         name: String(c.name || 'Chủ đề'),
         icon: '',
         coverUrl: typeof c.coverUrl === 'string' ? c.coverUrl.trim() : '',
+        shuffle: true,
         custom: true,
         items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
       }));
@@ -170,13 +171,31 @@ export const FALLBACK_IMAGE_DATA_URL = `data:image/svg+xml;charset=utf-8,${encod
 )}`;
 
 const DEFAULT_PLAYERS = [
-  { id: 'p1', name: 'Minh', avatar: '🦁', color: '#06b6d4', categoryId: '', durationSec: 60 },
-  { id: 'p2', name: 'Lan', avatar: '🐯', color: '#eab308', categoryId: '', durationSec: 60 },
-  { id: 'p3', name: 'Hùng', avatar: '🦊', color: '#a855f7', categoryId: '', durationSec: 60 },
-  { id: 'p4', name: 'Mai', avatar: '🐼', color: '#22c55e', categoryId: '', durationSec: 60 },
-  { id: 'p5', name: 'Tuấn', avatar: '🦄', color: '#ec4899', categoryId: '', durationSec: 60 },
-  { id: 'p6', name: 'Vy', avatar: '🐲', color: '#f97316', categoryId: '', durationSec: 60 },
+  { id: 'p1', name: '', avatar: '🦁', color: '#06b6d4', categoryId: '', durationSec: 60 },
+  { id: 'p2', name: '', avatar: '🐯', color: '#eab308', categoryId: '', durationSec: 60 },
+  { id: 'p3', name: '', avatar: '🦊', color: '#a855f7', categoryId: '', durationSec: 60 },
+  { id: 'p4', name: '', avatar: '🐼', color: '#22c55e', categoryId: '', durationSec: 60 },
+  { id: 'p5', name: '', avatar: '🦄', color: '#ec4899', categoryId: '', durationSec: 60 },
+  { id: 'p6', name: '', avatar: '🐲', color: '#f97316', categoryId: '', durationSec: 60 },
 ];
+
+export function playerDisplayName(stateOrPlayers, playerOrId, fallbackIdx = null) {
+  const list = Array.isArray(stateOrPlayers)
+    ? stateOrPlayers
+    : (stateOrPlayers && Array.isArray(stateOrPlayers.players) ? stateOrPlayers.players : []);
+  let p = null;
+  let idx = -1;
+  if (playerOrId && typeof playerOrId === 'object') {
+    p = playerOrId;
+    idx = list.findIndex((x) => x && x.id === p.id);
+  } else if (typeof playerOrId === 'string') {
+    idx = list.findIndex((x) => x && x.id === playerOrId);
+    if (idx >= 0) p = list[idx];
+  }
+  if (p && typeof p.name === 'string' && p.name.trim()) return p.name.trim();
+  const resolvedIdx = idx >= 0 ? idx : (Number.isFinite(fallbackIdx) ? fallbackIdx : 0);
+  return `Người chơi ${resolvedIdx + 1}`;
+}
 
 export function clampDurationSec(sec) {
   const v = Math.round(Number(sec));
@@ -481,12 +500,48 @@ export function countdownRemainingOf(duel, now) {
   return Math.max(0, duel.cdEnd - now);
 }
 
-/** Thời gian còn lại (ms) của một phía tại thời điểm `now` (giờ server). */
+/** Thời gian còn lại (ms) của một phía tại thời điểm `now` (giờ server) cho chế độ 1v1. */
 export function remainingOf(duel, side, now) {
   if (duel) activeDuelRef = duel;
+  if (!duel) return 0;
   const base = side === 'A' ? duel.remA : duel.remB;
   if (duel.running && duel.turn === side) return Math.max(0, base - (now - duel.tStamp));
   return Math.max(0, base);
+}
+
+/** Thời gian còn lại (ms) của thí sinh thứ `idx` trong chế độ xoay vòng (2–6 người). */
+export function remainingOfParticipant(duel, idx, now) {
+  if (duel) activeDuelRef = duel;
+  if (!duel || !Array.isArray(duel.participants)) return 0;
+  const p = duel.participants[idx];
+  if (!p || p.eliminated) return 0;
+  const base = Math.max(0, Number(p.remainingMs) || 0);
+  if (duel.running && duel.activeTurnIdx === idx) {
+    return Math.max(0, base - (now - duel.tStamp));
+  }
+  return base;
+}
+
+/** Thời gian nhỏ nhất đang chạy để điều tốc nhạc nền đếm ngược cho cả 2 chế độ. */
+export function minActiveRemaining(duel, now) {
+  if (!duel) return DUEL_MS;
+  if (duel.mode === 'multi' && Array.isArray(duel.participants) && duel.participants.length) {
+    return remainingOfParticipant(duel, duel.activeTurnIdx || 0, now);
+  }
+  return Math.min(remainingOf(duel, 'A', now), remainingOf(duel, 'B', now));
+}
+
+/** Tìm chỉ số người chơi kế tiếp theo chiều kim đồng hồ chưa bị loại trong chế độ xoay vòng. */
+export function findNextAliveParticipantIdx(participants, fromIdx) {
+  if (!Array.isArray(participants) || !participants.length) return -1;
+  const len = participants.length;
+  const start = Number.isInteger(fromIdx) ? fromIdx : 0;
+  for (let step = 1; step <= len; step++) {
+    const idx = (start + step) % len;
+    const p = participants[idx];
+    if (p && !p.eliminated && (Number(p.remainingMs) || 0) > 0) return idx;
+  }
+  return -1;
 }
 
 export function currentQuestion(duel, offset = 0) {
@@ -510,6 +565,124 @@ export function currentQuestion(duel, offset = 0) {
 function setRem(duel, side, ms) {
   if (side === 'A') duel.remA = ms;
   else duel.remB = ms;
+}
+
+function finishMulti(s, winnerId, loserId = '') {
+  const d = s.duel;
+  d.running = false;
+  d.passUntil = 0;
+  d.passRem = 0;
+  d.passAnswer = '';
+  d.loserSide = '';
+  d.winnerId = winnerId;
+  d.loserId = loserId;
+  const winPart = (d.participants || []).find((p) => p && p.id === winnerId) || playerById(s, winnerId);
+  d.winners = winPart ? [{
+    id: winPart.id,
+    name: typeof winPart.name === 'string' ? winPart.name.trim() : '',
+    color: winPart.color || '#06b6d4',
+    icon: winPart.icon || winPart.avatar || '🦁',
+    score: Number(winPart.score) || 0,
+  }] : [];
+  d.changed = [];
+  const participantIds = new Set((d.participants || []).map((p) => p && p.id).filter(Boolean));
+  s.floor = s.floor.map((owner, i) => {
+    if (owner !== winnerId && participantIds.has(owner)) {
+      d.changed.push(i);
+      return winnerId;
+    }
+    return owner;
+  });
+  s.championId = findChampion(s);
+  s.phase = 'finished';
+  preloadWindow(null);
+  return 'finish';
+}
+
+function finishMultiFirstOut(s, survivingList, loserId = '') {
+  const d = s.duel;
+  d.running = false;
+  d.passUntil = 0;
+  d.passRem = 0;
+  d.passAnswer = '';
+  d.loserSide = '';
+  d.loserId = loserId;
+
+  const winners = (Array.isArray(survivingList) ? survivingList : [])
+    .filter((p) => p && p.id)
+    .map((p) => ({
+      id: p.id,
+      name: typeof p.name === 'string' ? p.name.trim() : '',
+      color: p.color || '#06b6d4',
+      icon: p.icon || p.avatar || '🦁',
+      score: Number(p.score) || 0,
+    }));
+  d.winners = winners;
+
+  // Sắp xếp thứ tự nhận ô ưu tiên người có nhiều câu đúng nhất (hòa giữ thứ tự ban đầu)
+  const orderedWinners = winners
+    .map((w, idx) => ({ w, idx }))
+    .sort((a, b) => (b.w.score - a.w.score) || (a.idx - b.idx))
+    .map((x) => x.w);
+
+  d.winnerId = orderedWinners[0] ? orderedWinners[0].id : '';
+  d.changed = [];
+
+  if (loserId && orderedWinners.length) {
+    let distIdx = 0;
+    s.floor = s.floor.map((owner, i) => {
+      if (owner === loserId) {
+        const receiver = orderedWinners[distIdx % orderedWinners.length];
+        distIdx += 1;
+        d.changed.push(i);
+        return receiver.id;
+      }
+      return owner;
+    });
+  }
+
+  s.championId = findChampion(s);
+  s.phase = 'finished';
+  preloadWindow(null);
+  return 'finish';
+}
+
+function eliminateActiveMulti(s, now) {
+  const d = s.duel;
+  if (!d || !Array.isArray(d.participants) || !d.participants.length) return false;
+  const idx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+  const curP = d.participants[idx];
+  if (curP) {
+    curP.remainingMs = 0;
+    curP.eliminated = true;
+  }
+  d.passUntil = 0;
+  d.passRem = 0;
+  d.passAnswer = '';
+
+  const aliveIndices = [];
+  d.participants.forEach((p, i) => {
+    if (p && !p.eliminated && (Number(p.remainingMs) || 0) > 0) aliveIndices.push(i);
+  });
+
+  // Trường hợp 1: 1 người thua là kết thúc ngay -> tất cả người còn lại cùng thắng
+  if (d.multiRule === 'first_out') {
+    const survivors = aliveIndices.map((i) => d.participants[i]);
+    return finishMultiFirstOut(s, survivors.length ? survivors : (curP ? [curP] : []), curP ? curP.id : '');
+  }
+
+  // Trường hợp 2: Loại dần đến người cuối
+  if (aliveIndices.length <= 1) {
+    const winner = aliveIndices.length === 1 ? d.participants[aliveIndices[0]] : curP;
+    return finishMulti(s, winner ? winner.id : '', curP ? curP.id : '');
+  }
+
+  const nextIdx = findNextAliveParticipantIdx(d.participants, idx);
+  d.activeTurnIdx = nextIdx >= 0 ? nextIdx : aliveIndices[0];
+  d.tStamp = now;
+  d.qPos = (Number(d.qPos) || 0) + 1;
+  preloadWindow(d);
+  return 'buzz';
 }
 
 function finish(s, loserSide) {
@@ -588,22 +761,138 @@ export function reduce(s, type, arg = {}, now) {
       };
       return null;
     }
+    case 'setDuelMode': {
+      if (s.phase !== 'floor') return false;
+      const mode = arg.mode === 'multi' ? 'multi' : '1v1';
+      s.setup.mode = mode;
+      if (mode === 'multi') {
+        const aliveIds = alivePlayers(s).map((p) => p.id);
+        const existing = Array.isArray(s.setup.multiIds)
+          ? s.setup.multiIds.filter((id) => aliveIds.includes(id))
+          : [];
+        s.setup.multiIds = existing.length >= 2 ? existing : aliveIds;
+        if (!s.setup.multiDurationSec) {
+          s.setup.multiDurationSec = clampDurationSec(s.players[0]?.durationSec);
+        }
+        if (s.setup.multiRule !== 'last_standing' && s.setup.multiRule !== 'first_out') {
+          s.setup.multiRule = 'first_out';
+        }
+      }
+      return 'click';
+    }
+    case 'setMultiRule': {
+      if (s.phase !== 'floor') return false;
+      s.setup.multiRule = arg.rule === 'last_standing' ? 'last_standing' : 'first_out';
+      return 'click';
+    }
+    case 'toggleMultiPlayer': {
+      if (s.phase !== 'floor' || s.championId) return false;
+      const pid = arg.id;
+      if (!pid || !playerById(s, pid) || cellCount(s, pid) < 1) return false;
+      const aliveOrder = alivePlayers(s).map((p) => p.id);
+      const current = new Set(
+        Array.isArray(s.setup.multiIds)
+          ? s.setup.multiIds.filter((id) => aliveOrder.includes(id))
+          : aliveOrder,
+      );
+      if (current.has(pid)) current.delete(pid);
+      else current.add(pid);
+      s.setup.mode = 'multi';
+      s.setup.multiIds = aliveOrder.filter((id) => current.has(id));
+      return 'click';
+    }
+    case 'selectAllMultiPlayers': {
+      if (s.phase !== 'floor' || s.championId) return false;
+      s.setup.mode = 'multi';
+      s.setup.multiIds = alivePlayers(s).map((p) => p.id);
+      return 'click';
+    }
+    case 'setMultiDuration': {
+      if (s.phase !== 'floor') return false;
+      s.setup.multiDurationSec = clampDurationSec(arg.durationSec);
+      return null;
+    }
     case 'startDuel': {
+      const mode = s.setup.mode === 'multi' ? 'multi' : '1v1';
       const { chalId, defId, catId } = s.setup;
-      if (s.phase !== 'floor' || s.championId || !chalId || !defId || !catId) return false;
-      if (chalId === defId || cellCount(s, chalId) < 1 || cellCount(s, defId) < 1) return false;
+      if (s.phase !== 'floor' || s.championId || !catId) return false;
       const cat = arg.cat || safeGetCategory(catId);
       if (!cat || !cat.items || !cat.items.length) return false;
+      const compactItems = cat.items.map(compactDuelItem).filter(Boolean);
+      if (!compactItems.length) return false;
+      // Mọi chủ đề luôn luôn xáo trộn ngẫu nhiên câu hỏi khi vào trận
+      const order = compactItems.map((_, i) => i);
+      const queue = shuffle(order);
+
+      if (mode === 'multi') {
+        const aliveList = alivePlayers(s);
+        const aliveSet = new Set(aliveList.map((p) => p.id));
+        const selectedIds = Array.isArray(s.setup.multiIds) && s.setup.multiIds.length
+          ? s.setup.multiIds.filter((id) => aliveSet.has(id))
+          : aliveList.map((p) => p.id);
+        const uniqueIds = [...new Set(selectedIds)].slice(0, MAX_PLAYERS);
+        if (uniqueIds.length < 2) return false;
+        const durMs = clampDurationSec(s.setup.multiDurationSec ?? s.players[0]?.durationSec) * 1000;
+        const participants = uniqueIds.map((id) => {
+          const p = playerById(s, id);
+          return {
+            id: p.id,
+            name: typeof p.name === 'string' ? p.name.trim() : '',
+            color: p.color || '#06b6d4',
+            icon: p.avatar || '🦁',
+            totalMs: durMs,
+            remainingMs: durMs,
+            eliminated: false,
+            score: 0,
+          };
+        });
+        const multiRule = s.setup.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
+        s.duel = {
+          mode: 'multi',
+          multiRule,
+          winners: [],
+          items: compactItems,
+          catName: cat.name,
+          catIcon: cat.icon,
+          victoryAudioUrl: cat.victoryAudioUrl || '',
+          victoryVoiceData: '',
+          victoryVoiceName: cat.victoryVoiceName || s.setup.victoryVoiceName || '',
+          localAudioVolume: clampVolume01(cat.localAudioVolume ?? s.setup.localAudioVolume, 1.0),
+          onlineAudioVolume: clampVolume01(cat.onlineAudioVolume ?? s.setup.onlineAudioVolume, 1.0),
+          aId: participants[0].id,
+          bId: participants[1].id,
+          participants,
+          activeTurnIdx: 0,
+          categoryId: catId,
+          queue,
+          qPos: 0,
+          turn: 'A',
+          running: false,
+          tStamp: 0,
+          totalA: durMs,
+          totalB: durMs,
+          remA: durMs,
+          remB: durMs,
+          passUntil: 0,
+          passRem: 0,
+          passAnswer: '',
+          cdTotal: COUNTDOWN_MS,
+          cdEnd: 0,
+        };
+        s.setup.preloadUrls = extractImageUrls(compactItems, queue, 0, PRELOAD_WINDOW);
+        s.phase = 'ready';
+        preloadWindow(s.duel);
+        return 'ready';
+      }
+
+      if (!chalId || !defId) return false;
+      if (chalId === defId || cellCount(s, chalId) < 1 || cellCount(s, defId) < 1) return false;
       const pA = playerById(s, chalId);
       const pB = playerById(s, defId);
       const durA = clampDurationSec(pA?.durationSec) * 1000;
       const durB = clampDurationSec(pB?.durationSec) * 1000;
-      const compactItems = cat.items.map(compactDuelItem).filter(Boolean);
-      if (!compactItems.length) return false;
-      // Chụp lại bộ câu hỏi gọn gàng vào trận (không đính kèm chuỗi Base64 victoryVoiceData để tránh nghẽn Firebase).
-      const order = compactItems.map((_, i) => i);
-      const queue = cat.shuffle === false ? order : shuffle(order);
       s.duel = {
+        mode: '1v1',
         items: compactItems,
         catName: cat.name,
         catIcon: cat.icon,
@@ -668,6 +957,26 @@ export function reduce(s, type, arg = {}, now) {
     case 'correct': {
       if (s.phase !== 'playing') return false;
       if (d.passUntil && now < d.passUntil) return false;
+      if (d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length) {
+        const idx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+        const cur = remainingOfParticipant(d, idx, now);
+        if (cur <= 0) return eliminateActiveMulti(s, now);
+        const curP = d.participants[idx];
+        curP.remainingMs = cur;
+        curP.score = (Number(curP.score) || 0) + 1;
+        const nextIdx = findNextAliveParticipantIdx(d.participants, idx);
+        if (nextIdx < 0 || nextIdx === idx) {
+          return finishMulti(s, curP.id, '');
+        }
+        d.activeTurnIdx = nextIdx;
+        d.tStamp = now;
+        d.passUntil = 0;
+        d.passRem = 0;
+        d.passAnswer = '';
+        d.qPos += 1;
+        preloadWindow(d);
+        return 'ding';
+      }
       const cur = remainingOf(d, d.turn, now);
       if (cur <= 0) return finish(s, d.turn);
       setRem(d, d.turn, cur);
@@ -683,6 +992,16 @@ export function reduce(s, type, arg = {}, now) {
     case 'pass': {
       if (s.phase !== 'playing') return false;
       if (d.passUntil && now < d.passUntil) return false;
+      if (d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length) {
+        const idx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+        const cur = remainingOfParticipant(d, idx, now);
+        if (cur <= 0) return eliminateActiveMulti(s, now);
+        const q = currentQuestion(d);
+        d.passUntil = now + PENALTY_MS;
+        d.passRem = 0;
+        d.passAnswer = q ? q.answer : '';
+        return 'buzz';
+      }
       const cur = remainingOf(d, d.turn, now);
       if (cur <= 0) return finish(s, d.turn);
       // Không trừ thẳng 2s: giữ nguyên đồng hồ chạy tự nhiên, mở đáp án trong 2 giây
@@ -694,6 +1013,17 @@ export function reduce(s, type, arg = {}, now) {
     }
     case 'passComplete': {
       if (s.phase !== 'playing' || !d || !d.passUntil) return false;
+      if (d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length) {
+        const idx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+        const cur = remainingOfParticipant(d, idx, now);
+        if (cur <= 0) return eliminateActiveMulti(s, now);
+        d.passUntil = 0;
+        d.passRem = 0;
+        d.passAnswer = '';
+        d.qPos += 1;
+        preloadWindow(d);
+        return null;
+      }
       const cur = remainingOf(d, d.turn, now);
       if (cur <= 0) return finish(s, d.turn);
       d.passUntil = 0;
@@ -705,7 +1035,14 @@ export function reduce(s, type, arg = {}, now) {
     }
     case 'pause': {
       if (s.phase !== 'playing') return false;
-      setRem(d, d.turn, remainingOf(d, d.turn, now));
+      if (d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length) {
+        const idx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+        if (d.participants[idx]) {
+          d.participants[idx].remainingMs = remainingOfParticipant(d, idx, now);
+        }
+      } else {
+        setRem(d, d.turn, remainingOf(d, d.turn, now));
+      }
       if (d.passUntil && d.passUntil > now) {
         d.passRem = d.passUntil - now;
       } else {
@@ -728,6 +1065,11 @@ export function reduce(s, type, arg = {}, now) {
       return 'pause';
     case 'tick': {
       if (s.phase !== 'playing') return false;
+      if (d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length) {
+        const idx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+        if (remainingOfParticipant(d, idx, now) <= 0) return eliminateActiveMulti(s, now);
+        return false;
+      }
       if (remainingOf(d, d.turn, now) <= 0) return finish(s, d.turn);
       return false;
     }

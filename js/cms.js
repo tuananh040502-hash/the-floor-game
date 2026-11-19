@@ -8,16 +8,14 @@ import {
 } from './transport.js?v=bgm1';
 import { applyThemeConfig } from './theme.js?v=auth17';
 import {
-  TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
-  parseVictoryAudio, normalizeVictoryAudioUrl,
-  saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
-  clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
+  TOPICS_KEY, loadCustom, newId, loadDrive, saveDrive,
+  deleteTopicAudioIDB,
+  sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js?v=iosfix15';
 import {
   normalizeImageUrl, driveFallbackUrl, isLegacyEmojiSampleTopic,
   purgeEmptyAndDefaultTopics,
 } from './engine.js?v=iosfix15';
-import { Sfx } from './audio.js?v=iosfix15';
 import { initBgm } from './bgm.js?v=bgm1';
 
 export const MAX_TOPIC_IMAGES = 100;
@@ -168,9 +166,10 @@ function persistLocalCache() {
   try {
     const cleanList = (Array.isArray(topics) ? topics : []).map((src) => {
       if (!src || typeof src !== 'object') return null;
-      const base = sanitizeTopic({ ...src, items: [] });
+      const base = sanitizeTopic({ ...src, shuffle: true, items: [] });
       if (!base) return null;
       base.icon = '';
+      base.shuffle = true;
       base.items = (Array.isArray(src.items) ? src.items : [])
         .map(sanitizeItem)
         .filter(Boolean)
@@ -342,9 +341,10 @@ async function handleCloudSnapshot(cloudList) {
   const toBackfillOwner = [];
 
   const merged = [...cloudById.values()].map((ct) => {
-    const sanitized = sanitizeTopic({ ...ct, items: [] });
+    const sanitized = sanitizeTopic({ ...ct, shuffle: true, items: [] });
     if (!sanitized) return null;
     sanitized.icon = '';
+    sanitized.shuffle = true;
     sanitized.items = (ct.items || []).map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
     sanitized.coverUrl = normalizeCoverUrl(ct.coverUrl) || normalizeImageUrl(ct.coverUrl) || '';
     sanitized.ownerScriptUrl = normalizeScriptUrl(ct.ownerScriptUrl);
@@ -441,6 +441,7 @@ function esc(s) {
 // ---------- Danh sách chủ đề ----------
 function renderTopics() {
   const list = $('topicList');
+  if (!list) return;
   list.innerHTML = '';
   if (!topics.length) {
     list.innerHTML = '<div class="text-sm t-3 px-2 py-3">Chưa có chủ đề tự tạo.</div>';
@@ -452,85 +453,10 @@ function renderTopics() {
     el.type = 'button';
     el.dataset.topicId = t.id;
     el.className = `topic-item ${t.id === currentId ? 'active' : ''}`;
-    const hasVoice = !!(t.victoryVoiceData || t.victoryVoiceName);
-    const hasMusic = !!t.victoryAudioUrl;
-    const audioDots = `${hasVoice ? '<span title="Có file ghi âm / SFX riêng">🎙️</span>' : ''}${hasMusic ? '<span title="Có link nhạc chiến thắng riêng">🎵</span>' : ''}`;
-    el.innerHTML = `<span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${audioDots}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_TOPIC_IMAGES}</span>`;
+    el.innerHTML = `<span class="flex-1 truncate font-semibold">${esc(t.name)}</span><span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_TOPIC_IMAGES}</span>`;
     frag.appendChild(el);
   });
   list.appendChild(frag);
-}
-
-async function hydrateTopicVoice(t) {
-  if (!t || t.victoryVoiceData) return;
-  try {
-    const rec = await loadTopicAudioIDB(t.id);
-    if (rec && rec.dataUrl) {
-      t.victoryVoiceData = rec.dataUrl;
-      if (!t.victoryVoiceName && rec.name) t.victoryVoiceName = rec.name;
-      if (rec.localAudioVolume !== undefined && t.localAudioVolume === undefined) {
-        t.localAudioVolume = clampVolume01(rec.localAudioVolume, 1.0);
-      }
-      if (rec.onlineAudioVolume !== undefined && t.onlineAudioVolume === undefined) {
-        t.onlineAudioVolume = clampVolume01(rec.onlineAudioVolume, 1.0);
-      }
-      renderAudioBadges(t);
-    }
-  } catch { /* ignore */ }
-}
-
-function renderAudioBadges(t) {
-  const extUrl = t ? t.victoryAudioUrl : '';
-  const hasVoice = !!(t && (t.victoryVoiceData || t.victoryVoiceName));
-  const p = parseVictoryAudio(extUrl);
-  const localPct = Math.round(clampVolume01(t?.localAudioVolume, 1.0) * 100);
-  const onlinePct = Math.round(clampVolume01(t?.onlineAudioVolume, 1.0) * 100);
-
-  const localSlider = $('tLocalAudioVol');
-  const localLabel = $('tLocalAudioVolLabel');
-  if (localSlider && document.activeElement !== localSlider) localSlider.value = String(localPct);
-  if (localLabel) localLabel.textContent = `${localPct}%`;
-
-  const onlineSlider = $('tOnlineAudioVol');
-  const onlineLabel = $('tOnlineAudioVolLabel');
-  if (onlineSlider && document.activeElement !== onlineSlider) onlineSlider.value = String(onlinePct);
-  if (onlineLabel) onlineLabel.textContent = `${onlinePct}%`;
-
-  const extBadge = $('victoryAudioBadge');
-  if (extBadge) {
-    if (!p) {
-      extBadge.textContent = 'Không dùng';
-    } else {
-      const map = {
-        youtube: 'YouTube',
-        soundcloud: 'SoundCloud',
-        direct: p.driveId ? 'Google Drive Audio' : 'Direct Audio',
-      };
-      extBadge.textContent = `✓ ${map[p.kind] || 'Tùy chỉnh'}`;
-    }
-  }
-
-  const voiceBadge = $('voiceAudioBadge');
-  if (voiceBadge) {
-    voiceBadge.textContent = hasVoice ? `✓ ${t.victoryVoiceName || 'File ghi âm đã lưu'}` : 'Chưa có file';
-  }
-  const testVoiceBtn = $('btnTestVoiceOnly');
-  if (testVoiceBtn) testVoiceBtn.classList.toggle('hidden', !hasVoice);
-  const clearVoiceBtn = $('btnClearVoiceAudio');
-  if (clearVoiceBtn) clearVoiceBtn.classList.toggle('hidden', !hasVoice);
-
-  const dualBadge = $('dualAudioModeBadge');
-  if (dualBadge) {
-    if (hasVoice && p) {
-      dualBadge.textContent = `Phối âm kép · File ${localPct}% + Nhạc ${onlinePct}%`;
-    } else if (p) {
-      dualBadge.textContent = `Nhạc ngoài · ${onlinePct}%`;
-    } else if (hasVoice) {
-      dualBadge.textContent = `File máy · ${localPct}% + Fanfare`;
-    } else {
-      dualBadge.textContent = 'Mặc định (Fanfare)';
-    }
-  }
 }
 
 function renderCoverEditor(t) {
@@ -596,10 +522,10 @@ function render() {
   renderTopics();
   updateCloudCountBadge();
   const t = cur();
-  $('emptyState').classList.toggle('hidden', !!t);
-  $('editorBody').classList.toggle('hidden', !t);
+  if ($('emptyState')) $('emptyState').classList.toggle('hidden', !!t);
+  if ($('editorBody')) $('editorBody').classList.toggle('hidden', !t);
   if (!t) return;
-  hydrateTopicVoice(t);
+  t.shuffle = true;
   const editable = canEditTopic(t);
 
   if ($('topicReadOnlyNotice')) {
@@ -611,23 +537,15 @@ function render() {
     $('tName').disabled = !editable;
   }
   if ($('tIcon') && document.activeElement !== $('tIcon')) $('tIcon').value = '';
-  if ($('tVictoryAudio')) {
-    if (document.activeElement !== $('tVictoryAudio')) $('tVictoryAudio').value = t.victoryAudioUrl || '';
-    $('tVictoryAudio').readOnly = !editable;
-    $('tVictoryAudio').disabled = !editable;
-  }
   renderCoverEditor(t);
-  renderAudioBadges(t);
-  $('tShuffle').checked = !!t.shuffle;
-  $('tShuffle').disabled = !editable;
-  $('countNow').textContent = t.items.length;
-  $('countMax').textContent = MAX_TOPIC_IMAGES;
+  if ($('countNow')) $('countNow').textContent = t.items.length;
+  if ($('countMax')) $('countMax').textContent = MAX_TOPIC_IMAGES;
 
   if ($('tCoverUrl')) {
     $('tCoverUrl').readOnly = !editable;
     $('tCoverUrl').disabled = !editable;
   }
-  ['btnApplyCoverUrl', 'btnPickCoverFile', 'btnPickVoiceAudio', 'btnClearItems', 'btnDeleteTopic'].forEach((id) => {
+  ['btnApplyCoverUrl', 'btnPickCoverFile', 'btnClearItems', 'btnDeleteTopic'].forEach((id) => {
     const el = $(id);
     if (!el) return;
     el.disabled = !editable;
@@ -636,20 +554,10 @@ function render() {
   if ($('btnClearCoverUrl') && !editable) {
     $('btnClearCoverUrl').classList.add('hidden');
   }
-  if ($('btnClearVoiceAudio') && !editable) {
-    $('btnClearVoiceAudio').classList.add('hidden');
-  }
-  if ($('tLocalAudioVol')) $('tLocalAudioVol').disabled = !editable;
-  if ($('tOnlineAudioVol')) $('tOnlineAudioVol').disabled = !editable;
   if ($('addImagesSection')) {
     $('addImagesSection').classList.toggle('hidden', !editable);
   }
-  if ($('btnAddLinks')) $('btnAddLinks').disabled = !editable;
   if ($('btnPick')) $('btnPick').disabled = !editable;
-  if ($('linkArea')) {
-    $('linkArea').readOnly = !editable;
-    $('linkArea').disabled = !editable;
-  }
 
   renderItems();
 }
@@ -662,7 +570,7 @@ function renderItems() {
   const box = $('itemList');
   box.innerHTML = '';
   if (!t.items.length) {
-    box.innerHTML = '<div class="t-3 text-center py-10" style="grid-column:1/-1">Chưa có ảnh nào. Hãy tải ảnh lên hoặc dán link.</div>';
+    box.innerHTML = '<div class="t-3 text-center py-10" style="grid-column:1/-1">Chưa có ảnh nào. Hãy tải ảnh trực tiếp từ máy lên Google Drive.</div>';
     return;
   }
   const editable = canEditTopic(t);
@@ -746,50 +654,6 @@ function move(from, to) {
   t.items.splice(to, 0, it);
   persist(t);
   render();
-}
-
-// ---------- Thêm ảnh qua link ----------
-function addLinks() {
-  const t = cur();
-  if (!t) return;
-  if (!canEditTopic(t)) {
-    if ($('drivePanel')) $('drivePanel').open = true;
-    toast(EDIT_DENIED_MSG, true);
-    return;
-  }
-  const lines = $('linkArea').value.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return;
-  let added = 0;
-  let bad = 0;
-  let full = 0;
-  for (const line of lines) {
-    if (t.items.length >= MAX_TOPIC_IMAGES) {
-      full += 1;
-      continue;
-    }
-    const [urlPart, ...rest] = line.split('|');
-    const src = normalizeImageUrl(urlPart);
-    if (!src) {
-      bad += 1;
-      continue;
-    }
-    const answer = rest.join('|').trim() || guessName(src) || `Ảnh ${t.items.length + 1}`;
-    t.items.push({ type: 'img', src, answer, aliases: [] });
-    added += 1;
-  }
-  persist(t);
-  $('linkArea').value = '';
-  render();
-  toast(`Đã thêm ${added} ảnh.${bad ? ` ${bad} link không hợp lệ.` : ''}${full ? ` ${full} link bị bỏ vì chủ đề đã đủ ${MAX_TOPIC_IMAGES} ảnh.` : ''}`, bad || full);
-}
-
-function guessName(src) {
-  try {
-    const last = decodeURIComponent(new URL(src).pathname.split('/').pop() || '');
-    return cleanName(last);
-  } catch {
-    return '';
-  }
 }
 
 function cleanName(filename) {
@@ -939,8 +803,8 @@ async function handleFiles(fileList) {
   }
   const cfg = loadDrive();
   if (!cfg.url || !cfg.folderId) {
-    $('drivePanel').open = true;
-    toast('Hãy nhập Web App URL và Folder ID Google Drive trước (hoặc dùng “Dán link ảnh”).', true);
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Hãy nhập Web App URL và Folder ID Google Drive trước khi tải ảnh.', true);
     return;
   }
   const roomLeft = MAX_TOPIC_IMAGES - t.items.length;
@@ -1245,10 +1109,8 @@ function importFile(file) {
         if (used.has(t.id)) t.id = newId();
         used.add(t.id);
         t.icon = '';
+        t.shuffle = true;
         stampOwnership(t);
-        if (t.victoryVoiceData) {
-          saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '');
-        }
         topics.push(t);
       });
       currentId = incoming[0].id;
@@ -1339,7 +1201,6 @@ async function executeDeleteTopic(targetId) {
   const removedName = t.name;
 
   deletingTopic = true;
-  Sfx.stopVictory();
   setDeleteModalBusy(true, '⏳ Đang xóa ảnh trên Drive và dữ liệu...');
   toast('Đang xóa ảnh trên Drive và dữ liệu...');
 
@@ -1441,23 +1302,6 @@ function showPreview() {
   $('pvIdx').textContent = `${pvI + 1}/${t.items.length}`;
 }
 
-function topicAudioSpec(t) {
-  if (!t) {
-    return {
-      url: '', topicId: '', voiceData: '', voiceName: '',
-      localAudioVolume: 1.0, onlineAudioVolume: 1.0,
-    };
-  }
-  return {
-    url: t.victoryAudioUrl || '',
-    topicId: t.id || '',
-    voiceData: t.victoryVoiceData || '',
-    voiceName: t.victoryVoiceName || '',
-    localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
-    onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
-  };
-}
-
 // ---------- Gắn sự kiện ----------
 function bind() {
   ['btnSyncCloud', 'btnSyncCloudTop'].forEach((id) => {
@@ -1466,13 +1310,14 @@ function bind() {
   });
 
   // Event delegation cho danh sách chủ đề
-  $('topicList').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-topic-id]');
-    if (!btn) return;
-    Sfx.stopVictory();
-    currentId = btn.dataset.topicId;
-    render();
-  });
+  if ($('topicList')) {
+    $('topicList').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-topic-id]');
+      if (!btn) return;
+      currentId = btn.dataset.topicId;
+      render();
+    });
+  }
 
   // Event delegation cho bảng ảnh (tránh gắn nhiều listener gây rò rỉ bộ nhớ)
   const box = $('itemList');
@@ -1593,7 +1438,7 @@ function bind() {
     const name = prompt('Tên chủ đề mới (ví dụ: Cầu thủ bóng đá):');
     if (!name || !name.trim()) return;
     const { scriptUrl, folderId } = getCurrentDriveIdentity();
-    const t = sanitizeTopic({ id: newId(), name: name.trim(), icon: '', shuffle: false, items: [] });
+    const t = sanitizeTopic({ id: newId(), name: name.trim(), icon: '', shuffle: true, items: [] });
     if (!t) return;
     t.icon = '';
     t.ownerScriptUrl = scriptUrl;
@@ -1628,7 +1473,7 @@ function bind() {
     if (!src) return;
     const { scriptUrl, folderId } = getCurrentDriveIdentity();
     const t = sanitizeTopic({
-      id: newId(), name: `${src.name} (bản sao)`, icon: '', shuffle: !!src.shuffle,
+      id: newId(), name: `${src.name} (bản sao)`, icon: '', shuffle: true,
       items: (src.items || []).slice(0, MAX_TOPIC_IMAGES),
     });
     t.icon = '';
@@ -1668,18 +1513,6 @@ function bind() {
       renderTopics();
     });
   }
-  $('tShuffle').addEventListener('change', () => {
-    const t = cur();
-    if (!t) return;
-    if (!canEditTopic(t)) {
-      $('tShuffle').checked = !!t.shuffle;
-      toast(EDIT_DENIED_MSG, true);
-      return;
-    }
-    t.shuffle = $('tShuffle').checked;
-    persist(t);
-  });
-
   // --- Ảnh bìa chủ đề (Cover Image: tải file riêng lên Drive hoặc dán URL trực tiếp) ---
   const applyCoverUrlInput = () => {
     const t = cur();
@@ -1784,233 +1617,14 @@ function bind() {
     });
   }
 
-  // --- Kênh 1: Tải file âm thanh từ máy (.mp3, .m4a, .wav) + Thanh trượt âm lượng 1 ---
-  $('btnPickVoiceAudio').addEventListener('click', () => {
-    const t = cur();
-    if (!t || !canEditTopic(t)) {
-      toast(EDIT_DENIED_MSG, true);
-      return;
-    }
-    $('fileVoiceAudio').click();
-  });
-  $('fileVoiceAudio').addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    const t = cur();
-    if (!file || !t) return;
-    if (!canEditTopic(t)) {
-      toast(EDIT_DENIED_MSG, true);
-      return;
-    }
-    try {
-      toast(`Đang xử lý & lưu file âm thanh “${file.name}”…`);
-      const { dataUrl, name } = await encodeAudioFile(file);
-      t.victoryVoiceData = dataUrl;
-      t.victoryVoiceName = name;
-      if (t.localAudioVolume === undefined) t.localAudioVolume = 1.0;
-      await saveTopicAudioIDB(t.id, dataUrl, name, {
-        localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
-        onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
-      });
-      persist(t);
-      renderAudioBadges(t);
-      renderTopics();
-      await Sfx.preloadVictory(topicAudioSpec(t));
-      toast(`Đã lưu file âm thanh “${name}” vào IndexedDB & đồng bộ cấu hình.`);
-    } catch (err) {
-      toast(err.message || 'Không thể đọc file âm thanh.', true);
-    }
-  });
-
-  $('tLocalAudioVol').addEventListener('input', (e) => {
-    const t = cur();
-    if (!t || !canEditTopic(t)) return;
-    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-    $('tLocalAudioVolLabel').textContent = `${pct}%`;
-    const vol01 = clampVolume01(pct / 100, 1.0);
-    Sfx.setLocalVolume(vol01);
-    t.localAudioVolume = vol01;
-    renderAudioBadges(t);
-  });
-  $('tLocalAudioVol').addEventListener('change', async (e) => {
-    const t = cur();
-    if (!t) return;
-    if (!canEditTopic(t)) {
-      toast(EDIT_DENIED_MSG, true);
-      render();
-      return;
-    }
-    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-    t.localAudioVolume = clampVolume01(pct / 100, 1.0);
-    persist(t);
-    if (t.victoryVoiceData) {
-      await saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '', {
-        localAudioVolume: t.localAudioVolume,
-        onlineAudioVolume: clampVolume01(t.onlineAudioVolume, 1.0),
-      });
-    }
-  });
-
-  $('btnClearVoiceAudio').addEventListener('click', async () => {
-    const t = cur();
-    if (!t || !canEditTopic(t)) {
-      toast(EDIT_DENIED_MSG, true);
-      return;
-    }
-    Sfx.stopVictory();
-    t.victoryVoiceData = '';
-    t.victoryVoiceName = '';
-    await deleteTopicAudioIDB(t.id);
-    persist(t);
-    renderAudioBadges(t);
-    renderTopics();
-    toast('Đã xóa file ghi âm khỏi chủ đề.');
-  });
-
-  $('btnTestVoiceOnly').addEventListener('click', async () => {
-    const t = cur();
-    if (!t || !(t.victoryVoiceData || t.victoryVoiceName)) {
-      toast('Chưa có file âm thanh từ máy.', true);
-      return;
-    }
-    if (bgm) bgm.pausePreview();
-    Sfx.unlock();
-    const spec = topicAudioSpec(t);
-    const pct = Math.round(spec.localAudioVolume * 100);
-    toast(`Đang phát thử file “${t.victoryVoiceName || 'Ghi âm'}” ở mức ${pct}%…`);
-    const ok = await Sfx.previewVoiceOnly(spec);
-    if (!ok) toast('Không phát được file âm thanh này.', true);
-  });
-
-  // --- Kênh 2: Link nhạc nền ngoài + Thanh trượt âm lượng 2 ---
-  $('tVictoryAudio').addEventListener('change', () => {
-    const t = cur();
-    if (!t) return;
-    if (!canEditTopic(t)) {
-      toast(EDIT_DENIED_MSG, true);
-      $('tVictoryAudio').value = t.victoryAudioUrl || '';
-      return;
-    }
-    const raw = $('tVictoryAudio').value.trim();
-    if (raw && !parseVictoryAudio(raw)) {
-      toast('Link âm thanh không hợp lệ (hãy nhập URL http/https).', true);
-      $('tVictoryAudio').value = t.victoryAudioUrl || '';
-      return;
-    }
-    t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
-    $('tVictoryAudio').value = t.victoryAudioUrl;
-    persist(t);
-    renderAudioBadges(t);
-    renderTopics();
-    if (t.victoryAudioUrl || t.victoryVoiceData) {
-      Sfx.preloadVictory(topicAudioSpec(t));
-      toast('Đã lưu cấu hình âm thanh chiến thắng & đồng bộ Cloud.');
-    } else {
-      Sfx.stopVictory();
-      toast('Đã đặt về âm thanh chiến thắng mặc định.');
-    }
-  });
-
-  $('tOnlineAudioVol').addEventListener('input', (e) => {
-    const t = cur();
-    if (!t || !canEditTopic(t)) return;
-    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-    $('tOnlineAudioVolLabel').textContent = `${pct}%`;
-    const vol01 = clampVolume01(pct / 100, 1.0);
-    Sfx.setOnlineVolume(vol01);
-    t.onlineAudioVolume = vol01;
-    renderAudioBadges(t);
-  });
-  $('tOnlineAudioVol').addEventListener('change', async (e) => {
-    const t = cur();
-    if (!t) return;
-    if (!canEditTopic(t)) {
-      toast(EDIT_DENIED_MSG, true);
-      render();
-      return;
-    }
-    const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-    t.onlineAudioVolume = clampVolume01(pct / 100, 1.0);
-    persist(t);
-    if (t.victoryVoiceData) {
-      await saveTopicAudioIDB(t.id, t.victoryVoiceData, t.victoryVoiceName || '', {
-        localAudioVolume: clampVolume01(t.localAudioVolume, 1.0),
-        onlineAudioVolume: t.onlineAudioVolume,
-      });
-    }
-  });
-
-  $('btnTestExternalOnly').addEventListener('click', async () => {
-    const t = cur();
-    if (!t) return;
-    if (bgm) bgm.pausePreview();
-    Sfx.unlock();
-    const raw = $('tVictoryAudio').value.trim();
-    if (raw && !parseVictoryAudio(raw)) {
-      toast('Link nhạc không hợp lệ.', true);
-      return;
-    }
-    if (canEditTopic(t) && raw !== (t.victoryAudioUrl || '')) {
-      t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
-      persist(t);
-      renderAudioBadges(t);
-      renderTopics();
-    }
-    if (!t.victoryAudioUrl) {
-      toast('Hãy dán link YouTube, SoundCloud hoặc MP3 trước.', true);
-      return;
-    }
-    const spec = topicAudioSpec(t);
-    const pct = Math.round(spec.onlineAudioVolume * 100);
-    toast(`Đang nạp & phát thử link nhạc ngoài ở mức ${pct}%…`);
-    await Sfx.previewExternalOnly(t.victoryAudioUrl, spec.onlineAudioVolume);
-  });
-
-  // --- Nghe thử phối âm (Dual Volume Sliders) ---
-  $('btnTestVictoryAudio').addEventListener('click', async () => {
-    const t = cur();
-    if (!t) return;
-    if (bgm) bgm.pausePreview();
-    Sfx.unlock();
-    const raw = $('tVictoryAudio').value.trim();
-    if (canEditTopic(t) && raw !== (t.victoryAudioUrl || '')) {
-      t.victoryAudioUrl = normalizeVictoryAudioUrl(raw);
-      persist(t);
-      renderAudioBadges(t);
-      renderTopics();
-    }
-    const spec = topicAudioSpec(t);
-    const hasVoice = !!(spec.voiceData || spec.voiceName);
-    const hasExt = !!spec.url;
-    const lPct = Math.round(spec.localAudioVolume * 100);
-    const oPct = Math.round(spec.onlineAudioVolume * 100);
-    if (hasVoice && hasExt) {
-      toast(`Đang phát thử phối âm: File từ máy (${lPct}%) + Nhạc ngoài (${oPct}%).`);
-    } else if (hasExt) {
-      toast(`Đang phát thử nhạc ngoài ở mức ${oPct}%.`);
-    } else if (hasVoice) {
-      toast(`Đang phát thử file từ máy (${lPct}%) kết hợp nhạc chiến thắng.`);
-    } else {
-      toast('Đang phát thử nhạc chiến thắng mặc định (Fanfare).');
-    }
-    await Sfx.preloadVictory(spec);
-    Sfx.finishSequence(spec);
-  });
-
-  $('btnStopVictoryAudio').addEventListener('click', () => {
-    Sfx.stopVictory();
-  });
-  Sfx.onVictoryAudioChange((st) => {
-    const stopBtn = $('btnStopVictoryAudio');
-    if (stopBtn) stopBtn.classList.toggle('hidden', !st.playing);
-  });
-
   // Bảo vệ xóa nhầm chủ đề dùng chung
-  $('btnDeleteTopic').addEventListener('click', () => {
-    const t = cur();
-    if (!t) return;
-    openDeleteModal(t);
-  });
+  if ($('btnDeleteTopic')) {
+    $('btnDeleteTopic').addEventListener('click', () => {
+      const t = cur();
+      if (!t) return;
+      openDeleteModal(t);
+    });
+  }
   if ($('delConfirmCheck')) {
     $('delConfirmCheck').addEventListener('change', (e) => {
       if ($('btnConfirmDeleteTopic')) $('btnConfirmDeleteTopic').disabled = !e.target.checked;
@@ -2049,23 +1663,25 @@ function bind() {
     render();
   });
 
-  $('btnAddLinks').addEventListener('click', addLinks);
-
   const dz = $('dropzone');
-  $('btnPick').addEventListener('click', () => $('filePick').click());
-  $('filePick').addEventListener('change', (e) => {
-    handleFiles(e.target.files);
-    e.target.value = '';
-  });
-  ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => {
-    e.preventDefault();
-    dz.classList.add('over');
-  }));
-  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => {
-    e.preventDefault();
-    dz.classList.remove('over');
-  }));
-  dz.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
+  if ($('btnPick') && $('filePick')) {
+    $('btnPick').addEventListener('click', () => $('filePick').click());
+    $('filePick').addEventListener('change', (e) => {
+      handleFiles(e.target.files);
+      e.target.value = '';
+    });
+  }
+  if (dz) {
+    ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dz.classList.add('over');
+    }));
+    ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dz.classList.remove('over');
+    }));
+    dz.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
+  }
   // Chặn trình duyệt mở ảnh khi thả trượt vùng
   window.addEventListener('dragover', (e) => { if (dragIndex === null) e.preventDefault(); });
   window.addEventListener('drop', (e) => { if (dragIndex === null) e.preventDefault(); });

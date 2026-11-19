@@ -3842,3 +3842,497 @@ html[data-theme='christmas'] #dockInner.island {
     gap: 6px;
   }
 }
+
+/* =====================================================================
+   UPGRADES: VIEWER CENTERING, RED SKIP ANSWER (LIGHT/XMAS), MULTI-PLAYER 2-6
+   ===================================================================== */
+
+/* ---------- 1. Căn giữa bàn cờ cho Người xem (role=view) ở Trang 2 ---------- */
+body.is-viewer #viewFloor .floor-layout {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+body.is-viewer #viewFloor .floor-col-side {
+  display: none !important;
+}
+body.is-viewer #viewFloor .floor-col-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+}
+body.is-viewer .floor-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(960px, 100%);
+  margin: 0 auto;
+}
+body.is-viewer #floorGrid,
+body.is-viewer .floor-grid {
+  width: min(960px, 100%);
+  margin: 0 auto;
+}
+
+/* ---------- 2. Bảng đáp án khi Bỏ qua (Skip): Nền Đỏ đậm nổi bật trên Sáng & Noel ---------- */
+html[data-theme='light'] .pass-overlay-card,
+html[data-theme='christmas'] .pass-overlay-card {
+  background: linear-gradient(145deg, #C81E2B 0%, #99151E 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.78);
+  box-shadow: 0 18px 42px rgba(153, 21, 30, 0.42);
+}
+html[data-theme='christmas'] .pass-overlay-card {
+  border-color: rgba(245, 224, 175, 0.85);
+}
+html[data-theme='light'] .pass-x-icon,
+html[data-theme='christmas'] .pass-x-icon {
+  color: #FFFFFF;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+html[data-theme='light'] .pass-ans-label,
+html[data-theme='christmas'] .pass-ans-label {
+  color: rgba(255, 245, 225, 0.94);
+}
+html[data-theme='light'] .pass-ans-text,
+html[data-theme='christmas'] .pass-ans-text {
+  color: #FFFFFF;
+  font-weight: 700;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+html[data-theme='light'] .pass-reveal-pill,
+html[data-theme='christmas'] .pass-reveal-pill {
+  background: linear-gradient(135deg, #C81E2B 0%, #99151E 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 28px rgba(153, 21, 30, 0.36);
+}
+html[data-theme='christmas'] .pass-reveal-pill {
+  border-color: rgba(245, 224, 175, 0.85);
+}
+html[data-theme='light'] .pass-reveal-pill .eyebrow,
+html[data-theme='christmas'] .pass-reveal-pill .eyebrow {
+  color: rgba(255, 245, 225, 0.94) !important;
+}
+html[data-theme='light'] #passRevealText,
+html[data-theme='christmas'] #passRevealText {
+  color: #FFFFFF !important;
+  font-weight: 700;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
+}
+
+/* ---------- 3. Chế độ thi đấu Xoay vòng (2–6 người) trên Trang 2 (Setup HUD) ---------- */
+.duel-mode-seg {
+  width: 100%;
+  display: flex;
+}
+.duel-mode-seg button {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.multi-setup-card {
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.multi-setup-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.multi-count-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--t2);
+}
+.multi-setup-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.multi-time-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.multi-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.multi-player-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--t2);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 0;
+  text-align: left;
+  opacity: 0.62;
+  transition: opacity 0.16s var(--ease), border-color 0.16s var(--ease), background 0.16s var(--ease);
+}
+.multi-player-chip.is-selected {
+  opacity: 1;
+  color: var(--t1);
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.multi-chip-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+.multi-chip-num.is-light {
+  color: #1D1D1F;
+  border-color: rgba(0, 0, 0, 0.18);
+}
+.multi-chip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.multi-chip-check {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.cell.is-multi-sel {
+  border-color: var(--c) !important;
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
+html[data-theme='christmas'] .multi-setup-card {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(216, 185, 121, 0.45);
+}
+html[data-theme='christmas'] .multi-player-chip {
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(216, 185, 121, 0.45);
+  color: #5C4430;
+}
+html[data-theme='christmas'] .multi-player-chip.is-selected {
+  background: rgba(255, 252, 245, 0.96);
+  border-color: #B91C2C;
+  color: #2C1E14;
+}
+html[data-theme='christmas'] .multi-chip-check {
+  color: #B91C2C;
+}
+
+/* ---------- 4. Thanh đồng hồ xoay vòng (2–6 người chơi) ở Trang 3 (Arena HUD) ---------- */
+#arenaBottomBar.is-multi-arena {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+#arenaBottomBar.is-multi-arena > #dock {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.multi-hud-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+.multi-hud-bar.hidden {
+  display: none !important;
+}
+
+.multi-p-card.side-card.hud-card {
+  --mc: var(--sapphire);
+  padding: 8px 11px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  transition: transform 0.22s var(--ease), opacity 0.22s var(--ease), border-color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+.multi-p-card.active {
+  transform: translateY(-2px);
+  border-color: var(--mc) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mc) 42%, transparent), inset 0 0 0 1px var(--mc);
+  opacity: 1;
+}
+.multi-p-card.idle {
+  opacity: 0.72;
+}
+.multi-p-card.out {
+  opacity: 0.42 !important;
+  filter: grayscale(0.8);
+}
+.multi-p-card.win {
+  border-color: #ffd60a !important;
+  box-shadow: 0 0 0 2px rgba(255, 214, 10, 0.45), inset 0 0 0 1px #ffd60a;
+  opacity: 1 !important;
+}
+.multi-p-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.multi-p-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+.multi-p-badge.is-light {
+  color: #1D1D1F;
+  border-color: rgba(0, 0, 0, 0.18);
+}
+.multi-p-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--t1);
+  line-height: 1.2;
+}
+.multi-p-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.multi-p-tag:empty {
+  display: none;
+}
+.multi-p-tag.is-active-tag {
+  background: var(--blue);
+  color: #FFFFFF;
+}
+.multi-p-tag.is-win-tag {
+  background: #FFD60A;
+  color: #1D1D1F;
+}
+.multi-p-tag.is-out-tag {
+  background: rgba(128, 128, 128, 0.22);
+  color: var(--t3);
+}
+.multi-p-mid {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+.multi-p-clock {
+  font-family: 'SF Pro Display', -apple-system, 'Inter', sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--t1);
+}
+.multi-p-clock.danger {
+  color: var(--red) !important;
+  animation: breathe 1s ease-in-out infinite;
+}
+.multi-p-score {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.multi-p-card .capsule-fill {
+  background: var(--mc);
+}
+.multi-p-card .capsule-fill.danger {
+  background: var(--red);
+}
+
+html[data-theme='christmas'] .multi-p-card.side-card.hud-card {
+  background: rgba(251, 246, 236, 0.9);
+  border: 1px solid rgba(216, 185, 121, 0.65);
+}
+html[data-theme='christmas'] .multi-p-name,
+html[data-theme='christmas'] .multi-p-clock {
+  color: #2C1E14;
+}
+html[data-theme='christmas'] .multi-p-tag.is-active-tag {
+  background: #B91C2C;
+  color: #FFFFFF;
+}
+
+#viewArena.is-multi-arena .q-wrap {
+  height: clamp(190px, calc(100dvh - 260px), 70dvh);
+  max-height: calc(100dvh - 245px);
+}
+
+@media (max-width: 1024px) {
+  .multi-hud-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  #viewArena.is-multi-arena .q-wrap {
+    height: clamp(165px, calc(100dvh - 305px), 62dvh);
+    max-height: calc(100dvh - 290px);
+  }
+}
+
+@media (max-width: 600px) {
+  .multi-hud-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .multi-p-card.side-card.hud-card {
+    padding: 6px 8px;
+    gap: 4px;
+    border-radius: 12px;
+  }
+  .multi-p-clock {
+    font-size: 1.15rem;
+  }
+  .multi-p-name {
+    font-size: 12px;
+  }
+  #viewArena.is-multi-arena .q-wrap {
+    height: clamp(150px, calc(100dvh - 340px), 56dvh);
+    max-height: calc(100dvh - 320px);
+  }
+}
+
+/* ---------- 5. Bộ chọn 2 kiểu luật Xoay vòng, Badge Arena & Màn hình Vinh danh nhiều người thắng ---------- */
+.multi-rule-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.multi-rule-seg {
+  width: 100%;
+  display: flex;
+}
+.multi-rule-seg button {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.multi-rule-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--t3);
+}
+
+.multi-rule-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--t1);
+}
+html[data-theme='christmas'] .multi-rule-badge {
+  background: rgba(251, 246, 236, 0.92);
+  border: 1px solid rgba(216, 185, 121, 0.72);
+  color: #2C1E14;
+}
+
+#resultName.is-multi-winners {
+  font-size: clamp(1.35rem, 3.2vw, 2.5rem) !important;
+  line-height: 1.35;
+  max-width: min(94%, 820px);
+  margin-left: auto;
+  margin-right: auto;
+}
+.result-multi-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 6px;
+}
+.result-winner-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #FFFFFF;
+  font-weight: 700;
+  max-width: 100%;
+}
+.result-winner-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+}
+.result-winner-sep {
+  color: rgba(255, 255, 255, 0.65);
+  margin-right: 2px;
+}
+.result-multi-tail {
+  color: #FFD60A;
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .multi-rule-seg button {
+    font-size: 11px;
+    padding: 4px;
+  }
+  #resultName.is-multi-winners {
+    font-size: clamp(1.1rem, 4.6vw, 1.55rem) !important;
+  }
+  .result-winner-pill {
+    padding: 3px 10px;
+    gap: 5px;
+  }
+}

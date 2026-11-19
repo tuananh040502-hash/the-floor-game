@@ -338,7 +338,7 @@ export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
     ownerFolderId,
     driveFolderId,
     fileIds,
-    shuffle: !!raw.shuffle,
+    shuffle: true,
     victoryAudioUrl: audioUrl,
     victoryVoiceName: String(raw.victoryVoiceName || '').trim().slice(0, 80),
     localAudioVolume: localVol,
@@ -484,6 +484,7 @@ function stripHeavyRoomFields(rawState) {
 function diffPaths(prev, next, base, out) {
   const sameDuelSession = base === 'duel'
     && prev && next
+    && (prev.mode || '1v1') === (next.mode || '1v1')
     && prev.categoryId === next.categoryId
     && prev.aId === next.aId
     && prev.bId === next.bId;

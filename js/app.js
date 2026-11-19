@@ -6,8 +6,9 @@ import {
 } from './transport.js?v=bgm1';
 import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js?v=iosfix15';
 import {
-  createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
-  playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
+  createInitialState, reduce, remainingOf, remainingOfParticipant, minActiveRemaining,
+  countdownRemainingOf, extractImageUrls,
+  playerById, playerDisplayName, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
   isLegacyEmojiSampleTopic, purgeEmptyAndDefaultTopics, invalidateEngineCategoriesCache,
@@ -400,7 +401,7 @@ function normalize(raw) {
       : (availCats.length ? availCats[idx % availCats.length].id : rawCatId);
     return {
       id: String(p.id || `p${idx + 1}`),
-      name: String(p.name || `Người chơi ${idx + 1}`),
+      name: typeof p.name === 'string' ? p.name.trim() : '',
       avatar: String(p.avatar || '🦁'),
       color: String(p.color || '#06b6d4'),
       categoryId: resolvedCatId,
@@ -418,6 +419,14 @@ function normalize(raw) {
 
   s.championId = (s.championId && validIds.has(s.championId)) ? s.championId : '';
   s.setup = (s.setup && typeof s.setup === 'object') ? s.setup : {};
+  s.setup.mode = s.setup.mode === 'multi' ? 'multi' : '1v1';
+  s.setup.multiRule = s.setup.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
+  s.setup.multiIds = Array.isArray(s.setup.multiIds)
+    ? [...new Set(s.setup.multiIds.filter((id) => validIds.has(id)))]
+    : [];
+  s.setup.multiDurationSec = s.setup.multiDurationSec
+    ? clampDurationSec(s.setup.multiDurationSec)
+    : clampDurationSec(s.players[0]?.durationSec);
   s.setup.preloadUrls = (Array.isArray(s.setup.preloadUrls) ? s.setup.preloadUrls : [])
     .map((u) => normalizeImageUrl(u) || u)
     .filter(Boolean);
@@ -433,6 +442,7 @@ function normalize(raw) {
   }
 
   if (s.duel && typeof s.duel === 'object') {
+    s.duel.mode = s.duel.mode === 'multi' ? 'multi' : '1v1';
     s.duel.queue = Array.isArray(s.duel.queue) ? s.duel.queue : [];
     s.duel.items = (Array.isArray(s.duel.items) ? s.duel.items : []).map((it) => {
       if (!it || typeof it !== 'object') return null;
@@ -454,7 +464,47 @@ function normalize(raw) {
     s.duel.victoryVoiceName = s.duel.victoryVoiceName || '';
     s.duel.localAudioVolume = clampVolume01(s.duel.localAudioVolume, 1.0);
     s.duel.onlineAudioVolume = clampVolume01(s.duel.onlineAudioVolume, 1.0);
-    if (!s.duel.aId || !s.duel.bId || !validIds.has(s.duel.aId) || !validIds.has(s.duel.bId)) {
+    if (s.duel.mode === 'multi') {
+      s.duel.multiRule = s.duel.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
+      const rawParts = Array.isArray(s.duel.participants) ? s.duel.participants : [];
+      s.duel.participants = rawParts
+        .filter((p) => p && typeof p === 'object' && p.id && validIds.has(p.id))
+        .map((p) => {
+          const refP = playerById(s, p.id);
+          const totalMs = Math.max(1000, Number(p.totalMs) || s.duel.totalA || DUEL_MS);
+          const remMs = Math.max(0, Number(p.remainingMs ?? totalMs));
+          return {
+            id: p.id,
+            name: typeof p.name === 'string' ? p.name.trim() : (refP ? refP.name : ''),
+            color: p.color || (refP ? refP.color : '#06b6d4'),
+            icon: p.icon || (refP ? refP.avatar : '🦁'),
+            totalMs,
+            remainingMs: remMs,
+            eliminated: Boolean(p.eliminated) || remMs <= 0,
+            score: Math.max(0, Number(p.score) || 0),
+          };
+        });
+      const rawWinners = Array.isArray(s.duel.winners) ? s.duel.winners : [];
+      s.duel.winners = rawWinners
+        .filter((w) => w && typeof w === 'object' && w.id && validIds.has(w.id))
+        .map((w) => {
+          const refP = playerById(s, w.id);
+          return {
+            id: w.id,
+            name: typeof w.name === 'string' ? w.name.trim() : (refP ? refP.name : ''),
+            color: w.color || (refP ? refP.color : '#06b6d4'),
+            icon: w.icon || (refP ? refP.avatar : '🦁'),
+            score: Math.max(0, Number(w.score) || 0),
+          };
+        });
+      if (s.duel.participants.length < 2) {
+        s.phase = 'floor';
+        s.duel = null;
+      } else {
+        const idx = Number(s.duel.activeTurnIdx) || 0;
+        s.duel.activeTurnIdx = Math.max(0, Math.min(s.duel.participants.length - 1, idx));
+      }
+    } else if (!s.duel.aId || !s.duel.bId || !validIds.has(s.duel.aId) || !validIds.has(s.duel.bId)) {
       s.phase = 'floor';
       s.duel = null;
     }
@@ -604,7 +654,9 @@ function updatePreloadBadges() {
 function makeEvent(next, type) {
   const d = next.duel;
   const id = type === 'finish' && d
-    ? `fin-${d.aId}-${d.bId}-${d.tStamp}-${d.qPos}`
+    ? (d.mode === 'multi'
+      ? `fin-multi-${d.winnerId || ''}-${d.tStamp}-${d.qPos}`
+      : `fin-${d.aId}-${d.bId}-${d.tStamp}-${d.qPos}`)
     : `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   return { id, type };
 }
@@ -650,6 +702,7 @@ function getCategories100() {
         name: String(t.name || 'Chủ đề'),
         icon: '',
         coverUrl: normalizeCoverUrl(t.coverUrl) || normalizeImageUrl(t.coverUrl) || '',
+        shuffle: true,
         custom: true,
         items,
       });
@@ -788,7 +841,11 @@ function isPassWaiting(s, now = transport ? transport.serverNow() : Date.now()) 
 function applyState(s, allowEvents = true) {
   if (!s) return;
   if ($('waiting')) $('waiting').classList.add('hidden');
-  if (document.body) document.body.classList.toggle('host', role === 'host');
+  const isViewerMode = role !== 'host' && !controller && !requestedHost;
+  if (document.body) {
+    document.body.classList.toggle('host', !isViewerMode);
+    document.body.classList.toggle('is-viewer', isViewerMode);
+  }
   if ($('linkCms')) {
     $('linkCms').classList.toggle('hidden', role !== 'host');
     $('linkCms').href = `topics.html?room=${encodeURIComponent(room)}`;
@@ -875,7 +932,7 @@ function syncMusic(s) {
       Sfx.musicStart(() => {
         if (!state || !state.duel) return 60000;
         const now = transport.serverNow();
-        return Math.min(remainingOf(state.duel, 'A', now), remainingOf(state.duel, 'B', now));
+        return minActiveRemaining(state.duel, now);
       });
     }
   } else if (Sfx.isMusicOn()) {
@@ -891,6 +948,11 @@ function handleFloorCellClick(cellIndex) {
 
   // Người chơi đã bị loại (0 ô chiếm) thì bị vô hiệu hóa
   if (cellCount(state, ownerId) <= 0) return;
+
+  if (state.setup?.mode === 'multi') {
+    dispatch('toggleMultiPlayer', { id: ownerId });
+    return;
+  }
 
   let chalId = state.setup?.chalId || null;
   let defId = state.setup?.defId || null;
@@ -962,6 +1024,16 @@ function renderFloor(s) {
   const countMap = new Map();
   (s.players || []).forEach((p) => countMap.set(p.id, cellCount(s, p.id)));
 
+  const isMultiMode = setup.mode === 'multi';
+  const aliveList = alivePlayers(s);
+  const aliveIdSet = new Set(aliveList.map((p) => p.id));
+  const resolvedMultiIds = isMultiMode
+    ? ((Array.isArray(setup.multiIds) && setup.multiIds.length)
+      ? setup.multiIds.filter((id) => aliveIdSet.has(id))
+      : aliveList.map((p) => p.id))
+    : [];
+  const multiSet = new Set(resolvedMultiIds);
+
   // 1. Render lưới bàn cờ chính & tiêu đề gợi ý
   try {
     const grid = $('floorGrid');
@@ -971,10 +1043,12 @@ function renderFloor(s) {
       [...grid.children].forEach((el, i) => {
         const owner = playerById(s, s.floor[i]) || s.players[i % s.players.length];
         if (!owner) return;
+        const ownerIdx = s.players.findIndex((p) => p && p.id === owner.id);
         const owned = countMap.get(owner.id) || 0;
         const isElim = owned <= 0;
-        const isDef = !isElim && !!setup.defId && owner.id === setup.defId;
-        const isChal = !isElim && !!setup.chalId && owner.id === setup.chalId;
+        const isDef = !isMultiMode && !isElim && !!setup.defId && owner.id === setup.defId;
+        const isChal = !isMultiMode && !isElim && !!setup.chalId && owner.id === setup.chalId;
+        const isMultiSel = isMultiMode && !isElim && multiSet.has(owner.id);
         const cat = catMap.get(owner.categoryId);
 
         el.style.setProperty('--c', owner.color || '#0071e3');
@@ -987,16 +1061,21 @@ function renderFloor(s) {
         const topicEl = el.querySelector('.cell-topic');
         const territoryEl = el.querySelector('.cell-territory');
 
-        if (badgeEl) badgeEl.textContent = isChal ? '⚔️ THÁCH ĐẤU' : isDef ? '🛡️ BỊ THÁCH' : '';
+        if (badgeEl) {
+          badgeEl.textContent = isMultiMode
+            ? (isMultiSel ? '🔄 THAM GIA' : '')
+            : (isChal ? '⚔️ THÁCH ĐẤU' : isDef ? '🛡️ BỊ THÁCH' : '');
+        }
         if (avatarEl) avatarEl.textContent = owner.avatar || '🦁';
-        if (nameEl) nameEl.textContent = owner.name || `Người chơi ${i + 1}`;
+        if (nameEl) nameEl.textContent = playerDisplayName(s, owner, ownerIdx >= 0 ? ownerIdx : i);
         if (topicEl) topicEl.textContent = cat ? (cat.name || cat.id) : (owner.categoryId || '—');
         if (territoryEl) territoryEl.textContent = `${owned} ô`;
 
         el.classList.toggle('is-eliminated', isElim);
-        el.classList.toggle('is-sel', setup.cell === i);
+        el.classList.toggle('is-sel', !isMultiMode && setup.cell === i);
         el.classList.toggle('is-def', isDef);
         el.classList.toggle('is-chal', isChal);
+        el.classList.toggle('is-multi-sel', isMultiSel);
         if (flipSet.has(i)) {
           el.classList.add('is-flip');
           setTimeout(() => el.classList.remove('is-flip'), 3300);
@@ -1008,17 +1087,23 @@ function renderFloor(s) {
     const chal = playerById(s, setup.chalId);
     const champ = playerById(s, s.championId);
     if ($('floorHint')) {
-      $('floorHint').textContent = champ
-        ? `🏆 ${champ.name} vô địch The Floor!`
-        : chal && def
-          ? `${chal.name}  ⚔️  ${def.name}`
+      if (champ) {
+        $('floorHint').textContent = `🏆 ${playerDisplayName(s, champ)} vô địch The Floor!`;
+      } else if (isMultiMode) {
+        $('floorHint').textContent = (role === 'host' || controller)
+          ? `Xoay vòng · ${multiSet.size} người tham gia (Chạm ô để thêm/bớt)`
+          : `Chế độ xoay vòng · ${multiSet.size} người chơi`;
+      } else {
+        $('floorHint').textContent = chal && def
+          ? `${playerDisplayName(s, chal)}  ⚔️  ${playerDisplayName(s, def)}`
           : chal
-            ? `${chal.name} đang chọn đối thủ…`
+            ? `${playerDisplayName(s, chal)} đang chọn đối thủ…`
             : def
-              ? `Chờ chọn người thách đấu vs ${def.name}`
+              ? `Chờ chọn người thách đấu vs ${playerDisplayName(s, def)}`
               : (role === 'host' || controller)
                 ? 'Chạm 2 ô trên sàn để chọn cặp đấu'
                 : 'Chờ trận đấu kế tiếp';
+      }
     }
   } catch (err) {
     console.error('Lỗi render lưới bàn cờ:', err);
@@ -1056,6 +1141,7 @@ function renderSetup(s, preloadedCats = null) {
   panel.style.visibility = 'visible';
 
   const setup = s.setup || {};
+  const isMultiMode = setup.mode === 'multi';
   const chal = playerById(s, setup.chalId);
   const def = playerById(s, setup.defId);
   const chalAlive = chal && cellCount(s, chal.id) > 0;
@@ -1063,10 +1149,21 @@ function renderSetup(s, preloadedCats = null) {
   const validChal = chalAlive ? chal : null;
   const validDef = defAlive ? def : null;
 
+  document.querySelectorAll('#duelModeSeg [data-duel-mode]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.duelMode === (isMultiMode ? 'multi' : '1v1'));
+  });
+  if ($('setupModeSubtitle')) {
+    $('setupModeSubtitle').textContent = isMultiMode
+      ? 'Đưa 2–6 người chơi vào cùng một vòng đấu xoay vòng đồng hồ.'
+      : 'Chạm trực tiếp 2 ô trên sàn để chọn cặp đấu đối đầu.';
+  }
+  if ($('pairCard')) $('pairCard').classList.toggle('hidden', isMultiMode);
+  if ($('multiCard')) $('multiCard').classList.toggle('hidden', !isMultiMode);
+
   const chalNameEl = $('pairChalName');
   if (chalNameEl) {
     chalNameEl.innerHTML = validChal
-      ? `<span class="pair-avatar">${esc(validChal.avatar)}</span><span class="pair-name-text">${esc(validChal.name)}</span>`
+      ? `<span class="pair-avatar">${esc(validChal.avatar)}</span><span class="pair-name-text">${esc(playerDisplayName(s, validChal))}</span>`
       : '<span class="pair-placeholder">Chạm ô để chọn</span>';
   }
   const chalTimeWrap = $('pairChalTimeWrap');
@@ -1081,7 +1178,7 @@ function renderSetup(s, preloadedCats = null) {
   const defNameEl = $('pairDefName');
   if (defNameEl) {
     defNameEl.innerHTML = validDef
-      ? `<span class="pair-avatar">${esc(validDef.avatar)}</span><span class="pair-name-text">${esc(validDef.name)}</span>`
+      ? `<span class="pair-avatar">${esc(validDef.avatar)}</span><span class="pair-name-text">${esc(playerDisplayName(s, validDef))}</span>`
       : '<span class="pair-placeholder">Chạm ô để chọn</span>';
   }
   const defTimeWrap = $('pairDefTimeWrap');
@@ -1096,6 +1193,67 @@ function renderSetup(s, preloadedCats = null) {
   const swapBtn = $('btnSwapPair');
   if (swapBtn) {
     swapBtn.disabled = !(validChal && validDef);
+  }
+
+  // Chế độ Xoay vòng (2–6 người)
+  const aliveList = alivePlayers(s);
+  const aliveIdSet = new Set(aliveList.map((p) => p.id));
+  const validMultiIds = (Array.isArray(setup.multiIds) && setup.multiIds.length)
+    ? setup.multiIds.filter((id) => aliveIdSet.has(id))
+    : aliveList.map((p) => p.id);
+  const validMultiSet = new Set(validMultiIds);
+
+  if (isMultiMode) {
+    const multiRule = setup.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
+    document.querySelectorAll('#multiRuleSeg [data-multi-rule]').forEach((b) => {
+      b.classList.toggle('active', b.dataset.multiRule === multiRule);
+    });
+    if ($('multiRuleHint')) {
+      $('multiRuleHint').textContent = multiRule === 'first_out'
+        ? 'Ai hết giờ đầu tiên sẽ thua — tất cả người còn lại cùng thắng ngay lập tức.'
+        : 'Loại từng người hết giờ cho đến khi còn 1 người thắng duy nhất.';
+    }
+    if ($('multiCountLabel')) {
+      $('multiCountLabel').textContent = `Đã chọn ${validMultiIds.length}/${aliveList.length} người`;
+    }
+    const multiSecInp = $('multiSecInp');
+    if (multiSecInp && document.activeElement !== multiSecInp) {
+      multiSecInp.value = String(clampDurationSec(setup.multiDurationSec ?? s.players[0]?.durationSec));
+    }
+    const chipBox = $('multiPlayerChips');
+    if (chipBox) {
+      if (!chipBox.dataset.bound) {
+        chipBox.dataset.bound = '1';
+        chipBox.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-multi-pid]');
+          if (!btn) return;
+          dispatch('toggleMultiPlayer', { id: btn.dataset.multiPid });
+        });
+      }
+      const chipSig = JSON.stringify(s.players.map((p, idx) => [
+        p.id, p.name, p.color, aliveIdSet.has(p.id), validMultiSet.has(p.id), idx,
+      ]));
+      if (chipBox.dataset.sig !== chipSig) {
+        chipBox.dataset.sig = chipSig;
+        chipBox.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        s.players.forEach((p, idx) => {
+          if (!aliveIdSet.has(p.id)) return;
+          const active = validMultiSet.has(p.id);
+          const lightBg = isLightColor(p.color);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.multiPid = p.id;
+          btn.className = `multi-player-chip${active ? ' is-selected' : ''}`;
+          btn.innerHTML = `
+            <span class="multi-chip-num${lightBg ? ' is-light' : ''}" style="background:${esc(p.color)};color:${lightBg ? '#1D1D1F' : '#FFFFFF'}">${idx + 1}</span>
+            <span class="multi-chip-name">${esc(playerDisplayName(s, p, idx))}</span>
+            <span class="multi-chip-check" aria-hidden="true">${active ? '✓' : ''}</span>`;
+          frag.appendChild(btn);
+        });
+        chipBox.appendChild(frag);
+      }
+    }
   }
 
   const cats = Array.isArray(preloadedCats) && preloadedCats.length ? preloadedCats : getCategories100();
@@ -1119,7 +1277,8 @@ function renderSetup(s, preloadedCats = null) {
     const chosen = cats.find((c) => c.id === catSel.value) || firstNonEmpty || null;
     syncTopicTriggerButton(chosen);
     if ($('btnStartDuel')) {
-      $('btnStartDuel').disabled = !(validChal && validDef && chosen && Array.isArray(chosen.items) && chosen.items.length) || !!s.championId;
+      const canStartParticipants = isMultiMode ? (validMultiIds.length >= 2) : Boolean(validChal && validDef);
+      $('btnStartDuel').disabled = !(canStartParticipants && chosen && Array.isArray(chosen.items) && chosen.items.length) || !!s.championId;
     }
   }
   if ($('topicPickerModal') && !$('topicPickerModal').classList.contains('hidden')) {
@@ -1152,7 +1311,7 @@ function renderSetup(s, preloadedCats = null) {
       if (!inp || !row) return;
       const field = inp.dataset.f;
       const raw = inp.value.trim();
-      if (!raw) return;
+      if (field !== 'name' && !raw) return;
       const val = field === 'durationSec' ? clampDurationSec(raw) : raw;
       if (field === 'durationSec') inp.value = String(val);
       if (field === 'color') {
@@ -1184,7 +1343,7 @@ function renderSetup(s, preloadedCats = null) {
           <span>${idx + 1}</span>
           <input type="color" data-f="color" value="${esc(p.color)}" class="roster-color-hidden" />
         </label>
-        <input class="roster-name-inp" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" placeholder="Tên người chơi…" />`;
+        <input class="roster-name-inp" data-f="name" value="${esc(p.name || '')}" maxlength="14" title="Tên người chơi" placeholder="Người chơi ${idx + 1}" />`;
       rFrag.appendChild(row);
     });
     roster.appendChild(rFrag);
@@ -1341,7 +1500,7 @@ function openTopicPickerModal(ctx = { mode: 'duel', playerId: null }) {
   const subEl = $('topicModalSubtitle');
   if (topicModalContext.mode === 'player' && topicModalContext.playerId && state) {
     const p = playerById(state, topicModalContext.playerId);
-    if (titleEl) titleEl.textContent = p ? `Chủ đề sở trường · ${p.avatar} ${p.name}` : 'Chọn chủ đề sở trường';
+    if (titleEl) titleEl.textContent = p ? `Chủ đề sở trường · ${p.avatar} ${playerDisplayName(state, p)}` : 'Chọn chủ đề sở trường';
     if (subEl) subEl.textContent = 'Chạm vào thẻ chủ đề để gán làm sở trường cho người chơi này';
   } else {
     if (titleEl) titleEl.textContent = 'Chọn chủ đề thi đấu';
@@ -1391,35 +1550,150 @@ function selectTopicFromModal(catId) {
 function renderArena(s) {
   const d = s.duel;
   if (!d) return;
-  const A = playerById(s, d.aId);
-  const B = playerById(s, d.bId);
-  [['A', A], ['B', B]].forEach(([side, p]) => {
-    $(`avatar${side}`).textContent = p.avatar;
-    $(`avatar${side}`).style.setProperty('--pc', p.color);
-    $(`name${side}`).textContent = p.name;
-    $(`cells${side}`).textContent = cellCount(s, p.id);
-    const card = $(`card${side}`);
-    const active = s.phase === 'playing' && d.turn === side;
-    const finished = s.phase === 'finished';
-    card.classList.toggle('active', active);
-    card.classList.toggle('idle', (s.phase === 'playing' || s.phase === 'paused') && d.turn !== side);
-    card.classList.toggle('out', finished && d.loserSide === side);
-    card.classList.toggle('win', finished && d.loserSide !== side);
-  });
+  const isMulti = d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length >= 2;
+  const bottomBar = $('arenaBottomBar');
+  const multiHud = $('multiHudBar');
+  if (bottomBar) bottomBar.classList.toggle('is-multi-arena', isMulti);
+  if ($('viewArena')) $('viewArena').classList.toggle('is-multi-arena', isMulti);
+  if ($('cardA')) $('cardA').classList.toggle('hidden', isMulti);
+  if ($('cardB')) $('cardB').classList.toggle('hidden', isMulti);
+  if (multiHud) multiHud.classList.toggle('hidden', !isMulti);
 
-  // Viền LED & banner lượt
+  const ruleBadge = $('multiRuleBadge');
+  if (ruleBadge) {
+    ruleBadge.classList.toggle('hidden', !isMulti);
+    if (isMulti) {
+      ruleBadge.textContent = d.multiRule === 'last_standing'
+        ? '🏆 Loại dần đến người cuối'
+        : '⚡ 1 người hết giờ là kết thúc';
+    }
+  }
+
   let led = '#64d2ff';
   let banner = 'SẴN SÀNG';
-  if (s.phase === 'countdown') {
-    led = '#ffd60a';
-    banner = 'CHUẨN BỊ VÀO TRẬN';
-  } else if (s.phase === 'playing' || s.phase === 'paused') {
-    led = SIDE_COLOR[d.turn];
-    banner = `LƯỢT: ${(d.turn === 'A' ? A : B).name.toUpperCase()}`;
-  } else if (s.phase === 'finished') {
-    led = '#ffd60a';
-    banner = 'KẾT THÚC';
+
+  if (isMulti) {
+    const parts = d.participants;
+    const activeIdx = Math.max(0, Math.min(parts.length - 1, Number(d.activeTurnIdx) || 0));
+    const winnerIdSet = new Set(
+      (Array.isArray(d.winners) && d.winners.length
+        ? d.winners.map((w) => w && w.id)
+        : [d.winnerId]).filter(Boolean),
+    );
+    if (multiHud) {
+      const hudSig = JSON.stringify(parts.map((p) => [p.id, p.name, p.color, p.icon]));
+      if (multiHud.dataset.sig !== hudSig) {
+        multiHud.dataset.sig = hudSig;
+        multiHud.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        parts.forEach((p, i) => {
+          const pIdx = s.players.findIndex((x) => x && x.id === p.id);
+          const dispIdx = pIdx >= 0 ? pIdx : i;
+          const lightBg = isLightColor(p.color);
+          const card = document.createElement('div');
+          card.id = `multiCard_${i}`;
+          card.className = 'multi-p-card side-card hud-card';
+          card.style.setProperty('--mc', p.color || '#0a84ff');
+          card.innerHTML = `
+            <div class="multi-p-top">
+              <span class="multi-p-badge${lightBg ? ' is-light' : ''}" style="background:${esc(p.color || '#0a84ff')};color:${lightBg ? '#1D1D1F' : '#FFFFFF'}">${dispIdx + 1}</span>
+              <span class="multi-p-name font-display truncate">${esc(playerDisplayName(s, p, dispIdx))}</span>
+              <span id="multiTag_${i}" class="multi-p-tag"></span>
+            </div>
+            <div class="multi-p-mid">
+              <div id="multiClock_${i}" class="multi-p-clock clock">60.0</div>
+              <span id="multiScore_${i}" class="multi-p-score"></span>
+            </div>
+            <div class="capsule"><div id="multiBar_${i}" class="capsule-fill"></div></div>`;
+          frag.appendChild(card);
+        });
+        multiHud.appendChild(frag);
+      }
+
+      const now = transport ? transport.serverNow() : Date.now();
+      parts.forEach((p, i) => {
+        const card = $(`multiCard_${i}`);
+        if (!card) return;
+        const isActive = (s.phase === 'playing' || s.phase === 'paused') && activeIdx === i && !p.eliminated;
+        const isRunningActive = s.phase === 'playing' && activeIdx === i && !p.eliminated;
+        const isWinner = s.phase === 'finished' && winnerIdSet.has(p.id);
+        const isElim = Boolean(p.eliminated) || (s.phase === 'finished' && !isWinner);
+        card.classList.toggle('active', isActive);
+        card.classList.toggle('is-running', isRunningActive);
+        card.classList.toggle('out', isElim);
+        card.classList.toggle('win', isWinner);
+        card.classList.toggle('idle', (s.phase === 'playing' || s.phase === 'paused') && !isActive && !isElim);
+
+        const tagEl = $(`multiTag_${i}`);
+        if (tagEl) {
+          if (isWinner) tagEl.textContent = '🏆 THẮNG';
+          else if (p.eliminated) tagEl.textContent = 'HẾT GIỜ';
+          else if (isActive) tagEl.textContent = 'ĐANG LƯỢT';
+          else tagEl.textContent = '';
+          tagEl.classList.toggle('is-active-tag', isActive);
+          tagEl.classList.toggle('is-win-tag', isWinner);
+          tagEl.classList.toggle('is-out-tag', Boolean(p.eliminated));
+        }
+        const scoreEl = $(`multiScore_${i}`);
+        if (scoreEl) {
+          scoreEl.textContent = (p.score || 0) > 0 ? `✓ ${p.score}` : '';
+        }
+        const ms = remainingOfParticipant(d, i, now);
+        const totalMs = p.totalMs || d.totalA || DUEL_MS;
+        const ratio = Math.max(0, Math.min(1, ms / totalMs));
+        const clockEl = $(`multiClock_${i}`);
+        const barEl = $(`multiBar_${i}`);
+        const txt = (ms / 1000).toFixed(1).padStart(4, '0');
+        if (clockEl && clockEl.textContent !== txt) clockEl.textContent = txt;
+        if (barEl) barEl.style.width = `${ratio * 100}%`;
+      });
+    }
+
+    const activeP = parts[activeIdx];
+    const activePlayerIdx = activeP ? s.players.findIndex((x) => x && x.id === activeP.id) : activeIdx;
+    if (s.phase === 'countdown') {
+      led = '#ffd60a';
+      banner = `CHUẨN BỊ · ${parts.length} NGƯỜI CHƠI`;
+    } else if (s.phase === 'playing' || s.phase === 'paused') {
+      led = (activeP && activeP.color) || '#0a84ff';
+      banner = `ĐANG LƯỢT: ${playerDisplayName(s, activeP, activePlayerIdx >= 0 ? activePlayerIdx : activeIdx).toUpperCase()}`;
+    } else if (s.phase === 'finished') {
+      led = '#ffd60a';
+      banner = 'KẾT THÚC';
+    } else {
+      banner = `XOAY VÒNG (${parts.length} NGƯỜI)`;
+    }
+  } else {
+    const A = playerById(s, d.aId);
+    const B = playerById(s, d.bId);
+    [['A', A], ['B', B]].forEach(([side, p]) => {
+      if (!p) return;
+      $(`avatar${side}`).textContent = p.avatar;
+      $(`avatar${side}`).style.setProperty('--pc', p.color);
+      $(`name${side}`).textContent = playerDisplayName(s, p);
+      $(`cells${side}`).textContent = cellCount(s, p.id);
+      const card = $(`card${side}`);
+      const active = s.phase === 'playing' && d.turn === side;
+      const finished = s.phase === 'finished';
+      card.classList.toggle('active', active);
+      card.classList.toggle('idle', (s.phase === 'playing' || s.phase === 'paused') && d.turn !== side);
+      card.classList.toggle('out', finished && d.loserSide === side);
+      card.classList.toggle('win', finished && d.loserSide !== side);
+    });
+
+    if (s.phase === 'countdown') {
+      led = '#ffd60a';
+      banner = 'CHUẨN BỊ VÀO TRẬN';
+    } else if (s.phase === 'playing' || s.phase === 'paused') {
+      led = SIDE_COLOR[d.turn];
+      const turnP = d.turn === 'A' ? A : B;
+      banner = `LƯỢT: ${playerDisplayName(s, turnP).toUpperCase()}`;
+    } else if (s.phase === 'finished') {
+      led = '#ffd60a';
+      banner = 'KẾT THÚC';
+    }
   }
+
   $('qWrap').style.setProperty('--led', led);
   document.documentElement.style.setProperty('--turn', led);
   $('qWrap').classList.toggle('paused', s.phase === 'paused');
@@ -1472,11 +1746,51 @@ function renderArena(s) {
   if (fin) {
     if ($('passOverlay')) $('passOverlay').classList.add('hidden');
     if ($('passRevealBox')) $('passRevealBox').classList.add('hidden');
-    const w = playerById(s, d.winnerId);
-    $('resultName').textContent = `${w.avatar} ${w.name.toUpperCase()}`;
-    $('resultSub').textContent = s.championId
-      ? `🏆 VÔ ĐỊCH CHUNG CUỘC · sở hữu toàn bộ ${s.floor.length} ô`
-      : `Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w.id)}/${s.floor.length} ô`;
+    const resNameEl = $('resultName');
+    const resSubEl = $('resultSub');
+    const multiWinners = isMulti && Array.isArray(d.winners) && d.winners.length
+      ? d.winners
+      : (isMulti
+        ? (d.participants || []).filter((p) => p && !p.eliminated)
+        : []);
+    const loserP = d.loserId
+      ? (playerById(s, d.loserId) || (d.participants || []).find((p) => p && p.id === d.loserId))
+      : null;
+    const loserName = d.loserId ? playerDisplayName(s, loserP || d.loserId) : '';
+
+    if (isMulti && multiWinners.length > 1) {
+      if (resNameEl) {
+        resNameEl.classList.add('is-multi-winners');
+        const winnerPills = multiWinners.map((wp) => {
+          const refP = playerById(s, wp.id) || wp;
+          const disp = playerDisplayName(s, refP);
+          const col = wp.color || (refP && refP.color) || '#0a84ff';
+          return `<span class="result-winner-pill"><i class="result-winner-dot" style="background:${esc(col)}"></i><span>${esc(disp)}</span></span>`;
+        }).join('<span class="result-winner-sep">,</span>');
+        resNameEl.innerHTML = `<span class="result-multi-wrap">🎉 ${winnerPills} <span class="result-multi-tail">chiến thắng!</span></span>`;
+      }
+      if (resSubEl) {
+        const subParts = [];
+        if (loserName) subParts.push(`(${loserName} hết giờ đầu tiên)`);
+        if (d.changed.length) subParts.push(`Chia ${d.changed.length} ô cho đội thắng`);
+        resSubEl.textContent = subParts.join(' · ') || 'Đội sống sót giành chiến thắng!';
+      }
+    } else {
+      if (resNameEl) resNameEl.classList.remove('is-multi-winners');
+      const soleWinnerId = (multiWinners[0] && multiWinners[0].id) || d.winnerId;
+      const w = playerById(s, soleWinnerId);
+      const wName = playerDisplayName(s, w || soleWinnerId);
+      if (resNameEl) resNameEl.textContent = `${w ? w.avatar : '🏆'} ${wName.toUpperCase()}`;
+      if (resSubEl) {
+        if (s.championId) {
+          resSubEl.textContent = `🏆 VÔ ĐỊCH CHUNG CUỘC · sở hữu toàn bộ ${s.floor.length} ô`;
+        } else if (isMulti && d.multiRule === 'first_out' && loserName) {
+          resSubEl.textContent = `(${loserName} hết giờ đầu tiên) · Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w ? w.id : soleWinnerId)}/${s.floor.length} ô`;
+        } else {
+          resSubEl.textContent = `Chiếm ${d.changed.length} ô đất · tổng ${cellCount(s, w ? w.id : soleWinnerId)}/${s.floor.length} ô`;
+        }
+      }
+    }
     paintVictoryButtons();
   }
 }
@@ -1679,14 +1993,21 @@ function renderControls(s) {
 function renderFireworks(s) {
   const d = s.duel;
   if (s.phase === 'finished' && d) {
+    const isMulti = d.mode === 'multi';
     const winnerSide = d.loserSide === 'A' ? 'B' : 'A';
-    const key = `${d.winnerId}-${winnerSide}-${d.changed.join(',')}`;
+    const key = `${d.winnerId}-${isMulti ? 'multi' : winnerSide}-${d.changed.join(',')}`;
     if (key === fxKey && fx && fx.running) return;
     fxKey = key;
     const w = playerById(s, d.winnerId);
-    const zone = window.innerWidth >= 1024 ? (winnerSide === 'A' ? [0.04, 0.42] : [0.58, 0.96]) : [0.08, 0.92];
+    const multiColors = isMulti && Array.isArray(d.winners) && d.winners.length
+      ? d.winners.map((x) => x && x.color).filter(Boolean)
+      : [];
+    const zone = (!isMulti && window.innerWidth >= 1024)
+      ? (winnerSide === 'A' ? [0.04, 0.42] : [0.58, 0.96])
+      : [0.08, 0.92];
     fx.start(zone, [
-      SIDE_COLOR[winnerSide],
+      ...multiColors,
+      isMulti ? (w ? w.color : '#ffd60a') : SIDE_COLOR[winnerSide],
       w ? w.color : '#ffd60a',
       '#ffd60a',
       '#0a84ff',
@@ -1711,25 +2032,58 @@ function frame() {
   if (!state || !state.duel || state.phase === 'floor') return;
   const d = state.duel;
   const now = transport.serverNow();
-  const rem = { A: remainingOf(d, 'A', now), B: remainingOf(d, 'B', now) };
+  const isMulti = d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length >= 2;
+  let activeRemMs = DUEL_MS;
 
-  ['A', 'B'].forEach((side) => {
-    const ms = rem[side];
-    const totalMs = (side === 'A' ? d.totalA : d.totalB) || DUEL_MS;
-    const ratio = Math.max(0, Math.min(1, ms / totalMs));
-    const clock = $(`clock${side}`);
-    const bar = $(`bar${side}`);
-    const text = (ms / 1000).toFixed(1).padStart(4, '0');
-    if (clock.textContent !== text) clock.textContent = text;
-    const danger = ms > 0 && ms <= 10000 && (state.phase === 'playing' || state.phase === 'paused');
-    clock.classList.toggle('danger', danger && d.turn === side && state.phase === 'playing');
-    clock.classList.toggle('zero', ms <= 0);
-    bar.classList.toggle('danger', danger);
-    bar.style.width = `${ratio * 100}%`;
-    const ring = $(`ring${side}`);
-    ring.style.strokeDashoffset = String(RING_LEN * (1 - ratio));
-    ring.classList.toggle('danger', danger);
-  });
+  if (isMulti) {
+    const activeIdx = Math.max(0, Math.min(d.participants.length - 1, Number(d.activeTurnIdx) || 0));
+    d.participants.forEach((p, i) => {
+      const ms = remainingOfParticipant(d, i, now);
+      if (i === activeIdx) activeRemMs = ms;
+      const totalMs = p.totalMs || d.totalA || DUEL_MS;
+      const ratio = Math.max(0, Math.min(1, ms / totalMs));
+      const clock = $(`multiClock_${i}`);
+      const bar = $(`multiBar_${i}`);
+      const text = (ms / 1000).toFixed(1).padStart(4, '0');
+      const danger = ms > 0 && ms <= 10000 && (state.phase === 'playing' || state.phase === 'paused') && !p.eliminated;
+      if (clock) {
+        if (clock.textContent !== text) clock.textContent = text;
+        clock.classList.toggle('danger', danger && activeIdx === i && state.phase === 'playing');
+        clock.classList.toggle('zero', ms <= 0);
+      }
+      if (bar) {
+        bar.classList.toggle('danger', danger);
+        bar.style.width = `${ratio * 100}%`;
+      }
+    });
+  } else {
+    const rem = { A: remainingOf(d, 'A', now), B: remainingOf(d, 'B', now) };
+    activeRemMs = rem[d.turn];
+    ['A', 'B'].forEach((side) => {
+      const ms = rem[side];
+      const totalMs = (side === 'A' ? d.totalA : d.totalB) || DUEL_MS;
+      const ratio = Math.max(0, Math.min(1, ms / totalMs));
+      const clock = $(`clock${side}`);
+      const bar = $(`bar${side}`);
+      const text = (ms / 1000).toFixed(1).padStart(4, '0');
+      if (clock) {
+        if (clock.textContent !== text) clock.textContent = text;
+        const danger = ms > 0 && ms <= 10000 && (state.phase === 'playing' || state.phase === 'paused');
+        clock.classList.toggle('danger', danger && d.turn === side && state.phase === 'playing');
+        clock.classList.toggle('zero', ms <= 0);
+      }
+      const danger = ms > 0 && ms <= 10000 && (state.phase === 'playing' || state.phase === 'paused');
+      if (bar) {
+        bar.classList.toggle('danger', danger);
+        bar.style.width = `${ratio * 100}%`;
+      }
+      const ring = $(`ring${side}`);
+      if (ring) {
+        ring.style.strokeDashoffset = String(RING_LEN * (1 - ratio));
+        ring.classList.toggle('danger', danger);
+      }
+    });
+  }
 
   if (state.phase === 'countdown') {
     const total = d.cdTotal || COUNTDOWN_MS;
@@ -1778,8 +2132,7 @@ function frame() {
   }
 
   if (state.phase === 'playing') {
-    const cur = rem[d.turn];
-    if (cur <= 0 && !tickPending) {
+    if (activeRemMs <= 0 && !tickPending) {
       tickPending = true;
       if ($('passOverlay')) $('passOverlay').classList.add('hidden');
       if ($('passRevealBox')) $('passRevealBox').classList.add('hidden');
@@ -2074,6 +2427,28 @@ function bindStaticUi() {
     });
   });
   if ($('btnSwapPair')) $('btnSwapPair').addEventListener('click', () => dispatch('swapPair'));
+  document.querySelectorAll('#duelModeSeg [data-duel-mode]').forEach((b) => {
+    b.addEventListener('click', () => {
+      dispatch('setDuelMode', { mode: b.dataset.duelMode });
+      b.blur();
+    });
+  });
+  document.querySelectorAll('#multiRuleSeg [data-multi-rule]').forEach((b) => {
+    b.addEventListener('click', () => {
+      dispatch('setMultiRule', { rule: b.dataset.multiRule });
+      b.blur();
+    });
+  });
+  if ($('btnMultiSelectAll')) {
+    $('btnMultiSelectAll').addEventListener('click', () => dispatch('selectAllMultiPlayers'));
+  }
+  if ($('multiSecInp')) {
+    $('multiSecInp').addEventListener('change', (e) => {
+      const sec = clampDurationSec(e.target.value);
+      e.target.value = String(sec);
+      dispatch('setMultiDuration', { durationSec: sec });
+    });
+  }
   if ($('pairChalSec')) {
     $('pairChalSec').addEventListener('change', (e) => {
       if (!state || !state.setup || !state.setup.chalId) return;
@@ -2125,6 +2500,10 @@ function bindStaticUi() {
         try { initSharedTopics(loadFirebaseConfig()); } catch { /* ignore */ }
       }
       if ($('miniErr')) $('miniErr').classList.add('hidden');
+      if (document.body) {
+        document.body.classList.add('host');
+        document.body.classList.remove('is-viewer');
+      }
       render(state);
       if ($('roleLabel')) $('roleLabel').textContent = 'Màn hình · đã mở khóa Host';
     } else if ($('miniErr')) {
