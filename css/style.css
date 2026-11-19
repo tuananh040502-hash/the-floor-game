@@ -1035,20 +1035,23 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  grid-auto-rows: 1fr;
+  grid-auto-rows: auto;
   gap: 14px;
   align-items: stretch;
   align-content: start;
 }
 #topicPickerModal .topic-card,
+#topicModalGrid > .topic-card,
 .topic-card {
+  all: unset;
+  box-sizing: border-box;
   position: relative;
   display: flex !important;
   flex-direction: column !important;
-  height: 100% !important;
-  min-height: 0 !important;
-  max-height: none !important;
   width: 100%;
+  height: auto !important;
+  min-height: 195px;
+  max-height: none !important;
   border-radius: 16px !important;
   overflow: hidden;
   background: #1C1C1E;
@@ -1058,7 +1061,7 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   color: #F5F5F7;
   cursor: pointer;
   user-select: none;
-  transition: transform 0.16s var(--ease), border-color 0.16s var(--ease), background 0.16s var(--ease);
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
 #topicPickerModal .topic-card:hover:not(.is-empty),
 .topic-card:hover:not(.is-empty) {
@@ -1071,8 +1074,8 @@ html[data-theme='light'] .topic-picker-trigger-badge {
 }
 #topicPickerModal .topic-card.is-selected,
 .topic-card.is-selected {
-  border: 2px solid #0A84FF !important;
-  box-shadow: 0 6px 22px rgba(10, 132, 255, 0.28);
+  border-color: #0A84FF !important;
+  box-shadow: 0 0 0 1px #0A84FF;
 }
 #topicPickerModal .topic-card.is-empty,
 .topic-card.is-empty {
@@ -1083,6 +1086,7 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 10;
+  height: auto;
   flex-shrink: 0;
   overflow: hidden;
   background: #2C2C2E;
@@ -1154,12 +1158,12 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   display: inline-flex;
 }
 .topic-card-body {
-  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex: 1;
   justify-content: space-between;
+  flex: 1;
+  padding: 12px 14px 14px;
+  gap: 6px;
   background: #1C1C1E;
   overflow: visible;
 }
@@ -1169,9 +1173,9 @@ html[data-theme='light'] .topic-picker-trigger-badge {
 .topic-card-name {
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.35;
-  min-height: 2.7em;
   color: #FFFFFF;
+  line-height: 1.35;
+  height: 2.7em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1189,7 +1193,7 @@ html[data-theme='light'] .topic-picker-trigger-badge {
 .topic-card-count {
   font-size: 12px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
   color: #8E8E93;
 }
@@ -1213,17 +1217,16 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   .topic-modal-grid {
     padding: 12px 14px 18px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: 1fr;
+    grid-auto-rows: auto;
     gap: 10px;
     align-items: stretch;
+    align-content: start;
   }
   #topicPickerModal .topic-card,
+  #topicModalGrid > .topic-card,
   .topic-card {
-    height: 100% !important;
-    min-height: 0 !important;
-  }
-  .topic-card-media {
-    min-height: 0;
+    height: auto !important;
+    min-height: 170px;
   }
   .topic-card-body {
     padding: 10px 12px 12px;
@@ -1231,7 +1234,7 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   }
   .topic-card-name {
     font-size: 13px;
-    min-height: 2.7em;
+    height: 2.7em;
   }
 }
 
