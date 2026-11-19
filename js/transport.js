@@ -21,6 +21,18 @@ export function normalizeFolderId(id) {
   return String(id || '').trim();
 }
 
+/** Kiểm tra danh tính Drive (Apps Script URL + Folder ID) có quyền sửa/xóa chủ đề hay không. */
+export function canIdentityModifyTopic(topic, identity) {
+  if (!topic || typeof topic !== 'object') return false;
+  const scriptUrl = normalizeScriptUrl(identity && identity.scriptUrl);
+  const folderId = normalizeFolderId(identity && identity.folderId);
+  if (!scriptUrl || !folderId) return false;
+  const ownerUrl = normalizeScriptUrl(topic.ownerScriptUrl);
+  const ownerFolder = normalizeFolderId(topic.ownerFolderId);
+  if (!ownerUrl || !ownerFolder) return true;
+  return scriptUrl === ownerUrl && folderId === ownerFolder;
+}
+
 export function getDeletedTopicIds() {
   try {
     const raw = JSON.parse(localStorage.getItem(DELETED_TOPICS_KEY) || '[]');
@@ -530,9 +542,13 @@ async function firebaseSharedTopics(config) {
         throw err;
       }
     },
-    async putTopic(topic) {
+    async putTopic(topic, identity = null) {
       const clean = sanitizeCloudTopic(topic);
       if (!clean) return false;
+      if (identity && !canIdentityModifyTopic(clean, identity)) {
+        emitStatus({ state: 'error', message: 'Từ chối ghi đè: Không khớp quyền sở hữu chủ đề.' });
+        return false;
+      }
       emitStatus({ state: 'syncing', message: 'Đang lưu lên Cloud…' });
       try {
         await db.set(db.ref(database, `${SHARED_TOPICS_PATH}/${clean.id}`), clean);
@@ -543,13 +559,13 @@ async function firebaseSharedTopics(config) {
         return false;
       }
     },
-    async putMany(topicsList) {
+    async putMany(topicsList, identity = null) {
       if (!Array.isArray(topicsList) || !topicsList.length) return 0;
       const patch = {};
       let count = 0;
       topicsList.forEach((t) => {
         const clean = sanitizeCloudTopic(t);
-        if (clean) {
+        if (clean && (!identity || canIdentityModifyTopic(clean, identity))) {
           patch[clean.id] = clean;
           count += 1;
         }

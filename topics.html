@@ -9,7 +9,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=perf16" />
+  <link rel="stylesheet" href="css/style.css?v=auth17" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -117,6 +117,9 @@
         </div>
 
         <div id="editorBody" class="hidden space-y-6 mx-auto anim-zoom-center" style="max-width:980px">
+          <div id="topicReadOnlyNotice" class="topic-readonly-notice hidden" role="status">
+            🔒 Chủ đề của người khác (Chỉ xem) — Cần nhập đúng Apps Script Web App URL và Folder ID đã đăng chủ đề này để sửa hoặc xóa.
+          </div>
           <!-- Thông tin chủ đề -->
           <div class="group group-pad space-y-5">
             <div class="grid gap-4 md:grid-cols-[1fr_auto] items-end">
@@ -227,7 +230,7 @@
           </div>
 
           <!-- Thêm ảnh -->
-          <div class="grid gap-4 xl:grid-cols-2">
+          <div id="addImagesSection" class="grid gap-4 xl:grid-cols-2">
             <div id="dropzone" class="dropzone p-6 text-center space-y-3 flex flex-col items-center justify-center">
               <div class="text-4xl">☁️</div>
               <div class="font-display text-xl t-1">Kéo thả ảnh vào đây</div>
@@ -315,8 +318,8 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script type="module" src="js/theme.js?v=perf16"></script>
-  <script type="module" src="js/cms.js?v=perf16"></script>
+  <script type="module" src="js/theme.js?v=auth17"></script>
+  <script type="module" src="js/cms.js?v=auth17"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')
