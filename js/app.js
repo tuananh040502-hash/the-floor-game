@@ -3,7 +3,7 @@ import { openFirebaseSettings } from './settings.js?v=iosfix15';
 import {
   createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, getDeletedTopicIds, markTopicDeleted,
-} from './transport.js?v=iosfix15';
+} from './transport.js?v=bgm1';
 import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js?v=iosfix15';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
@@ -13,6 +13,7 @@ import {
   isLegacyEmojiSampleTopic, purgeEmptyAndDefaultTopics, invalidateEngineCategoriesCache,
 } from './engine.js?v=iosfix15';
 import { Sfx } from './audio.js?v=iosfix15';
+import { initBgm } from './bgm.js?v=bgm1';
 import { Fireworks } from './fx.js?v=iosfix15';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js?v=iosfix15';
 
@@ -95,6 +96,7 @@ let topicModalSearchQuery = '';
 let cachedCategories100 = null;
 let categoriesCacheVersion = -1;
 let categoriesSourceVersion = 0;
+let bgm = null;
 const localVoiceAudioCache = new Map();
 const cleanedLegacyCloudIds = new Set();
 
@@ -143,6 +145,11 @@ async function init() {
     bindStaticUi();
   } catch (err) {
     console.error('Lỗi bindStaticUi:', err);
+  }
+  try {
+    bgm = initBgm({ autoPlay: true, page: 'game' });
+  } catch (err) {
+    console.warn('Không khởi tạo được nhạc nền BGM:', err);
   }
 
   // Khởi tạo transport tạm cục bộ để mọi thao tác không bao giờ lỗi trước khi Firebase kết nối xong
@@ -858,6 +865,7 @@ function render(s) {
   }
   try { renderFireworks(s); } catch (err) { console.error('Lỗi renderFireworks:', err); }
   try { syncMusic(s); } catch (err) { console.error('Lỗi syncMusic:', err); }
+  try { if (bgm) bgm.setArenaPaused(inDuel); } catch (err) { console.error('Lỗi bgm.setArenaPaused:', err); }
 }
 
 // Nhạc nền đếm ngược: chỉ chạy khi đang đấu (dừng khi tạm dừng / kết thúc), nhịp tăng theo thời gian còn lại.
@@ -2146,6 +2154,13 @@ function bindStaticUi() {
   if ($('miniPin')) $('miniPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); tryUnlock(); } });
 
   window.addEventListener('keydown', (e) => {
+    if ($('bgmModal') && !$('bgmModal').classList.contains('hidden')) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (bgm) bgm.closeModal();
+      }
+      return;
+    }
     if (e.key === 'Escape' && $('topicPickerModal') && !$('topicPickerModal').classList.contains('hidden')) {
       e.preventDefault();
       closeTopicPickerModal();

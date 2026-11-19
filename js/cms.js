@@ -3,7 +3,7 @@ import {
   createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl, toThumbUrl400,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, extractDriveId,
   canIdentityModifyTopic, getDeletedTopicIds, markTopicDeleted,
-} from './transport.js?v=auth17';
+} from './transport.js?v=bgm1';
 import {
   TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
   parseVictoryAudio, normalizeVictoryAudioUrl,
@@ -15,6 +15,7 @@ import {
   purgeEmptyAndDefaultTopics,
 } from './engine.js?v=iosfix15';
 import { Sfx } from './audio.js?v=iosfix15';
+import { initBgm } from './bgm.js?v=bgm1';
 
 export const MAX_TOPIC_IMAGES = 100;
 
@@ -153,6 +154,7 @@ let deletingTopic = false;
 let cloudSync = null;
 let initialMigrationDone = false;
 let pendingDeleteId = null;
+let bgm = null;
 const cleanedLegacyCloudIds = new Set();
 const ownerBackfilledIds = new Set();
 
@@ -1039,6 +1041,7 @@ function saveDriveCfg() {
     }
   }
   render();
+  if (bgm) bgm.refreshDriveIdentity();
   toast('Đã lưu cấu hình Google Drive.');
 }
 
@@ -1706,6 +1709,7 @@ function bind() {
       toast('Chưa có file âm thanh từ máy.', true);
       return;
     }
+    if (bgm) bgm.pausePreview();
     Sfx.unlock();
     const spec = topicAudioSpec(t);
     const pct = Math.round(spec.localAudioVolume * 100);
@@ -1775,6 +1779,7 @@ function bind() {
   $('btnTestExternalOnly').addEventListener('click', async () => {
     const t = cur();
     if (!t) return;
+    if (bgm) bgm.pausePreview();
     Sfx.unlock();
     const raw = $('tVictoryAudio').value.trim();
     if (raw && !parseVictoryAudio(raw)) {
@@ -1801,6 +1806,7 @@ function bind() {
   $('btnTestVictoryAudio').addEventListener('click', async () => {
     const t = cur();
     if (!t) return;
+    if (bgm) bgm.pausePreview();
     Sfx.unlock();
     const raw = $('tVictoryAudio').value.trim();
     if (canEditTopic(t) && raw !== (t.victoryAudioUrl || '')) {
@@ -1956,5 +1962,6 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 bind();
+bgm = initBgm({ autoPlay: false, page: 'topics', getDriveIdentity: getCurrentDriveIdentity });
 render();
 initCloudSync();

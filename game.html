@@ -11,7 +11,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=perf16" />
+  <link rel="stylesheet" href="css/style.css?v=bgm1" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -37,6 +37,10 @@
         <span id="connLabel" class="chip">…</span>
         <a id="linkCms" class="hidden btn btn-ghost btn-sm" href="topics.html">Chủ đề</a>
         <button id="btnFirebase" class="btn btn-ghost btn-sm" title="Cấu hình Firebase &amp; Đám Mây">⚙︎ Firebase</button>
+        <div class="bgm-header-pill" role="group" aria-label="Nhạc nền">
+          <button id="btnBgmMute" type="button" class="btn btn-ghost btn-sm btn-icon" title="Bật / tắt tiếng nhạc nền">🎵</button>
+          <button id="btnBgmModal" type="button" class="btn btn-ghost btn-sm btn-icon" title="Danh sách &amp; Quản lý nhạc nền">☰</button>
+        </div>
         <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
         <button id="btnMute" class="btn btn-ghost btn-sm btn-icon" title="Bật/tắt âm">🔊</button>
         <button id="btnFull" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
@@ -393,6 +397,6 @@
   </div>
 
   <script type="module" src="js/theme.js?v=perf16"></script>
-  <script type="module" src="js/app.js?v=perf16"></script>
+  <script type="module" src="js/app.js?v=bgm1"></script>
 </body>
 </html>

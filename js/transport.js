@@ -10,6 +10,8 @@ const FB_VERSION = '10.12.2';
 const FB_BASE = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
 export const SHARED_TOPICS_PATH = 'shared_topics';
 export const DELETED_TOPICS_KEY = 'deleted_topic_ids';
+export const SHARED_BGM_PATH = 'shared_bgm';
+export const BGM_CACHE_KEY = 'thefloor:bgm';
 const MAX_CLOUD_IMAGES = 100;
 const MAX_INLINE_STR_LEN = 2048;
 
@@ -30,6 +32,18 @@ export function canIdentityModifyTopic(topic, identity) {
   const ownerUrl = normalizeScriptUrl(topic.ownerScriptUrl);
   const ownerFolder = normalizeFolderId(topic.ownerFolderId);
   if (!ownerUrl || !ownerFolder) return true;
+  return scriptUrl === ownerUrl && folderId === ownerFolder;
+}
+
+/** Kiểm tra danh tính Drive có khớp chính xác chủ sở hữu bài nhạc nền hay không. */
+export function canIdentityModifyBgm(bgm, identity) {
+  if (!bgm || typeof bgm !== 'object') return false;
+  const scriptUrl = normalizeScriptUrl(identity && identity.scriptUrl);
+  const folderId = normalizeFolderId(identity && identity.folderId);
+  if (!scriptUrl || !folderId) return false;
+  const ownerUrl = normalizeScriptUrl(bgm.ownerScriptUrl);
+  const ownerFolder = normalizeFolderId(bgm.ownerFolderId);
+  if (!ownerUrl || !ownerFolder) return false;
   return scriptUrl === ownerUrl && folderId === ownerFolder;
 }
 
@@ -243,6 +257,83 @@ export function parseCloudTopicsSnapshot(val) {
       out.push(clean);
     }
   });
+  return out;
+}
+
+/** Trích xuất YouTube Video ID từ mọi định dạng link (watch?v=, youtu.be/, shorts/, embed/, live/). */
+export function extractYouTubeId(raw) {
+  if (typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (!s) return '';
+  const m = /(?:^|\/\/)(?:www\.|m\.|music\.)?(?:youtu\.be\/([a-zA-Z0-9_-]{6,32})|(?:youtube\.com|youtube-nocookie\.com)\/(?:watch\/?\?(?:[^#\s]*&)?v=([a-zA-Z0-9_-]{6,32})|(?:shorts|embed|live|v)\/([a-zA-Z0-9_-]{6,32})))/i.exec(s);
+  const id = (m && (m[1] || m[2] || m[3]) ? (m[1] || m[2] || m[3]) : '').trim();
+  return /^[a-zA-Z0-9_-]{6,32}$/.test(id) ? id : '';
+}
+
+/** Làm sạch dữ liệu 1 bài nhạc nền trước khi đồng bộ `shared_bgm` và cache cục bộ. */
+export function sanitizeCloudBgm(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = String(raw.id || '').trim().replace(/[.#$/[\]]/g, '_');
+  if (!id) return null;
+
+  const rawUrl = typeof raw.url === 'string' && !/^data:/i.test(raw.url) && raw.url.length <= MAX_INLINE_STR_LEN
+    ? raw.url.trim()
+    : '';
+  let fileId = String(raw.fileId || '').trim().slice(0, 128);
+  let youtubeId = String(raw.youtubeId || '').trim().slice(0, 32);
+  let type = raw.type === 'youtube' ? 'youtube' : raw.type === 'drive' ? 'drive' : '';
+
+  if (!type) {
+    if (youtubeId || extractYouTubeId(rawUrl)) type = 'youtube';
+    else if (fileId || extractDriveId(rawUrl)) type = 'drive';
+  }
+  if (type === 'youtube') {
+    youtubeId = youtubeId || extractYouTubeId(rawUrl);
+    if (!youtubeId) return null;
+    fileId = '';
+  } else if (type === 'drive') {
+    fileId = fileId || extractDriveId(rawUrl);
+    if (!fileId) return null;
+    youtubeId = '';
+  } else {
+    return null;
+  }
+
+  const url = type === 'youtube'
+    ? (rawUrl || `https://www.youtube.com/watch?v=${youtubeId}`)
+    : `https://drive.google.com/uc?export=open&id=${fileId}`;
+  const title = String(raw.title || '').trim().slice(0, 120)
+    || (type === 'youtube' ? `YouTube (${youtubeId})` : `Nhạc Drive (${fileId.slice(0, 8)})`);
+  const ownerScriptUrl = normalizeScriptUrl(raw.ownerScriptUrl).slice(0, MAX_INLINE_STR_LEN);
+  const ownerFolderId = normalizeFolderId(raw.ownerFolderId).slice(0, 128);
+  const createdAt = Number(raw.createdAt) || Date.now();
+
+  return {
+    id,
+    title,
+    type,
+    url,
+    fileId,
+    youtubeId,
+    ownerScriptUrl,
+    ownerFolderId,
+    createdAt,
+  };
+}
+
+export function parseCloudBgmSnapshot(val) {
+  if (!val || typeof val !== 'object') return [];
+  const rawList = Array.isArray(val) ? val : Object.values(val);
+  const out = [];
+  const seen = new Set();
+  rawList.forEach((item) => {
+    const clean = sanitizeCloudBgm(item);
+    if (clean && !seen.has(clean.id)) {
+      seen.add(clean.id);
+      out.push(clean);
+    }
+  });
+  out.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   return out;
 }
 
@@ -668,6 +759,183 @@ function localSharedTopics() {
       return true;
     },
     dispose() {
+      if (channel) channel.close();
+    },
+  };
+}
+
+/**
+ * Kết nối nhánh `shared_bgm` trên Firebase Realtime Database & cache `thefloor:bgm`.
+ */
+export async function createSharedBgmSync(config) {
+  if (config && config.databaseURL) {
+    try {
+      return await firebaseSharedBgm(config);
+    } catch (err) {
+      console.error('Không kết nối được shared_bgm trên Firebase, chuyển sang chế độ cục bộ:', err);
+      const local = localSharedBgm();
+      local.fallbackReason = err.message || String(err);
+      return local;
+    }
+  }
+  return localSharedBgm();
+}
+
+function writeBgmCache(list) {
+  try {
+    localStorage.setItem(BGM_CACHE_KEY, JSON.stringify(list));
+  } catch { /* ignore */ }
+}
+
+function readBgmCache() {
+  try {
+    return parseCloudBgmSnapshot(JSON.parse(localStorage.getItem(BGM_CACHE_KEY) || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+async function firebaseSharedBgm(config) {
+  const { appMod, db } = await loadSdk();
+  const app = getOrInitApp(appMod, config);
+  const database = db.getDatabase(app);
+  const bgmRef = db.ref(database, SHARED_BGM_PATH);
+
+  const statusListeners = [];
+  let currentStatus = { state: 'syncing', message: 'Đang kết nối nhạc nền…' };
+  const emitStatus = (st) => {
+    currentStatus = st;
+    statusListeners.forEach((cb) => {
+      try { cb(st); } catch (e) { console.error(e); }
+    });
+  };
+
+  let bgmUnsub = null;
+  let connUnsub = null;
+  let disposed = false;
+
+  connUnsub = subscribeConnected(db, database, (connected) => {
+    if (connected) {
+      emitStatus({ state: 'synced', message: 'Đã đồng bộ Cloud' });
+    } else {
+      emitStatus({ state: 'offline', message: 'Mất kết nối — dùng cache trên máy' });
+    }
+  });
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    if (bgmUnsub) { try { bgmUnsub(); } catch { /* ignore */ } bgmUnsub = null; }
+    if (connUnsub) { try { connUnsub(); } catch { /* ignore */ } connUnsub = null; }
+  };
+  window.addEventListener('pagehide', dispose);
+
+  return {
+    mode: 'firebase',
+    onStatus(cb) {
+      statusListeners.push(cb);
+      try { cb(currentStatus); } catch { /* ignore */ }
+    },
+    subscribe(cb) {
+      if (bgmUnsub) { try { bgmUnsub(); } catch { /* ignore */ } bgmUnsub = null; }
+      emitStatus({ state: 'syncing', message: 'Đang đồng bộ nhạc nền…' });
+      bgmUnsub = db.onValue(bgmRef, (snap) => {
+        const list = parseCloudBgmSnapshot(snap.val());
+        writeBgmCache(list);
+        emitStatus({ state: 'synced', message: 'Đã đồng bộ Cloud', count: list.length });
+        try { cb(list, snap.val()); } catch (e) { console.error(e); }
+      }, (err) => {
+        emitStatus({ state: 'error', message: `Lỗi đọc shared_bgm: ${err.message}` });
+      });
+    },
+    async fetchAll() {
+      const snap = await db.get(bgmRef);
+      const list = parseCloudBgmSnapshot(snap.val());
+      writeBgmCache(list);
+      return list;
+    },
+    async putBgm(item, identity = null) {
+      const clean = sanitizeCloudBgm(item);
+      if (!clean) return false;
+      if (!identity || !canIdentityModifyBgm(clean, identity)) {
+        emitStatus({ state: 'error', message: 'Từ chối ghi: Không khớp quyền Drive.' });
+        return false;
+      }
+      await db.set(db.ref(database, `${SHARED_BGM_PATH}/${clean.id}`), clean);
+      return true;
+    },
+    async removeBgm(bgmId) {
+      const cleanId = String(bgmId || '').trim().replace(/[.#$/[\]]/g, '_');
+      if (!cleanId) return false;
+      await db.remove(db.ref(database, `${SHARED_BGM_PATH}/${cleanId}`));
+      return true;
+    },
+    dispose,
+  };
+}
+
+function localSharedBgm() {
+  let channel = null;
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('thefloor:shared_bgm');
+    }
+  } catch { /* ignore */ }
+  const statusListeners = [];
+  const dataListeners = new Set();
+  const currentStatus = { state: 'local', message: 'Chế độ cục bộ' };
+  const emitAll = () => {
+    const list = readBgmCache();
+    dataListeners.forEach((cb) => {
+      try { cb(list, list); } catch (e) { console.error(e); }
+    });
+  };
+  let storageHandler = null;
+  return {
+    mode: 'local',
+    onStatus(cb) {
+      statusListeners.push(cb);
+      try { cb(currentStatus); } catch { /* ignore */ }
+    },
+    subscribe(cb) {
+      dataListeners.add(cb);
+      if (channel) channel.onmessage = emitAll;
+      if (!storageHandler) {
+        storageHandler = (e) => {
+          if (e.key === BGM_CACHE_KEY) emitAll();
+        };
+        window.addEventListener('storage', storageHandler);
+      }
+      setTimeout(emitAll, 0);
+    },
+    async fetchAll() {
+      return readBgmCache();
+    },
+    async putBgm(item, identity = null) {
+      const clean = sanitizeCloudBgm(item);
+      if (!clean || !identity || !canIdentityModifyBgm(clean, identity)) return false;
+      const list = readBgmCache().filter((x) => x.id !== clean.id);
+      list.push(clean);
+      list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      writeBgmCache(list);
+      if (channel) channel.postMessage(1);
+      emitAll();
+      return true;
+    },
+    async removeBgm(bgmId) {
+      const cleanId = String(bgmId || '').trim();
+      const list = readBgmCache().filter((x) => x.id !== cleanId);
+      writeBgmCache(list);
+      if (channel) channel.postMessage(1);
+      emitAll();
+      return true;
+    },
+    dispose() {
+      dataListeners.clear();
+      if (storageHandler) {
+        window.removeEventListener('storage', storageHandler);
+        storageHandler = null;
+      }
       if (channel) channel.close();
     },
   };

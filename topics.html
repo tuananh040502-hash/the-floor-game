@@ -9,7 +9,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=auth17" />
+  <link rel="stylesheet" href="css/style.css?v=bgm1" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -92,6 +92,11 @@
             </details>
           </div>
         </details>
+
+        <button id="btnBgmModal" type="button" class="btn btn-ghost btn-sm w-full justify-between">
+          <span>🎵 Nhạc nền</span>
+          <span id="bgmCountChip" class="chip">0 bài</span>
+        </button>
       </aside>
 
       <!-- Nội dung chính -->
@@ -106,6 +111,7 @@
             <span id="cloudTopicCountBadge" class="chip">0 chủ đề dùng chung</span>
           </div>
           <div class="flex items-center gap-2">
+            <button type="button" data-open-bgm-modal class="btn btn-ghost btn-sm">🎵 Nhạc nền</button>
             <button id="btnSyncCloudTop" type="button" class="btn btn-ghost btn-sm">↻ Đồng bộ thủ công</button>
           </div>
         </div>
@@ -319,7 +325,7 @@
   <div id="toast" class="hidden"></div>
 
   <script type="module" src="js/theme.js?v=auth17"></script>
-  <script type="module" src="js/cms.js?v=auth17"></script>
+  <script type="module" src="js/cms.js?v=bgm1"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')

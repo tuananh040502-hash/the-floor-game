@@ -6,7 +6,7 @@
   <title>The Floor — Vào phòng</title>
   <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=perf16" />
+  <link rel="stylesheet" href="css/style.css?v=bgm1" />
 </head>
 <body class="min-h-screen page-fill">
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -14,6 +14,10 @@
   <div class="fixed top-4 right-4 flex gap-2 z-10 anim-from-top">
     <a href="topics.html" class="btn btn-ghost btn-sm">Chủ đề</a>
     <button id="btnFirebase" class="btn btn-ghost btn-sm">⚙︎ Firebase</button>
+    <div class="bgm-header-pill" role="group" aria-label="Nhạc nền">
+      <button id="btnBgmMute" type="button" class="btn btn-ghost btn-sm btn-icon" title="Bật / tắt tiếng nhạc nền">🎵</button>
+      <button id="btnBgmModal" type="button" class="btn btn-ghost btn-sm btn-icon" title="Danh sách &amp; Quản lý nhạc nền">☰</button>
+    </div>
     <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon">☾</button>
   </div>
 
@@ -64,7 +68,9 @@
   <script type="module">
     import { getConfigSource } from './js/firebase-config.js';
     import { openFirebaseSettings } from './js/settings.js';
+    import { initBgm } from './js/bgm.js?v=bgm1';
     const $ = (id) => document.getElementById(id);
+    initBgm({ autoPlay: true, page: 'index' });
     const rand4 = () => String(Math.floor(Math.random() * 10000)).padStart(4, '0');
     $('mode').textContent = {
       custom: 'Firebase Realtime · cấu hình của bạn',
