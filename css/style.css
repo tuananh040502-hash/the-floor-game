@@ -912,6 +912,7 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   -webkit-text-security: none !important;
 }
 
+/* ---------- Topic Picker Modal (3-Layer Scroll Architecture: Card -> Scroll Body -> Grid) ---------- */
 .topic-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -926,9 +927,11 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   display: none !important;
   pointer-events: none !important;
 }
+
+/* Lớp 1: Khung hộp thoại Modal */
 .topic-modal-card {
-  width: min(100%, 920px);
-  max-height: min(86dvh, 780px);
+  width: min(100%, 940px);
+  max-height: 85dvh;
   background: #1C1C1E;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 20px;
@@ -1028,86 +1031,86 @@ html[data-theme='light'] .topic-picker-trigger-badge {
 .topic-modal-search:focus {
   border-color: #0A84FF;
 }
-.topic-modal-grid {
+
+/* Lớp 2: Vùng thân cuộn chứa lưới thẻ (tách biệt hoàn toàn khỏi display: grid) */
+.topic-modal-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 16px 20px 22px;
   overflow-y: auto;
-  display: grid !important;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)) !important;
-  grid-auto-rows: auto !important;
-  gap: 16px !important;
-  align-items: stretch !important;
-  align-content: start !important;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
 }
-#topicPickerModal .topic-card,
+
+/* Lớp 3: Lưới thẻ (Grid thuần nằm trong vùng cuộn, không bị Flexbox ép chiều cao) */
+#topicModalGrid,
+.topic-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+  height: auto;
+}
+
+/* Cấu trúc từng thẻ chủ đề (.topic-card) */
 #topicModalGrid > .topic-card,
-#topicModalGrid > :not(.topic-modal-empty),
 .topic-card {
-  box-sizing: border-box !important;
-  position: relative !important;
-  display: flex !important;
-  flex-direction: column !important;
-  width: 100% !important;
-  height: auto !important;
-  min-height: 0 !important;
-  max-height: none !important;
-  aspect-ratio: auto !important;
-  border-radius: 16px !important;
-  overflow: hidden !important;
-  background: #1C1C1E !important;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #1C1C1E;
   border: 1.5px solid rgba(255, 255, 255, 0.12);
-  padding: 0 !important;
-  margin: 0 !important;
-  text-align: left !important;
+  padding: 0;
+  margin: 0;
+  text-align: left;
   color: #F5F5F7;
   cursor: pointer;
   user-select: none;
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-#topicPickerModal .topic-card:hover:not(.is-empty),
 .topic-card:hover:not(.is-empty) {
   border-color: rgba(255, 255, 255, 0.3);
   transform: translateY(-2px);
 }
-#topicPickerModal .topic-card:active:not(.is-empty),
 .topic-card:active:not(.is-empty) {
   transform: scale(0.985);
 }
-#topicPickerModal .topic-card.is-selected,
 .topic-card.is-selected {
-  border-color: #0A84FF !important;
+  border-color: #0A84FF;
   box-shadow: 0 0 0 1px #0A84FF;
 }
-#topicPickerModal .topic-card.is-empty,
 .topic-card.is-empty {
   opacity: 0.42;
   cursor: not-allowed;
 }
-#topicPickerModal .topic-card-media,
+
+/* Khung ảnh phía trên thẻ */
 .topic-card-media {
-  position: relative !important;
-  width: 100% !important;
-  aspect-ratio: 16 / 10 !important;
-  height: auto !important;
-  min-height: 0 !important;
-  flex: 0 0 auto !important;
-  overflow: hidden !important;
-  background: #2C2C2E !important;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  background: #2C2C2E;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
-#topicPickerModal .topic-card-thumb,
-.topic-card-media > img,
 .topic-card-thumb {
-  position: absolute !important;
-  inset: 0 !important;
+  position: absolute;
+  inset: 0;
   z-index: 2;
-  width: 100% !important;
-  height: 100% !important;
-  max-width: none !important;
-  max-height: none !important;
-  object-fit: cover !important;
-  display: block !important;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
   transition: transform 0.28s var(--ease);
 }
 .topic-card:hover:not(.is-empty) .topic-card-thumb {
@@ -1166,62 +1169,49 @@ html[data-theme='light'] .topic-picker-trigger-badge {
 .topic-card.is-selected .topic-card-selected-pill {
   display: inline-flex;
 }
-#topicPickerModal .topic-card-body,
+
+/* Khung chữ phía dưới ảnh */
 .topic-card-body {
-  position: relative !important;
-  z-index: 2;
-  display: flex !important;
-  flex-direction: column !important;
-  justify-content: space-between !important;
-  flex: 1 0 auto !important;
-  padding: 12px 14px 14px !important;
-  gap: 6px !important;
-  background: #1C1C1E !important;
-  min-height: 78px !important;
-  overflow: visible !important;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 10px 12px 12px;
+  gap: 6px;
+  background: #1C1C1E;
 }
-#topicPickerModal .topic-card.is-selected .topic-card-body,
 .topic-card.is-selected .topic-card-body {
-  background: rgba(10, 132, 255, 0.12) !important;
+  background: rgba(10, 132, 255, 0.1);
 }
-#topicPickerModal .topic-card-name,
 .topic-card-name {
-  display: -webkit-box !important;
+  font-size: 14px;
+  font-weight: 600;
+  color: #FFFFFF;
+  line-height: 1.35;
+  min-height: 2.7em;
+  display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: 14px !important;
-  font-weight: 600 !important;
-  color: #FFFFFF !important;
-  line-height: 1.35 !important;
-  height: 2.7em !important;
-  min-height: 2.7em !important;
-  margin: 0 !important;
-  text-align: left !important;
+  margin: 0;
   word-break: break-word;
 }
 .topic-card-foot {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: space-between !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  margin: 0 !important;
-  flex-shrink: 0 !important;
+  margin: 0;
 }
-#topicPickerModal .topic-card-count,
 .topic-card-count {
-  display: block !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  color: #8E8E93 !important;
-  line-height: 1.2 !important;
-  margin: 0 !important;
-  text-align: left !important;
+  font-size: 12px;
+  color: #8E8E93;
+  line-height: 1.2;
+  margin: 0;
   font-variant-numeric: tabular-nums;
 }
-#topicPickerModal .topic-card.is-selected .topic-card-count,
 .topic-card.is-selected .topic-card-count {
-  color: #64D2FF !important;
+  color: #64D2FF;
 }
 .topic-modal-empty {
   grid-column: 1 / -1;
@@ -1230,14 +1220,17 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   color: #8E8E93;
   font-size: 14px;
 }
-/* iPad dọc & ngang (560px – 900px) */
+
+/* Responsive iPad (560px – 900px, cả tỷ lệ dọc 3:4) */
 @media (max-width: 900px) {
+  #topicModalGrid,
   .topic-modal-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: 12px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
   }
 }
-/* iPhone (< 560px) */
+
+/* Responsive iPhone (< 560px) */
 @media (max-width: 559px) {
   .topic-modal-backdrop {
     padding: 10px;
@@ -1245,32 +1238,16 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   .topic-modal-head {
     padding: 14px 14px 12px;
   }
+  .topic-modal-body {
+    padding: 12px;
+  }
+  #topicModalGrid,
   .topic-modal-grid {
-    padding: 12px 14px 18px;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    grid-auto-rows: auto !important;
-    gap: 10px !important;
-    align-items: stretch !important;
-    align-content: start !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
-  #topicPickerModal .topic-card,
-  #topicModalGrid > .topic-card,
-  #topicModalGrid > :not(.topic-modal-empty),
-  .topic-card {
-    height: auto !important;
-    min-height: 0 !important;
-  }
-  #topicPickerModal .topic-card-body,
-  .topic-card-body {
-    padding: 10px 10px 12px !important;
-    min-height: 68px !important;
-    gap: 5px !important;
-  }
-  #topicPickerModal .topic-card-name,
   .topic-card-name {
-    font-size: 13px !important;
-    height: 2.7em !important;
-    min-height: 2.7em !important;
+    font-size: 13px;
   }
 }
 
