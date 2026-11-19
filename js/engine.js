@@ -47,20 +47,29 @@ export function hasRealImageTopic(topic) {
 }
 
 /**
- * Nhận diện các chủ đề mặc định cũ hoặc chủ đề trống (0 câu hỏi ảnh hợp lệ):
- *  - Giữ nguyên 100% mọi chủ đề có từ 1 câu hỏi ảnh hợp lệ trở lên (`countValidImageItems(topic) >= 1`).
- *  - Loại bỏ toàn bộ chủ đề có 0 câu hỏi ảnh hợp lệ (bao gồm cả 6 chủ đề mẫu cũ không ảnh và các bản nháp rỗng 0 câu hỏi).
+ * Nhận diện bộ chủ đề mẫu mặc định dùng emoji cũ (không có ảnh thật):
+ *  - Nếu chủ đề có từ 1 câu hỏi ảnh hợp lệ trở lên (`countValidImageItems(topic) >= 1`) -> KHÔNG phải mẫu emoji cũ (`false`).
+ *  - Nếu chủ đề có 0 ảnh hợp lệ: chỉ trả về `true` khi trùng ID/Tên bộ mẫu mặc định cũ (`LEGACY_EMOJI_IDS` / `LEGACY_EMOJI_NAMES`)
+ *    hoặc chứa toàn câu hỏi dạng `type: 'emoji'` cũ.
+ *  - Chủ đề mới do người dùng tự tạo (đang có `items: []`, 0 câu hỏi) trả về `false` để luôn được giữ an toàn.
  */
 export function isLegacyEmojiSampleTopic(topic) {
   if (!topic || typeof topic !== 'object') return true;
   if (countValidImageItems(topic) > 0) return false;
-  return true;
+  const idLower = String(topic.id || '').trim().toLowerCase();
+  const nameLower = String(topic.name || '').trim().toLowerCase();
+  const hasOnlyEmojiItems = Array.isArray(topic.items)
+    && topic.items.length > 0
+    && topic.items.every((it) => it && it.type === 'emoji');
+  return LEGACY_EMOJI_IDS.has(idLower) || LEGACY_EMOJI_NAMES.has(nameLower) || hasOnlyEmojiItems;
 }
 
 /**
  * Lọc dọn tự động danh sách chủ đề:
- *  - Giữ lại 100% chủ đề có từ 1 câu hỏi ảnh hợp lệ trở lên (hoặc ID đang tạo mới trực tiếp trong phiên soạn thảo qua `keepIds`).
- *  - Trả về `{ kept, purged, purgedIds }` để xóa vĩnh viễn khỏi Firebase, localStorage và ghi vào `deleted_topic_ids`.
+ *  - Chỉ đưa vào `purgedIds` để xóa vĩnh viễn những chủ đề:
+ *    (a) đã nằm trong `deletedIds` (trừ khi đang nằm trong `keepIds`), HOẶC
+ *    (b) thuộc bộ chủ đề mẫu mặc định dùng emoji cũ (`isLegacyEmojiSampleTopic(t) === true`).
+ *  - Tuyệt đối giữ nguyên 100% mọi chủ đề tự tạo của người dùng dù đang có 0 câu hỏi (`items: []`).
  */
 export function purgeEmptyAndDefaultTopics(topicsList, options = {}) {
   const keepIds = options && options.keepIds instanceof Set ? options.keepIds : new Set();
@@ -76,23 +85,19 @@ export function purgeEmptyAndDefaultTopics(topicsList, options = {}) {
     if (!id || seen.has(id)) return;
     seen.add(id);
 
-    if (deletedIds.has(id)) {
+    if (deletedIds.has(id) && !keepIds.has(id)) {
       purged.push(t);
       purgedIds.push(id);
       return;
     }
 
-    const validCount = countValidImageItems(t);
-    const idLower = id.toLowerCase();
-    const nameLower = String(t.name || '').trim().toLowerCase();
-    const isOldDefaultWithoutImages = validCount === 0 && (LEGACY_EMOJI_IDS.has(idLower) || LEGACY_EMOJI_NAMES.has(nameLower));
-
-    if (validCount > 0 || (keepIds.has(id) && !isOldDefaultWithoutImages)) {
-      kept.push(t);
-    } else {
+    if (isLegacyEmojiSampleTopic(t)) {
       purged.push(t);
       purgedIds.push(id);
+      return;
     }
+
+    kept.push(t);
   });
 
   return { kept, purged, purgedIds };

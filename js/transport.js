@@ -599,7 +599,7 @@ async function firebaseSharedTopics(config) {
 }
 
 function localSharedTopics() {
-  const key = 'thefloor:topics:v1';
+  const key = 'thefloor:topics';
   let channel = null;
   try {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {

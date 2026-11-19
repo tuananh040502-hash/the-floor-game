@@ -1129,13 +1129,14 @@ function renderSetup(s, preloadedCats = null) {
         return `<option value="${esc(c.id)}" ${count ? '' : 'disabled'}>${esc(c.name || c.id)} (${count})</option>`;
       }).join('');
     }
-    const preferredCat = setup.catId || (validDef && validDef.categoryId) || (cats[0] ? cats[0].id : '');
-    if (preferredCat && cats.some((c) => c.id === preferredCat)) {
+    const preferredCat = setup.catId || (validDef && validDef.categoryId) || '';
+    const firstNonEmpty = cats.find((c) => Array.isArray(c.items) && c.items.length > 0) || cats[0] || null;
+    if (preferredCat && cats.some((c) => c.id === preferredCat && Array.isArray(c.items) && c.items.length > 0)) {
       catSel.value = preferredCat;
-    } else if (cats[0]) {
-      catSel.value = cats[0].id;
+    } else if (firstNonEmpty) {
+      catSel.value = firstNonEmpty.id;
     }
-    const chosen = cats.find((c) => c.id === catSel.value) || cats[0] || null;
+    const chosen = cats.find((c) => c.id === catSel.value) || firstNonEmpty || null;
     syncTopicTriggerButton(chosen);
     if ($('btnStartDuel')) {
       $('btnStartDuel').disabled = !(validChal && validDef && chosen && Array.isArray(chosen.items) && chosen.items.length) || !!s.championId;
@@ -1261,7 +1262,8 @@ function renderTopicModalGrid(preloadedCats = null) {
       const numStr = String(idx + 1).padStart(2, '0');
       const count = Array.isArray(cat.items) ? cat.items.length : 0;
       const isSelected = cat.id === activeId;
-      const isDisabled = isDuelMode && count === 0;
+      const isDisabled = count === 0;
+      const countLabel = count > 0 ? `${count} câu hỏi` : '0 câu hỏi (Chưa có ảnh)';
       const thumbUrl = getTopicCoverThumb(cat);
       const card = document.createElement('div');
       card.setAttribute('role', 'button');
@@ -1283,7 +1285,7 @@ function renderTopicModalGrid(preloadedCats = null) {
         <div class="topic-card-body">
           <div class="topic-card-name">${esc(cat.name || cat.id)}</div>
           <div class="topic-card-foot">
-            <span class="topic-card-count">${count} câu hỏi</span>
+            <span class="topic-card-count">${countLabel}</span>
           </div>
         </div>`;
       const thumbImg = card.querySelector('.topic-card-thumb');
@@ -1376,7 +1378,7 @@ function selectTopicFromModal(catId) {
   if (!catId) return;
   const cats = getCategories100();
   const chosen = cats.find((c) => c.id === catId);
-  if (!chosen) return;
+  if (!chosen || !Array.isArray(chosen.items) || chosen.items.length === 0) return;
 
   if (topicModalContext.mode === 'player' && topicModalContext.playerId) {
     const pid = topicModalContext.playerId;

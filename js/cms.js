@@ -234,25 +234,33 @@ async function handleCloudSnapshot(cloudList) {
     });
   }
 
-  // Auto-Migration ngay khi khởi tạo: chỉ đẩy chủ đề có ảnh hợp lệ, bỏ qua chủ đề rỗng và ID đã xóa
-  if (!initialMigrationDone) {
-    initialMigrationDone = true;
-    const latestDeleted = getDeletedTopicIds();
-    const { kept: migratableLocal } = purgeEmptyAndDefaultTopics(localBefore, {
-      keepIds: sessionDraftIds,
-      deletedIds: latestDeleted,
-    });
-    const missingOnCloud = migratableLocal.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
-    if (missingOnCloud.length && cloudSync && cloudSync.mode === 'firebase') {
-      missingOnCloud.forEach((lt) => {
-        stampOwnership(lt);
-        const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
-        if (clean) cloudById.set(clean.id, clean);
-      });
-      const count = await cloudSync.putMany(missingOnCloud);
-      if (count > 0) {
-        toast(`☁️ Đã tự động đồng bộ ${count} chủ đề cũ từ máy lên Kho dùng chung.`);
+  // Auto-Migration & bảo toàn chủ đề mới tạo trên máy chưa kịp phản hồi từ Cloud
+  const latestDeleted = getDeletedTopicIds();
+  const localCandidates = [...topics, ...localBefore];
+  const seenCandidateIds = new Set();
+  const missingOnCloud = [];
+  localCandidates.forEach((lt) => {
+    if (!lt || typeof lt !== 'object' || !lt.id) return;
+    const id = String(lt.id).trim();
+    if (!id || seenCandidateIds.has(id)) return;
+    seenCandidateIds.add(id);
+    if (latestDeleted.has(id) && !sessionDraftIds.has(id)) return;
+    if (isLegacyEmojiSampleTopic(lt)) return;
+    if (!cloudById.has(id) && (!initialMigrationDone || sessionDraftIds.has(id))) {
+      stampOwnership(lt);
+      const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
+      if (clean) {
+        cloudById.set(clean.id, clean);
+        missingOnCloud.push(lt);
       }
+    }
+  });
+  const wasFirstMigration = !initialMigrationDone;
+  initialMigrationDone = true;
+  if (missingOnCloud.length && cloudSync && cloudSync.mode === 'firebase') {
+    const count = await cloudSync.putMany(missingOnCloud);
+    if (wasFirstMigration && count > 0) {
+      toast(`☁️ Đã tự động đồng bộ ${count} chủ đề từ máy lên Kho dùng chung.`);
     }
   }
 
@@ -1262,14 +1270,21 @@ function bind() {
   $('btnNew').addEventListener('click', () => {
     const name = prompt('Tên chủ đề mới (ví dụ: Cầu thủ bóng đá):');
     if (!name || !name.trim()) return;
-    const t = sanitizeTopic({ id: newId(), name, icon: '', shuffle: false, items: [] });
+    const t = sanitizeTopic({ id: newId(), name: name.trim(), icon: '', shuffle: false, items: [] });
+    if (!t) return;
     t.icon = '';
+    t.updatedAt = Date.now();
+    stampOwnership(t);
     sessionDraftIds.add(t.id);
     topics.push(t);
     currentId = t.id;
-    persist(t);
+    persistLocalCache();
     render();
-    toast(`Đã tạo chủ đề “${t.name}” — hãy thêm ít nhất 1 ảnh câu hỏi để hiển thị trong game.`);
+    persist(t);
+    if ($('tName')) {
+      try { $('tName').focus(); } catch { /* ignore */ }
+    }
+    toast(`Đã tạo chủ đề “${t.name}” — hãy thêm ảnh câu hỏi bên dưới.`);
   });
 
   $('btnClone').addEventListener('click', () => {
