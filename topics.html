@@ -5,9 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>The Floor — Quản lý chủ đề</title>
   <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/style.css?v=purge10" />
+  <link rel="stylesheet" href="css/style.css?v=perf16" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -313,8 +315,8 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script type="module" src="js/theme.js?v=purge10"></script>
-  <script type="module" src="js/cms.js?v=purge10"></script>
+  <script type="module" src="js/theme.js?v=perf16"></script>
+  <script type="module" src="js/cms.js?v=perf16"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')

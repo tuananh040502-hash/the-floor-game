@@ -1,22 +1,56 @@
-import { loadFirebaseConfig } from './firebase-config.js';
-import { openFirebaseSettings } from './settings.js';
+import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
+import { openFirebaseSettings } from './settings.js?v=iosfix15';
 import {
   createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, getDeletedTopicIds, markTopicDeleted,
-} from './transport.js';
-import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
+} from './transport.js?v=iosfix15';
+import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js?v=iosfix15';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
-  isLegacyEmojiSampleTopic, purgeEmptyAndDefaultTopics,
-} from './engine.js?v=purge10';
-import { Sfx } from './audio.js';
-import { Fireworks } from './fx.js';
-import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
+  isLegacyEmojiSampleTopic, purgeEmptyAndDefaultTopics, invalidateEngineCategoriesCache,
+} from './engine.js?v=iosfix15';
+import { Sfx } from './audio.js?v=iosfix15';
+import { Fireworks } from './fx.js?v=iosfix15';
+import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js?v=iosfix15';
 
 const $ = (id) => document.getElementById(id);
+
+function safeGetLocal(key, fallback = '') {
+  try {
+    const v = localStorage.getItem(key);
+    return v !== null ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function safeSetLocal(key, val) {
+  try { localStorage.setItem(key, val); } catch { /* ignore */ }
+}
+function safeGetSession(key, fallback = '') {
+  try {
+    const v = sessionStorage.getItem(key);
+    return v !== null ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function safeSetSession(key, val) {
+  try { sessionStorage.setItem(key, val); } catch { /* ignore */ }
+}
+function cloneState(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  try {
+    if (typeof structuredClone === 'function') return structuredClone(obj);
+  } catch { /* fallback below */ }
+  try {
+    return JSON.parse(JSON.stringify(obj));
+  } catch {
+    return { ...obj };
+  }
+}
 const MAX_TOPIC_IMAGES = 100;
 const SIDE_COLOR = { A: '#0a84ff', B: '#ff7a59' };
 const RING_LEN = 552.92;
@@ -44,7 +78,7 @@ let tickPending = false;
 let passCompletePending = false;
 let goPending = false;
 let lastCdSec = -1;
-let cdDurationMs = Number(localStorage.getItem('thefloor:cdMs')) || COUNTDOWN_MS;
+let cdDurationMs = Number(safeGetLocal('thefloor:cdMs', '')) || COUNTDOWN_MS;
 let lastPreloadSig = '';
 let lastVictoryUrl = '';
 let floorBuilt = false;
@@ -58,7 +92,17 @@ let sharedCustomTopics = null;
 let initialTopicsMigrated = false;
 let topicModalContext = { mode: 'duel', playerId: null };
 let topicModalSearchQuery = '';
+let cachedCategories100 = null;
+let categoriesCacheVersion = -1;
+let categoriesSourceVersion = 0;
+const localVoiceAudioCache = new Map();
 const cleanedLegacyCloudIds = new Set();
+
+function invalidateCategoriesCache() {
+  categoriesSourceVersion += 1;
+  cachedCategories100 = null;
+  invalidateEngineCategoriesCache();
+}
 const conn = { base: '…', latency: '', error: '' };
 const ANIM_CLASSES = [
   'stagger-item', 'anim-from-top', 'anim-from-bottom', 'anim-from-left',
@@ -67,10 +111,6 @@ const ANIM_CLASSES = [
 const STAGGER_SELECTOR = [
   'header.appbar',
   '.floor-header',
-  '.floor-stage',
-  '.floor-grid > .cell',
-  '#viewFloor aside > .panel:not(.hidden)',
-  '#setupPanel:not(.hidden) > *',
   '.arena-top-bar',
   '#qWrap',
   '#cardA',
@@ -86,45 +126,90 @@ const STAGGER_SELECTOR = [
 
 // ---------- Khởi động ----------
 async function init() {
-  if (document.body) document.body.classList.remove('page-exiting');
+  try {
+    if (document.body) document.body.classList.remove('page-exiting');
+  } catch { /* ignore */ }
   window.__unlockFloorAudio = () => {
     try { Sfx.unlock(); } catch { /* ignore */ }
   };
   if ($('roomLabel')) $('roomLabel').textContent = room;
   if ($('gateRoom')) $('gateRoom').textContent = room;
-  if ($('fx')) fx = new Fireworks($('fx'));
-  bindStaticUi();
+  try {
+    if ($('fx')) fx = new Fireworks($('fx'));
+  } catch (err) {
+    console.warn('Không khởi tạo được Fireworks canvas:', err);
+  }
+  try {
+    bindStaticUi();
+  } catch (err) {
+    console.error('Lỗi bindStaticUi:', err);
+  }
+
+  // Khởi tạo transport tạm cục bộ để mọi thao tác không bao giờ lỗi trước khi Firebase kết nối xong
+  transport = {
+    mode: 'local',
+    serverNow: () => Date.now(),
+    write: () => Promise.resolve(),
+    subscribe: () => {},
+    onStatus: () => {},
+  };
 
   // Khởi tạo và hiển thị ngay bàn cờ cục bộ để giao diện phía sau luôn sẵn sàng tức thì
-  const initialLocal = createInitialState(
-    sessionStorage.getItem(pinKey) || '',
-    clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
-  );
-  const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
-  if (savedDur) {
-    const sec = clampDurationSec(savedDur);
-    initialLocal.players.forEach((p) => { p.durationSec = sec; });
+  try {
+    const initialLocal = createInitialState(
+      safeGetSession(pinKey, ''),
+      clampPlayerCount(safeGetLocal('thefloor:playerCount', '') || DEFAULT_PLAYER_COUNT),
+    );
+    const savedDur = safeGetLocal('thefloor:defaultDurationSec', '');
+    if (savedDur) {
+      const sec = clampDurationSec(savedDur);
+      initialLocal.players.forEach((p) => { p.durationSec = sec; });
+    }
+    if (requestedHost) {
+      role = 'host';
+      controller = true;
+    }
+    state = normalize(initialLocal);
+    applyState(state, false);
+  } catch (err) {
+    console.error('Lỗi khởi tạo state ban đầu:', err);
+    state = createInitialState('', DEFAULT_PLAYER_COUNT);
+    try { render(state); } catch { /* ignore */ }
   }
-  if (requestedHost) {
-    role = 'host';
-    controller = true;
-  }
-  state = initialLocal;
-  applyState(state, false);
 
-  const fbCfg = loadFirebaseConfig();
-  transport = await createTransport(room, fbCfg);
-  transport.onStatus(onConnStatus);
-  if (transport.mode === 'local') {
-    onConnStatus({ type: 'local' });
-    if (transport.fallbackReason) showConnError(`Firebase lỗi (${transport.fallbackReason}) — đang dùng chế độ cục bộ.`);
-  }
-  initSharedTopics(fbCfg);
-  transport.subscribe(onSnapshot);
   startUiTimer();
+
+  let fbCfg = null;
+  try {
+    fbCfg = loadFirebaseConfig();
+  } catch (err) {
+    console.warn('Lỗi đọc cấu hình Firebase:', err);
+  }
+
+  // Chỉ chạy đồng bộ toàn bộ cây shared_topics trên máy Host (máy Xem nhận câu hỏi từ state.duel.items)
+  if (role === 'host' || controller) {
+    initSharedTopics(fbCfg);
+  }
+
+  try {
+    const connectedTransport = await createTransport(room, fbCfg, { role });
+    if (connectedTransport) {
+      transport = connectedTransport;
+      transport.onStatus(onConnStatus);
+      if (transport.mode === 'local') {
+        onConnStatus({ type: 'local' });
+        if (transport.fallbackReason) showConnError(`Firebase lỗi (${transport.fallbackReason}) — đang dùng chế độ cục bộ.`);
+      }
+      transport.subscribe(onSnapshot);
+    }
+  } catch (err) {
+    console.error('Lỗi khởi tạo transport phòng:', err);
+    onConnStatus({ type: 'local' });
+  }
 }
 
 async function initSharedTopics(fbCfg) {
+  if (topicsSync) return;
   try {
     topicsSync = await createSharedTopicsSync(fbCfg);
     topicsSync.onStatus((st) => {
@@ -192,6 +277,7 @@ async function initSharedTopics(fbCfg) {
       try {
         localStorage.setItem(TOPICS_KEY, JSON.stringify(sharedCustomTopics));
       } catch { /* ignore */ }
+      invalidateCategoriesCache();
       const badge = $('gameTopicsCloudBadge');
       if (badge && topicsSync.mode === 'firebase') {
         badge.textContent = `☁️ Kho dùng chung (${sharedCustomTopics.length} chủ đề)`;
@@ -241,10 +327,10 @@ function onConnStatus(ev) {
 
 function buildDefaultState() {
   const fresh = createInitialState(
-    sessionStorage.getItem(pinKey) || '',
-    clampPlayerCount(localStorage.getItem('thefloor:playerCount') || DEFAULT_PLAYER_COUNT),
+    safeGetSession(pinKey, ''),
+    clampPlayerCount(safeGetLocal('thefloor:playerCount', '') || DEFAULT_PLAYER_COUNT),
   );
-  const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
+  const savedDur = safeGetLocal('thefloor:defaultDurationSec', '');
   if (savedDur) {
     const sec = clampDurationSec(savedDur);
     fresh.players.forEach((p) => { p.durationSec = sec; });
@@ -276,7 +362,7 @@ function onSnapshot(remote) {
         role = 'host';
         controller = true;
       } else {
-        controller = Boolean(remote.pin && sessionStorage.getItem(`${pinKey}:unlocked`) === remote.pin);
+        controller = Boolean(remote.pin && safeGetSession(`${pinKey}:unlocked`, '') === remote.pin);
       }
     }
     state = normalize(remote);
@@ -372,7 +458,7 @@ function normalize(raw) {
   return s;
 }
 
-/** Cấu hình âm thanh chiến thắng kép của chủ đề hiện tại (từ duel hoặc setup). */
+/** Cấu hình âm thanh chiến thắng kép của chủ đề hiện tại (từ duel hoặc setup, đọc voiceData cục bộ từ RAM/IndexedDB không đẩy Base64 lên Firebase). */
 function activeVictorySpec(s) {
   if (!s) {
     return {
@@ -381,23 +467,27 @@ function activeVictorySpec(s) {
     };
   }
   if (s.duel) {
-    const cat = s.duel.categoryId ? getCategories100().find((c) => c.id === s.duel.categoryId) : null;
+    const topicId = s.duel.categoryId || '';
+    const cat = topicId ? getCategories100().find((c) => c.id === topicId) : null;
+    const localVoice = topicId ? localVoiceAudioCache.get(topicId) : null;
     return {
       url: s.duel.victoryAudioUrl || (cat && cat.victoryAudioUrl) || '',
-      topicId: s.duel.categoryId || '',
-      voiceData: s.duel.victoryVoiceData || (cat && cat.victoryVoiceData) || '',
-      voiceName: s.duel.victoryVoiceName || (cat && cat.victoryVoiceName) || '',
+      topicId,
+      voiceData: (localVoice && localVoice.dataUrl) || (cat && cat.victoryVoiceData) || '',
+      voiceName: s.duel.victoryVoiceName || (localVoice && localVoice.name) || (cat && cat.victoryVoiceName) || '',
       localAudioVolume: clampVolume01(s.duel.localAudioVolume ?? cat?.localAudioVolume, 1.0),
       onlineAudioVolume: clampVolume01(s.duel.onlineAudioVolume ?? cat?.onlineAudioVolume, 1.0),
     };
   }
   if (s.setup && s.setup.catId) {
-    const cat = getCategories100().find((c) => c.id === s.setup.catId);
+    const topicId = s.setup.catId || '';
+    const cat = getCategories100().find((c) => c.id === topicId);
+    const localVoice = topicId ? localVoiceAudioCache.get(topicId) : null;
     return {
       url: s.setup.victoryAudioUrl || (cat && cat.victoryAudioUrl) || '',
-      topicId: s.setup.catId || '',
-      voiceData: s.setup.victoryVoiceData || (cat && cat.victoryVoiceData) || '',
-      voiceName: s.setup.victoryVoiceName || (cat && cat.victoryVoiceName) || '',
+      topicId,
+      voiceData: (localVoice && localVoice.dataUrl) || (cat && cat.victoryVoiceData) || '',
+      voiceName: s.setup.victoryVoiceName || (localVoice && localVoice.name) || (cat && cat.victoryVoiceName) || '',
       localAudioVolume: clampVolume01(s.setup.localAudioVolume ?? cat?.localAudioVolume, 1.0),
       onlineAudioVolume: clampVolume01(s.setup.onlineAudioVolume ?? cat?.onlineAudioVolume, 1.0),
     };
@@ -454,17 +544,16 @@ function syncPreload(s) {
   if (vicSig !== lastVictoryUrl) {
     lastVictoryUrl = vicSig;
     Sfx.preloadVictory(spec);
-    // Nếu trên máy Host có lưu file âm thanh trong IndexedDB mà chưa đồng bộ vào state, tự động nạp bổ sung
-    if (controller && spec.topicId && !spec.voiceData) {
+    // Nếu trên máy Host có lưu file âm thanh trong IndexedDB, chỉ lưu vào cache RAM cục bộ (tuyệt đối không nhúng chuỗi Base64 vào state phòng)
+    if (controller && spec.topicId && !spec.voiceData && !localVoiceAudioCache.has(spec.topicId)) {
+      localVoiceAudioCache.set(spec.topicId, null);
       loadTopicAudioIDB(spec.topicId).then((rec) => {
-        if (rec && rec.dataUrl && state) {
-          if (state.setup && state.setup.catId === spec.topicId && !state.setup.victoryVoiceData) {
-            state.setup.victoryVoiceData = rec.dataUrl;
-            state.setup.victoryVoiceName = rec.name || '';
-          }
-          if (state.duel && state.duel.categoryId === spec.topicId && !state.duel.victoryVoiceData) {
-            state.duel.victoryVoiceData = rec.dataUrl;
-            state.duel.victoryVoiceName = rec.name || '';
+        if (rec && rec.dataUrl) {
+          localVoiceAudioCache.set(spec.topicId, { dataUrl: rec.dataUrl, name: rec.name || '' });
+          if (state) {
+            const refreshedSpec = activeVictorySpec(state);
+            lastVictoryUrl = `${refreshedSpec.topicId}|${refreshedSpec.url}|${refreshedSpec.voiceData ? refreshedSpec.voiceData.length : 0}|${refreshedSpec.voiceName}`;
+            Sfx.preloadVictory(refreshedSpec);
           }
         }
       }).catch(() => {});
@@ -513,15 +602,27 @@ function makeEvent(next, type) {
   return { id, type };
 }
 
-/** Chỉ lấy kho chủ đề thực tế của người dùng có ảnh hợp lệ từ Firebase `shared_topics` / `localStorage` (tự dọn chủ đề rỗng & mặc định cũ). */
+/** Chỉ lấy kho chủ đề thực tế của người dùng có ảnh hợp lệ từ RAM cache (`cachedCategories100`), tránh JSON.parse lặp lại mỗi nhịp render. */
 function getCategories100() {
+  if (cachedCategories100 !== null && categoriesCacheVersion === categoriesSourceVersion) {
+    return cachedCategories100;
+  }
   const cats = [];
   try {
     const deletedIds = getDeletedTopicIds();
-    const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
-    const sourceList = Array.isArray(sharedCustomTopics)
-      ? sharedCustomTopics
-      : (Array.isArray(localRaw) ? localRaw : safeAllCategories());
+    let sourceList = null;
+    let fromLocal = false;
+    if (Array.isArray(sharedCustomTopics)) {
+      sourceList = sharedCustomTopics;
+    } else {
+      const localRaw = JSON.parse(safeGetLocal(TOPICS_KEY, 'null') || 'null');
+      if (Array.isArray(localRaw)) {
+        sourceList = localRaw;
+        fromLocal = true;
+      } else {
+        sourceList = safeAllCategories();
+      }
+    }
 
     const { kept, purgedIds } = purgeEmptyAndDefaultTopics(sourceList || [], { deletedIds });
     kept.forEach((t) => {
@@ -549,19 +650,19 @@ function getCategories100() {
 
     if (purgedIds.length) {
       purgedIds.forEach((pid) => markTopicDeleted(pid));
-      if (!Array.isArray(sharedCustomTopics) && Array.isArray(localRaw)) {
-        try {
-          localStorage.setItem(TOPICS_KEY, JSON.stringify(cats));
-        } catch { /* ignore */ }
+      if (fromLocal) {
+        safeSetLocal(TOPICS_KEY, JSON.stringify(cats));
       }
     }
   } catch (err) {
     console.warn('Lỗi đọc danh sách chủ đề người dùng:', err);
   }
-  return cats;
+  cachedCategories100 = cats;
+  categoriesCacheVersion = categoriesSourceVersion;
+  return cachedCategories100;
 }
 
-/** Gán thông tin chủ đề, danh sách preload ảnh và âm thanh chiến thắng vào setup */
+/** Gán thông tin chủ đề, danh sách preload ảnh và âm thanh chiến thắng vào setup (không lưu chuỗi Base64 vào state phòng) */
 function applyCategoryToSetup(setup, catId) {
   setup.catId = catId;
   const cats = getCategories100();
@@ -569,7 +670,7 @@ function applyCategoryToSetup(setup, catId) {
   if (cat) {
     setup.preloadUrls = extractImageUrls(cat.items.slice(0, MAX_TOPIC_IMAGES));
     setup.victoryAudioUrl = cat.victoryAudioUrl || '';
-    setup.victoryVoiceData = cat.victoryVoiceData || '';
+    setup.victoryVoiceData = '';
     setup.victoryVoiceName = cat.victoryVoiceName || '';
     setup.localAudioVolume = clampVolume01(cat.localAudioVolume, 1.0);
     setup.onlineAudioVolume = clampVolume01(cat.onlineAudioVolume, 1.0);
@@ -579,7 +680,7 @@ function applyCategoryToSetup(setup, catId) {
 function dispatch(type, arg) {
   if (!controller || !state) return;
   const prev = state;
-  const next = structuredClone(state);
+  const next = cloneState(state);
 
   if (type === 'setPair') {
     next.setup = next.setup || {};
@@ -590,7 +691,7 @@ function dispatch(type, arg) {
     if (catToUse) applyCategoryToSetup(next.setup, catToUse);
     state = normalize(next);
     applyState(state, true);
-    transport.write(state, prev);
+    if (transport && typeof transport.write === 'function') transport.write(state, prev);
     return;
   }
   if (type === 'swapPair') {
@@ -607,7 +708,7 @@ function dispatch(type, arg) {
     }
     state = normalize(next);
     applyState(state, true);
-    transport.write(state, prev);
+    if (transport && typeof transport.write === 'function') transport.write(state, prev);
     return;
   }
   if (type === 'setCategory') {
@@ -615,7 +716,7 @@ function dispatch(type, arg) {
     applyCategoryToSetup(next.setup, arg.id);
     state = normalize(next);
     applyState(state, true);
-    transport.write(state, prev);
+    if (transport && typeof transport.write === 'function') transport.write(state, prev);
     return;
   }
 
@@ -624,12 +725,13 @@ function dispatch(type, arg) {
     const fullCat = getCategories100().find((c) => c.id === next.setup.catId);
     if (fullCat) reduceArg = { ...(arg || {}), cat: fullCat };
   }
-  const ev = reduce(next, type, reduceArg, transport.serverNow());
+  const now = (transport && typeof transport.serverNow === 'function') ? transport.serverNow() : Date.now();
+  const ev = reduce(next, type, reduceArg, now);
   if (ev === false) return;
   if (ev) next.event = makeEvent(next, ev);
   state = normalize(next);
   applyState(state, true);
-  transport.write(state, prev); // chỉ gửi phần thay đổi
+  if (transport && typeof transport.write === 'function') transport.write(state, prev); // chỉ gửi phần thay đổi
 }
 
 /**
@@ -642,8 +744,9 @@ function handleTimeUp() {
     dispatch('tick');
     return;
   }
-  const next = structuredClone(state);
-  const ev = reduce(next, 'tick', {}, transport.serverNow());
+  const next = cloneState(state);
+  const now = (transport && typeof transport.serverNow === 'function') ? transport.serverNow() : Date.now();
+  const ev = reduce(next, 'tick', {}, now);
   if (!ev) return;
   next.event = makeEvent(next, ev);
   state = normalize(next);
@@ -656,8 +759,9 @@ function handlePassComplete() {
     dispatch('passComplete');
     return;
   }
-  const next = structuredClone(state);
-  const ev = reduce(next, 'passComplete', {}, transport.serverNow());
+  const next = cloneState(state);
+  const now = (transport && typeof transport.serverNow === 'function') ? transport.serverNow() : Date.now();
+  const ev = reduce(next, 'passComplete', {}, now);
   if (ev === false) return;
   if (ev) next.event = makeEvent(next, ev);
   state = normalize(next);
@@ -912,29 +1016,33 @@ function renderFloor(s) {
     console.error('Lỗi render lưới bàn cờ:', err);
   }
 
-  // 2. Render Bảng xếp hạng
+  // 2. Render Bảng xếp hạng (Differential DOM theo board.dataset.sig)
   try {
     const board = $('board');
     if (board) {
-      const sorted = [...(s.players || [])].sort((a, b) => cellCount(s, b.id) - cellCount(s, a.id));
-      board.innerHTML = '';
-      const frag = document.createDocumentFragment();
       const totalCells = Math.max(1, (s.floor || []).length);
-      sorted.forEach((p) => {
-        const n = cellCount(s, p.id);
-        const pct = Math.round((n / totalCells) * 100);
-        const row = document.createElement('div');
-        row.className = 'board-row';
-        row.innerHTML = `
-          <div class="board-row-head" style="${n === 0 ? 'opacity:0.45' : 'opacity:1'}">
-            <span>${esc(p.avatar || '🦁')}</span>
-            <span class="board-row-name">${esc(p.name || '')}</span>
-            <span class="font-num" style="color:${esc(p.color || '#2997ff')}">${n} ô</span>
-          </div>
-          <div class="board-bar"><div class="board-bar-fill" style="width:${pct}%;background:${esc(p.color || '#2997ff')}"></div></div>`;
-        frag.appendChild(row);
-      });
-      board.appendChild(frag);
+      const sorted = [...(s.players || [])].sort((a, b) => (countMap.get(b.id) || 0) - (countMap.get(a.id) || 0));
+      const boardSig = JSON.stringify(sorted.map((p) => [p.id, p.name, p.avatar, p.color, countMap.get(p.id) || 0, totalCells]));
+      if (board.dataset.sig !== boardSig) {
+        board.dataset.sig = boardSig;
+        board.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        sorted.forEach((p) => {
+          const n = countMap.get(p.id) || 0;
+          const pct = Math.round((n / totalCells) * 100);
+          const row = document.createElement('div');
+          row.className = 'board-row';
+          row.innerHTML = `
+            <div class="board-row-head" style="${n === 0 ? 'opacity:0.45' : 'opacity:1'}">
+              <span>${esc(p.avatar || '🦁')}</span>
+              <span class="board-row-name">${esc(p.name || '')}</span>
+              <span class="font-num" style="color:${esc(p.color || '#2997ff')}">${n} ô</span>
+            </div>
+            <div class="board-bar"><div class="board-bar-fill" style="width:${pct}%;background:${esc(p.color || '#2997ff')}"></div></div>`;
+          frag.appendChild(row);
+        });
+        board.appendChild(frag);
+      }
     }
   } catch (err) {
     console.error('Lỗi render Bảng xếp hạng:', err);
@@ -1132,73 +1240,105 @@ function renderTopicModalGrid(preloadedCats = null) {
   }
   const activeId = getActiveTopicIdForModal(cats);
   const q = (topicModalSearchQuery || '').trim().toLowerCase();
+  const isDuelMode = topicModalContext.mode !== 'player';
+  const buildSig = JSON.stringify([
+    isDuelMode ? 'duel' : 'player',
+    cats.map((c) => [c.id, c.name || '', getTopicCoverThumb(c) || '', Array.isArray(c.items) ? c.items.length : 0]),
+  ]);
 
-  const indexed = cats.map((cat, idx) => ({
-    cat,
-    numStr: String(idx + 1).padStart(2, '0'),
-  })).filter(({ cat, numStr }) => {
-    if (!q) return true;
-    const name = String(cat.name || '').toLowerCase();
-    const id = String(cat.id || '').toLowerCase();
-    return name.includes(q) || id.includes(q) || numStr.includes(q);
-  });
+  // Chỉ dựng lại DOM thẻ chủ đề khi danh sách chủ đề thực sự thay đổi
+  if (grid.dataset.sig !== buildSig) {
+    grid.dataset.sig = buildSig;
+    grid.innerHTML = '';
 
-  grid.innerHTML = '';
-  if (!indexed.length) {
-    grid.innerHTML = cats.length
-      ? '<div class="topic-modal-empty">Không tìm thấy chủ đề phù hợp với từ khóa.</div>'
-      : '<div class="topic-modal-empty">Chưa có chủ đề nào trong kho dùng chung. Hãy vào mục “Chủ đề” để tạo mới.</div>';
-    return;
+    if (!cats.length) {
+      grid.innerHTML = '<div class="topic-modal-empty">Chưa có chủ đề nào trong kho dùng chung. Hãy vào mục “Chủ đề” để tạo mới.</div>';
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    cats.forEach((cat, idx) => {
+      const numStr = String(idx + 1).padStart(2, '0');
+      const count = Array.isArray(cat.items) ? cat.items.length : 0;
+      const isSelected = cat.id === activeId;
+      const isDisabled = isDuelMode && count === 0;
+      const thumbUrl = getTopicCoverThumb(cat);
+      const card = document.createElement('div');
+      card.setAttribute('role', 'button');
+      card.tabIndex = isDisabled ? -1 : 0;
+      card.setAttribute('aria-disabled', isDisabled ? 'true' : 'false');
+      card.dataset.topicPickId = cat.id;
+      card.dataset.searchText = `${String(cat.name || '').toLowerCase()} ${String(cat.id || '').toLowerCase()} ${numStr}`;
+      card.className = `topic-card${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-empty' : ''}`;
+      // Tuyệt đối KHÔNG gắn text đáp án hay emoji biểu tượng lên thẻ chủ đề
+      card.innerHTML = `
+        <div class="topic-card-media">
+          ${thumbUrl ? `<img class="topic-card-thumb" src="${esc(thumbUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : ''}
+          <div class="topic-card-fallback">
+            <span class="topic-card-fallback-num">${esc(numStr)}</span>
+          </div>
+          <span class="topic-card-num-badge">${esc(numStr)}</span>
+          <span class="topic-card-selected-pill" aria-hidden="true">✓</span>
+        </div>
+        <div class="topic-card-body">
+          <div class="topic-card-name">${esc(cat.name || cat.id)}</div>
+          <div class="topic-card-foot">
+            <span class="topic-card-count">${count} câu hỏi</span>
+          </div>
+        </div>`;
+      const thumbImg = card.querySelector('.topic-card-thumb');
+      if (thumbImg) {
+        thumbImg.removeAttribute('crossorigin');
+        let retried = false;
+        thumbImg.addEventListener('error', () => {
+          if (!retried && thumbUrl) {
+            retried = true;
+            const fb = driveFallbackUrl(thumbUrl);
+            if (fb && thumbImg.src !== fb) {
+              thumbImg.src = fb;
+              return;
+            }
+          }
+          thumbImg.classList.add('hidden');
+        });
+      }
+      frag.appendChild(card);
+    });
+
+    const emptySearchEl = document.createElement('div');
+    emptySearchEl.className = 'topic-modal-empty hidden';
+    emptySearchEl.dataset.emptySearch = '1';
+    emptySearchEl.textContent = 'Không tìm thấy chủ đề phù hợp với từ khóa.';
+    frag.appendChild(emptySearchEl);
+
+    grid.appendChild(frag);
   }
 
-  const frag = document.createDocumentFragment();
-  indexed.forEach(({ cat, numStr }) => {
-    const count = Array.isArray(cat.items) ? cat.items.length : 0;
-    const isSelected = cat.id === activeId;
-    const isDuelMode = topicModalContext.mode !== 'player';
-    const isDisabled = isDuelMode && count === 0;
-    const thumbUrl = getTopicCoverThumb(cat);
-    const card = document.createElement('div');
-    card.setAttribute('role', 'button');
-    card.tabIndex = isDisabled ? -1 : 0;
-    card.setAttribute('aria-disabled', isDisabled ? 'true' : 'false');
-    card.dataset.topicPickId = cat.id;
-    card.className = `topic-card${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-empty' : ''}`;
-    // Tuyệt đối KHÔNG gắn text đáp án hay emoji biểu tượng lên thẻ chủ đề
-    card.innerHTML = `
-      <div class="topic-card-media">
-        ${thumbUrl ? `<img class="topic-card-thumb" src="${esc(thumbUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : ''}
-        <div class="topic-card-fallback">
-          <span class="topic-card-fallback-num">${esc(numStr)}</span>
-        </div>
-        <span class="topic-card-num-badge">${esc(numStr)}</span>
-        <span class="topic-card-selected-pill" aria-hidden="true">✓</span>
-      </div>
-      <div class="topic-card-body">
-        <div class="topic-card-name">${esc(cat.name || cat.id)}</div>
-        <div class="topic-card-foot">
-          <span class="topic-card-count">${count} câu hỏi</span>
-        </div>
-      </div>`;
-    const thumbImg = card.querySelector('.topic-card-thumb');
-    if (thumbImg) {
-      thumbImg.removeAttribute('crossorigin');
-      let retried = false;
-      thumbImg.addEventListener('error', () => {
-        if (!retried && thumbUrl) {
-          retried = true;
-          const fb = driveFallbackUrl(thumbUrl);
-          if (fb && thumbImg.src !== fb) {
-            thumbImg.src = fb;
-            return;
-          }
-        }
-        thumbImg.classList.add('hidden');
-      });
+  // Lọc tìm kiếm và cập nhật trạng thái chọn trực tiếp trên các thẻ DOM có sẵn (không tạo lại <img>)
+  let visibleCount = 0;
+  let emptySearchNode = null;
+  [...grid.children].forEach((node) => {
+    if (!node || !node.dataset) return;
+    if (node.dataset.emptySearch === '1') {
+      emptySearchNode = node;
+      return;
     }
-    frag.appendChild(card);
+    const pickId = node.dataset.topicPickId;
+    if (!pickId) return;
+    if (node.classList) {
+      node.classList.toggle('is-selected', pickId === activeId);
+    }
+    const hay = node.dataset.searchText || '';
+    const matched = !q || hay.includes(q);
+    if (node.style) {
+      node.style.display = matched ? '' : 'none';
+    }
+    if (matched) visibleCount += 1;
   });
-  grid.appendChild(frag);
+
+  if (emptySearchNode && emptySearchNode.classList) {
+    emptySearchNode.classList.toggle('hidden', visibleCount > 0 || cats.length === 0);
+  }
 }
 
 function openTopicPickerModal(ctx = { mode: 'duel', playerId: null }) {
@@ -1719,8 +1859,6 @@ export function initStaggeredEntrance(root = document) {
     el.style.setProperty('--stagger-index', String(staggerIdx));
     el.style.setProperty('--stagger-step', `${stepMs}ms`);
     el.style.setProperty('--stagger-delay', `${delayMs}ms`);
-    el.classList.remove('stagger-item');
-    void el.offsetWidth;
     el.classList.add('stagger-item');
     setTimeout(() => clearStaggerProps(el), delayMs + 560);
   });
@@ -1809,7 +1947,10 @@ function bindStaticUi() {
   }
 
   window.addEventListener('storage', (e) => {
-    if (e.key === TOPICS_KEY && state) render(state);
+    if (e.key === TOPICS_KEY) {
+      invalidateCategoriesCache();
+      if (state) render(state);
+    }
   });
   window.addEventListener('pageshow', () => { if (state) render(state); });
 
@@ -1987,8 +2128,11 @@ function bindStaticUi() {
   const tryUnlock = () => {
     const pin = $('miniPin') ? $('miniPin').value : '';
     if (state && (!state.pin || state.pin === pin)) {
-      sessionStorage.setItem(`${pinKey}:unlocked`, state.pin || '');
+      safeSetSession(`${pinKey}:unlocked`, state.pin || '');
       controller = true;
+      if (!topicsSync) {
+        try { initSharedTopics(loadFirebaseConfig()); } catch { /* ignore */ }
+      }
       if ($('miniErr')) $('miniErr').classList.add('hidden');
       render(state);
       if ($('roleLabel')) $('roleLabel').textContent = 'Màn hình · đã mở khóa Host';

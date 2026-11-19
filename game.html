@@ -4,12 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>The Floor — Đấu trường</title>
-  <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
+  <script>(function(){try{var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';document.documentElement.dataset.theme=t;}catch(_){document.documentElement.dataset.theme='dark';}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/style.css?v=modal3layer13" />
+  <link rel="stylesheet" href="css/style.css?v=perf16" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -24,36 +26,12 @@
       <button id="btnSoundGate" type="button" class="btn btn-ok btn-lg mt-6 w-full">Bắt đầu</button>
     </div>
   </div>
-  <script>
-    (function () {
-      var params = new URLSearchParams(location.search);
-      var rm = (params.get('room') || 'FLOOR').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20) || 'FLOOR';
-      var gr = document.getElementById('gateRoom');
-      var rl = document.getElementById('roomLabel');
-      if (gr) gr.textContent = rm;
-      if (rl) rl.textContent = rm;
-      var gate = document.getElementById('soundGate');
-      if (gate) {
-        gate.classList.add('hidden');
-        gate.style.display = 'none';
-        gate.style.pointerEvents = 'none';
-      }
-      function silentUnlock() {
-        if (typeof window.__unlockFloorAudio === 'function') {
-          try { window.__unlockFloorAudio(); } catch (_) {}
-        }
-      }
-      document.addEventListener('pointerdown', silentUnlock, { once: true, capture: true });
-      document.addEventListener('keydown', silentUnlock, { once: true, capture: true });
-    })();
-  </script>
-
   <header class="appbar">
     <div class="appbar-inner">
       <div class="flex items-center gap-3 flex-wrap">
         <a href="index.html" class="font-display wordmark text-xl md:text-2xl">The Floor</a>
-        <span class="chip">PIN <b id="roomLabel"></b></span>
-        <span id="roleLabel" class="chip"></span>
+        <span class="chip">PIN <b id="roomLabel">FLOOR</b></span>
+        <span id="roleLabel" class="chip">Host</span>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <span id="connLabel" class="chip">…</span>
@@ -65,6 +43,40 @@
       </div>
     </div>
   </header>
+  <script>
+    (function () {
+      try {
+        var params = new URLSearchParams(location.search);
+        var rm = (params.get('room') || 'FLOOR').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20) || 'FLOOR';
+        var roleParam = (params.get('role') || 'host').toLowerCase();
+        var isHost = roleParam !== 'view' && roleParam !== 'viewer';
+        var gr = document.getElementById('gateRoom');
+        var rl = document.getElementById('roomLabel');
+        var roleEl = document.getElementById('roleLabel');
+        var cmsEl = document.getElementById('linkCms');
+        if (gr) gr.textContent = rm;
+        if (rl) rl.textContent = rm;
+        if (roleEl) roleEl.textContent = isHost ? 'Host' : 'Màn hình xem';
+        if (cmsEl) {
+          cmsEl.classList.toggle('hidden', !isHost);
+          cmsEl.href = 'topics.html?room=' + encodeURIComponent(rm);
+        }
+        var gate = document.getElementById('soundGate');
+        if (gate) {
+          gate.classList.add('hidden');
+          gate.style.display = 'none';
+          gate.style.pointerEvents = 'none';
+        }
+        function silentUnlock() {
+          if (typeof window.__unlockFloorAudio === 'function') {
+            try { window.__unlockFloorAudio(); } catch (_) {}
+          }
+        }
+        document.addEventListener('pointerdown', silentUnlock, { once: true, capture: true });
+        document.addEventListener('keydown', silentUnlock, { once: true, capture: true });
+      } catch (_) {}
+    })();
+  </script>
 
   <main class="app-main px-3 md:px-6 pt-5 pb-40 mx-auto" style="max-width:1560px">
     <div id="waiting" class="hidden text-center text-2xl mt-28 t-2 font-display">Đang chờ Host tạo phòng…</div>
@@ -380,7 +392,7 @@
     </div>
   </div>
 
-  <script type="module" src="js/theme.js?v=modal3layer13"></script>
-  <script type="module" src="js/app.js?v=modal3layer13"></script>
+  <script type="module" src="js/theme.js?v=perf16"></script>
+  <script type="module" src="js/app.js?v=perf16"></script>
 </body>
 </html>

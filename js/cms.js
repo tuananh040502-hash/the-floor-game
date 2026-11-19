@@ -1,20 +1,20 @@
-import { loadFirebaseConfig } from './firebase-config.js';
+import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
 import {
-  createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
+  createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl, toThumbUrl400,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds,
   getDeletedTopicIds, markTopicDeleted,
-} from './transport.js';
+} from './transport.js?v=iosfix15';
 import {
   TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
   parseVictoryAudio, normalizeVictoryAudioUrl,
   saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
   clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
-} from './topics.js';
+} from './topics.js?v=iosfix15';
 import {
   normalizeImageUrl, driveFallbackUrl, isLegacyEmojiSampleTopic,
   purgeEmptyAndDefaultTopics,
-} from './engine.js';
-import { Sfx } from './audio.js';
+} from './engine.js?v=iosfix15';
+import { Sfx } from './audio.js?v=iosfix15';
 
 export const MAX_TOPIC_IMAGES = 100;
 
@@ -111,44 +111,34 @@ const ownerBackfilledIds = new Set();
 
 const cur = () => topics.find((t) => t.id === currentId) || null;
 
-/** Lưu bản đệm cục bộ vào localStorage (giữ tối đa 100 ảnh, bảo toàn coverUrl, ownerScriptUrl, ownerFolderId, driveFolderId, fileIds). */
+/** Lưu bản đệm cục bộ vào localStorage bằng 1 lần JSON.stringify duy nhất (giữ tối đa 100 ảnh, bảo toàn coverUrl, ownerScriptUrl, ownerFolderId, driveFolderId, fileIds). */
 function persistLocalCache() {
-  saveCustom(topics);
   try {
-    const saved = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
-    if (Array.isArray(saved)) {
-      const byId = new Map(topics.map((t) => [t.id, t]));
-      let changed = false;
-      saved.forEach((st) => {
-        const src = byId.get(st && st.id);
-        if (!src) return;
-        if (Array.isArray(src.items) && src.items.length > (st.items?.length || 0)) {
-          st.items = src.items.slice(0, MAX_TOPIC_IMAGES);
-          changed = true;
-        }
-        const cleanCover = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
-        const cleanOwnerUrl = normalizeScriptUrl(src.ownerScriptUrl);
-        const cleanOwnerFolder = normalizeFolderId(src.ownerFolderId);
-        const cleanDriveFolder = normalizeFolderId(src.driveFolderId);
-        const cleanFileIds = extractTopicDriveFileIds(src);
-        if (
-          (st.coverUrl || '') !== cleanCover
-          || (st.ownerScriptUrl || '') !== cleanOwnerUrl
-          || (st.ownerFolderId || '') !== cleanOwnerFolder
-          || (st.driveFolderId || '') !== cleanDriveFolder
-          || JSON.stringify(st.fileIds || []) !== JSON.stringify(cleanFileIds)
-        ) {
-          st.coverUrl = cleanCover;
-          st.ownerScriptUrl = cleanOwnerUrl;
-          st.ownerFolderId = cleanOwnerFolder;
-          st.driveFolderId = cleanDriveFolder;
-          st.fileIds = cleanFileIds;
-          changed = true;
-        }
+    const cleanList = (Array.isArray(topics) ? topics : []).map((src) => {
+      if (!src || typeof src !== 'object') return null;
+      const base = sanitizeTopic({ ...src, items: [] });
+      if (!base) return null;
+      base.icon = '';
+      base.items = (Array.isArray(src.items) ? src.items : [])
+        .map(sanitizeItem)
+        .filter(Boolean)
+        .slice(0, MAX_TOPIC_IMAGES);
+      base.coverUrl = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
+      base.ownerScriptUrl = normalizeScriptUrl(src.ownerScriptUrl);
+      base.ownerFolderId = normalizeFolderId(src.ownerFolderId);
+      base.driveFolderId = normalizeFolderId(src.driveFolderId);
+      base.fileIds = extractTopicDriveFileIds({
+        coverUrl: base.coverUrl,
+        items: base.items,
+        fileIds: src.fileIds,
       });
-      if (changed) localStorage.setItem(TOPICS_KEY, JSON.stringify(saved));
-    }
-  } catch { /* ignore */ }
+      base.updatedAt = Number(src.updatedAt) || Date.now();
+      return base;
+    }).filter(Boolean);
+    localStorage.setItem(TOPICS_KEY, JSON.stringify(cleanList));
+  } catch (err) {
+    console.warn('Không lưu được cache localStorage:', err);
+  }
 }
 
 /**
@@ -574,9 +564,10 @@ function renderItems() {
     card.className = `photo-card${isExplicitCover ? ' is-cover-card' : ''}`;
     card.draggable = true;
     card.dataset.idx = String(i);
+    const thumbSrc = it.type === 'img' && it.src ? (toThumbUrl400(it.src) || it.src) : '';
     const art = it.type === 'emoji'
       ? `<div class="photo-emoji">${esc(it.emoji)}</div>`
-      : `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(it.src)}" alt="">`;
+      : `<img loading="lazy" decoding="async" referrerpolicy="no-referrer" src="${esc(thumbSrc)}" alt="">`;
     const coverBtnHtml = it.type === 'img' && it.src
       ? `<button type="button" data-a="cover" class="photo-cover-btn${isExplicitCover ? ' is-active' : isAutoCover ? ' is-auto' : ''}" title="${isExplicitCover ? 'Đang là ảnh bìa chủ đề' : 'Đặt ảnh này làm ảnh bìa chủ đề'}">${isExplicitCover ? '⭐ Ảnh bìa' : isAutoCover ? '⭐ Ảnh bìa (#1)' : '☆ Ảnh bìa'}</button>`
       : '';
@@ -845,12 +836,15 @@ async function handleFiles(fileList) {
         answer: cleanName(f.name) || `Ảnh ${t.items.length + 1}`,
         aliases: [],
       });
-      persist(t);
       ok += 1;
-      render();
+      if ($('countNow')) $('countNow').textContent = t.items.length;
     } catch (err) {
       failed.push(`${f.name} (${err.message})`);
     }
+  }
+  if (ok > 0) {
+    persist(t);
+    render();
   }
   $('progressBar').style.width = '100%';
   $('progressText').textContent = `Hoàn tất: ${ok}/${total} ảnh đã tải lên${failed.length ? `, ${failed.length} lỗi` : ''}.`;

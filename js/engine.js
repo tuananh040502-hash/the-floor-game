@@ -3,7 +3,7 @@
  * Đồng hồ dùng mô hình: remA/remB (ms còn lại tại thời điểm tStamp) + running/turn,
  * nhờ vậy mọi màn hình tự tính đồng hồ mượt mà từ cùng một trạng thái.
  */
-import { TOPICS_KEY, clampVolume01 } from './topics.js';
+import { TOPICS_KEY, clampVolume01 } from './topics.js?v=iosfix15';
 
 export const DUEL_MS = 60000;
 export const DEFAULT_DURATION_SEC = 60;
@@ -98,17 +98,34 @@ export function purgeEmptyAndDefaultTopics(topicsList, options = {}) {
   return { kept, purged, purgedIds };
 }
 
-/** Chỉ đọc danh sách chủ đề thực tế của người dùng có ảnh hợp lệ từ bộ nhớ đệm (không nạp chủ đề mặc định hay chủ đề rỗng). */
+let engineCategoriesCache = null;
+let engineCategoriesRawRef = null;
+
+export function invalidateEngineCategoriesCache() {
+  engineCategoriesCache = null;
+  engineCategoriesRawRef = null;
+}
+
+/** Chỉ đọc danh sách chủ đề thực tế của người dùng có ảnh hợp lệ từ bộ nhớ đệm (có cache trên RAM, không nạp chủ đề mặc định hay chủ đề rỗng). */
 export function safeAllCategories() {
   try {
     if (typeof localStorage === 'undefined') return [];
-    const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || '[]');
+    const rawStr = localStorage.getItem(TOPICS_KEY) || '[]';
+    if (engineCategoriesCache && engineCategoriesRawRef === rawStr) {
+      return engineCategoriesCache;
+    }
+    const raw = JSON.parse(rawStr);
     if (Array.isArray(raw)) {
       const { kept, purgedIds } = purgeEmptyAndDefaultTopics(raw);
+      let nextStr = rawStr;
       if (purgedIds.length) {
-        try { localStorage.setItem(TOPICS_KEY, JSON.stringify(kept)); } catch { /* ignore */ }
+        try {
+          nextStr = JSON.stringify(kept);
+          localStorage.setItem(TOPICS_KEY, nextStr);
+        } catch { /* ignore */ }
       }
-      return kept.map((c) => ({
+      engineCategoriesRawRef = nextStr;
+      engineCategoriesCache = kept.map((c) => ({
         ...c,
         id: String(c.id),
         name: String(c.name || 'Chủ đề'),
@@ -117,6 +134,7 @@ export function safeAllCategories() {
         custom: true,
         items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
       }));
+      return engineCategoriesCache;
     }
   } catch (err) {
     console.warn('Lỗi đọc danh sách chủ đề người dùng:', err);
@@ -538,7 +556,7 @@ export function reduce(s, type, arg = {}, now) {
         s.setup.catId = cat.id;
         s.setup.preloadUrls = extractImageUrls(cat.items, null, 0, PRELOAD_WINDOW);
         s.setup.victoryAudioUrl = cat.victoryAudioUrl || '';
-        s.setup.victoryVoiceData = cat.victoryVoiceData || '';
+        s.setup.victoryVoiceData = '';
         s.setup.victoryVoiceName = cat.victoryVoiceName || '';
         s.setup.localAudioVolume = clampVolume01(cat.localAudioVolume, 1.0);
         s.setup.onlineAudioVolume = clampVolume01(cat.onlineAudioVolume, 1.0);
@@ -558,7 +576,7 @@ export function reduce(s, type, arg = {}, now) {
         catId: arg.id,
         preloadUrls: extractImageUrls(cat.items, null, 0, PRELOAD_WINDOW),
         victoryAudioUrl: cat.victoryAudioUrl || '',
-        victoryVoiceData: cat.victoryVoiceData || '',
+        victoryVoiceData: '',
         victoryVoiceName: cat.victoryVoiceName || '',
         localAudioVolume: clampVolume01(cat.localAudioVolume, 1.0),
         onlineAudioVolume: clampVolume01(cat.onlineAudioVolume, 1.0),
@@ -577,7 +595,7 @@ export function reduce(s, type, arg = {}, now) {
       const durB = clampDurationSec(pB?.durationSec) * 1000;
       const compactItems = cat.items.map(compactDuelItem).filter(Boolean);
       if (!compactItems.length) return false;
-      // Chụp lại bộ câu hỏi gọn gàng + âm thanh chiến thắng kép vào trận để mọi màn hình đồng bộ mượt mà.
+      // Chụp lại bộ câu hỏi gọn gàng vào trận (không đính kèm chuỗi Base64 victoryVoiceData để tránh nghẽn Firebase).
       const order = compactItems.map((_, i) => i);
       const queue = cat.shuffle === false ? order : shuffle(order);
       s.duel = {
@@ -585,7 +603,7 @@ export function reduce(s, type, arg = {}, now) {
         catName: cat.name,
         catIcon: cat.icon,
         victoryAudioUrl: cat.victoryAudioUrl || '',
-        victoryVoiceData: cat.victoryVoiceData || s.setup.victoryVoiceData || '',
+        victoryVoiceData: '',
         victoryVoiceName: cat.victoryVoiceName || s.setup.victoryVoiceName || '',
         localAudioVolume: clampVolume01(cat.localAudioVolume ?? s.setup.localAudioVolume, 1.0),
         onlineAudioVolume: clampVolume01(cat.onlineAudioVolume ?? s.setup.onlineAudioVolume, 1.0),

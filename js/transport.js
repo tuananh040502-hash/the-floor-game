@@ -41,10 +41,10 @@ export function markTopicDeleted(topicId) {
   } catch { /* ignore */ }
 }
 
-export async function createTransport(room, config) {
+export async function createTransport(room, config, options = {}) {
   if (config && config.databaseURL) {
     try {
-      return await firebaseTransport(room, config);
+      return await firebaseTransport(room, config, options);
     } catch (err) {
       console.error('Firebase lỗi, chuyển sang chế độ cục bộ:', err);
       const t = localTransport(room);
@@ -257,6 +257,24 @@ const same = (a, b) => {
   }
 };
 
+const MAX_VOICE_CLOUD_LEN = 30000;
+
+/** Loại bỏ chuỗi Base64 lớn (`victoryVoiceData`) trước khi ghi state phòng lên Firebase. */
+function stripHeavyRoomFields(rawState) {
+  if (!rawState || typeof rawState !== 'object') return rawState;
+  const needStripSetup = rawState.setup
+    && typeof rawState.setup.victoryVoiceData === 'string'
+    && (rawState.setup.victoryVoiceData.length > MAX_VOICE_CLOUD_LEN || /^data:/i.test(rawState.setup.victoryVoiceData));
+  const needStripDuel = rawState.duel
+    && typeof rawState.duel.victoryVoiceData === 'string'
+    && (rawState.duel.victoryVoiceData.length > MAX_VOICE_CLOUD_LEN || /^data:/i.test(rawState.duel.victoryVoiceData));
+  if (!needStripSetup && !needStripDuel) return rawState;
+  const copy = { ...rawState };
+  if (needStripSetup) copy.setup = { ...rawState.setup, victoryVoiceData: '' };
+  if (needStripDuel) copy.duel = { ...rawState.duel, victoryVoiceData: '' };
+  return copy;
+}
+
 function diffPaths(prev, next, base, out) {
   const sameDuelSession = base === 'duel'
     && prev && next
@@ -265,6 +283,12 @@ function diffPaths(prev, next, base, out) {
     && prev.bId === next.bId;
   const keys = new Set([...Object.keys(prev || {}), ...Object.keys(next || {})]);
   keys.forEach((k) => {
+    if (k === 'victoryVoiceData') {
+      const val = next ? next[k] : undefined;
+      if (typeof val === 'string' && (val.length > MAX_VOICE_CLOUD_LEN || /^data:/i.test(val))) {
+        return;
+      }
+    }
     if (sameDuelSession && DUEL_STATIC_KEYS.has(k) && prev[k] !== undefined && next[k] !== undefined) {
       return;
     }
@@ -280,15 +304,24 @@ function diffPaths(prev, next, base, out) {
 
 // ---------- Firebase ----------
 let sdkPromise = null;
+const SDK_LOAD_TIMEOUT_MS = 6500;
 async function loadSdk() {
   if (!sdkPromise) {
-    sdkPromise = Promise.all([
+    let timer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Hết thời gian tải Firebase SDK')), SDK_LOAD_TIMEOUT_MS);
+    });
+    const importPromise = Promise.all([
       import(`${FB_BASE}/firebase-app.js`),
       import(`${FB_BASE}/firebase-database.js`),
-    ]).then(([appMod, db]) => ({ appMod, db })).catch((err) => {
-      sdkPromise = null;
-      throw err;
-    });
+    ]).then(([appMod, db]) => ({ appMod, db }));
+
+    sdkPromise = Promise.race([importPromise, timeoutPromise])
+      .finally(() => { if (timer) clearTimeout(timer); })
+      .catch((err) => {
+        sdkPromise = null;
+        throw err;
+      });
   }
   return sdkPromise;
 }
@@ -300,11 +333,41 @@ function getOrInitApp(appMod, config) {
   return appMod.initializeApp(config, name);
 }
 
-async function firebaseTransport(room, config) {
+/** Gộp chung 1 listener `.info/connected` duy nhất trên mỗi instance `database`. */
+const sharedConnHubs = new WeakMap();
+function subscribeConnected(db, database, cb) {
+  let hub = sharedConnHubs.get(database);
+  if (!hub) {
+    const subs = new Set();
+    let lastVal = null;
+    const unsub = db.onValue(db.ref(database, '.info/connected'), (snap) => {
+      lastVal = Boolean(snap.val());
+      subs.forEach((fn) => {
+        try { fn(lastVal); } catch (e) { console.error(e); }
+      });
+    });
+    hub = {
+      subs,
+      get lastVal() { return lastVal; },
+      unsub,
+    };
+    sharedConnHubs.set(database, hub);
+  }
+  hub.subs.add(cb);
+  if (hub.lastVal !== null) {
+    try { cb(hub.lastVal); } catch { /* ignore */ }
+  }
+  return () => {
+    hub.subs.delete(cb);
+  };
+}
+
+async function firebaseTransport(room, config, options = {}) {
   const { appMod, db } = await loadSdk();
   const app = getOrInitApp(appMod, config);
   const database = db.getDatabase(app);
   const stateRef = db.ref(database, `rooms/${room}/state`);
+  const isViewOnly = options && options.role === 'view';
   let offset = 0;
   const listeners = [];
   const emit = (ev) => listeners.forEach((cb) => cb(ev));
@@ -317,30 +380,34 @@ async function firebaseTransport(room, config) {
   unsubs.push(db.onValue(db.ref(database, '.info/serverTimeOffset'), (snap) => {
     offset = snap.val() || 0;
   }));
-  unsubs.push(db.onValue(db.ref(database, '.info/connected'), (snap) => {
-    emit({ type: snap.val() ? 'online' : 'offline' });
+  unsubs.push(subscribeConnected(db, database, (connected) => {
+    emit({ type: connected ? 'online' : 'offline' });
   }));
 
-  // Đo độ trễ thật: get() trên đường dẫn không được lắng nghe buộc phải đi tới server.
-  const rttRef = db.ref(database, `rooms/${room}/_rtt`);
-  const measure = async () => {
-    if (disposed || document.visibilityState === 'hidden') return;
-    const t0 = performance.now();
-    try {
-      await db.get(rttRef);
-      const rtt = performance.now() - t0;
-      emit({ type: 'latency', ms: Math.round(rtt / 2), rtt: Math.round(rtt) });
-    } catch (err) {
-      emit({ type: 'error', message: err.message });
-    }
-  };
-  const firstMeasure = setTimeout(measure, 1500);
-  const measureTimer = setInterval(measure, 5000);
+  // Đo độ trễ thật trên máy Host (giãn chu kỳ 25000ms); tắt hoàn toàn trên máy Xem (role === 'view').
+  let firstMeasure = null;
+  let measureTimer = null;
+  if (!isViewOnly) {
+    const rttRef = db.ref(database, `rooms/${room}/_rtt`);
+    const measure = async () => {
+      if (disposed || document.visibilityState === 'hidden') return;
+      const t0 = performance.now();
+      try {
+        await db.get(rttRef);
+        const rtt = performance.now() - t0;
+        emit({ type: 'latency', ms: Math.round(rtt / 2), rtt: Math.round(rtt) });
+      } catch (err) {
+        emit({ type: 'error', message: err.message });
+      }
+    };
+    firstMeasure = setTimeout(measure, 2000);
+    measureTimer = setInterval(measure, 25000);
+  }
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    clearTimeout(firstMeasure);
-    clearInterval(measureTimer);
+    if (firstMeasure) clearTimeout(firstMeasure);
+    if (measureTimer) clearInterval(measureTimer);
     if (stateUnsub) { try { stateUnsub(); } catch { /* ignore */ } stateUnsub = null; }
     unsubs.splice(0).forEach((u) => { try { u(); } catch { /* ignore */ } });
   };
@@ -364,14 +431,15 @@ async function firebaseTransport(room, config) {
     write(state, prev) {
       const handle = (err) => emit({ type: 'error', message: `Không ghi được dữ liệu: ${err?.message || err}` });
       try {
-        const baseState = prev || lastState;
-        lastState = state;
+        const cleanNext = stripHeavyRoomFields(state);
+        const baseState = stripHeavyRoomFields(prev || lastState);
+        lastState = cleanNext;
         if (baseState) {
-          const patch = diffPaths(baseState, state, '', {});
+          const patch = diffPaths(baseState, cleanNext, '', {});
           if (!Object.keys(patch).length) return Promise.resolve();
           return db.update(stateRef, patch).catch(handle);
         }
-        return db.set(stateRef, state).catch(handle);
+        return db.set(stateRef, cleanNext).catch(handle);
       } catch (err) {
         handle(err);
         return Promise.resolve();
@@ -417,8 +485,8 @@ async function firebaseSharedTopics(config) {
   let connUnsub = null;
   let disposed = false;
 
-  connUnsub = db.onValue(db.ref(database, '.info/connected'), (snap) => {
-    if (snap.val()) {
+  connUnsub = subscribeConnected(db, database, (connected) => {
+    if (connected) {
       emitStatus({ state: 'synced', message: 'Kho chủ đề dùng chung (Đã đồng bộ)' });
     } else {
       emitStatus({ state: 'offline', message: 'Mất kết nối Cloud — đang dùng bản lưu tạm' });
@@ -532,7 +600,12 @@ async function firebaseSharedTopics(config) {
 
 function localSharedTopics() {
   const key = 'thefloor:topics:v1';
-  const channel = 'BroadcastChannel' in window ? new BroadcastChannel('thefloor:shared_topics') : null;
+  let channel = null;
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('thefloor:shared_topics');
+    }
+  } catch { /* ignore */ }
   const statusListeners = [];
   const currentStatus = { state: 'local', message: 'Chế độ cục bộ (Chưa kết nối Cloud)' };
   const read = () => {
@@ -626,7 +699,12 @@ export async function testFirebase(config) {
 // ---------- Cục bộ ----------
 function localTransport(room) {
   const key = `thefloor:${room}`;
-  const channel = 'BroadcastChannel' in window ? new BroadcastChannel(key) : null;
+  let channel = null;
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel(key);
+    }
+  } catch { /* ignore */ }
   const listeners = [];
   let storageHandler = null;
   const read = () => {
