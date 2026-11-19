@@ -1,13 +1,13 @@
 import { loadFirebaseConfig } from './firebase-config.js';
 import { openFirebaseSettings } from './settings.js';
-import { createTransport, createSharedTopicsSync, sanitizeCloudTopic } from './transport.js';
+import { createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl } from './transport.js';
 import { allCategories, TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 import {
   createInitialState, reduce, remainingOf, countdownRemainingOf, extractImageUrls,
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
-} from './engine.js?v=fixfloor3';
+} from './engine.js?v=topicmodal5';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
@@ -52,6 +52,8 @@ let fxKey = '';
 let topicsSync = null;
 let sharedCustomTopics = null;
 let initialTopicsMigrated = false;
+let topicModalContext = { mode: 'duel', playerId: null };
+let topicModalSearchQuery = '';
 const conn = { base: '…', latency: '', error: '' };
 const ANIM_CLASSES = [
   'stagger-item', 'anim-from-top', 'anim-from-bottom', 'anim-from-left',
@@ -154,6 +156,7 @@ async function initSharedTopics(fbCfg) {
       }
       sharedCustomTopics = [...cloudById.values()].map((t) => ({
         ...t,
+        coverUrl: normalizeCoverUrl(t?.coverUrl) || normalizeImageUrl(t?.coverUrl) || '',
         items: Array.isArray(t?.items) ? t.items : [],
       }));
       try {
@@ -491,6 +494,7 @@ function getCategories100() {
             id: String(t.id),
             name: String(t.name || 'Chủ đề riêng'),
             icon: String(t.icon || '🖼️'),
+            coverUrl: normalizeCoverUrl(t.coverUrl) || normalizeImageUrl(t.coverUrl) || '',
             custom: true,
             items: Array.isArray(t.items) ? t.items.filter(Boolean) : [],
           });
@@ -499,9 +503,15 @@ function getCategories100() {
       cats.forEach((c) => {
         if (!Array.isArray(c.items)) c.items = [];
         const src = byId.get(c.id);
-        if (src && Array.isArray(src.items) && src.items.length > c.items.length) {
-          c.items = src.items.filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+        if (src) {
+          if (Array.isArray(src.items) && src.items.length > c.items.length) {
+            c.items = src.items.filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+          }
+          if (src.coverUrl) {
+            c.coverUrl = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
+          }
         }
+        c.coverUrl = normalizeCoverUrl(c.coverUrl) || normalizeImageUrl(c.coverUrl) || '';
         c.items = c.items.map((it) => {
           if (!it || typeof it !== 'object') return null;
           if (it.type === 'img' && it.src) {
@@ -837,7 +847,7 @@ function renderFloor(s) {
         if (badgeEl) badgeEl.textContent = isChal ? '⚔️ THÁCH ĐẤU' : isDef ? '🛡️ BỊ THÁCH' : '';
         if (avatarEl) avatarEl.textContent = owner.avatar || '🦁';
         if (nameEl) nameEl.textContent = owner.name || `Người chơi ${i + 1}`;
-        if (topicEl) topicEl.textContent = cat ? `${cat.icon} ${cat.name}` : (owner.categoryId || '—');
+        if (topicEl) topicEl.textContent = cat ? (cat.name || cat.id) : (owner.categoryId || '—');
         if (territoryEl) territoryEl.textContent = `${owned} ô`;
 
         el.classList.toggle('is-eliminated', isElim);
@@ -972,12 +982,12 @@ function renderSetup(s, preloadedCats = null) {
   const cats = Array.isArray(preloadedCats) && preloadedCats.length ? preloadedCats : getCategories100();
   const catSel = $('selCat');
   if (catSel) {
-    const catSig = JSON.stringify(cats.map((c) => [c.id, c.name, c.icon, (c.items || []).length]));
+    const catSig = JSON.stringify(cats.map((c) => [c.id, c.name, c.coverUrl || '', (c.items || []).length]));
     if (catSel.dataset.sig !== catSig) {
       catSel.dataset.sig = catSig;
       catSel.innerHTML = cats.map((c) => {
         const count = Array.isArray(c.items) ? c.items.length : 0;
-        return `<option value="${esc(c.id)}" ${count ? '' : 'disabled'}>${esc(c.icon || '🖼️')} ${esc(c.name || c.id)} (${count})</option>`;
+        return `<option value="${esc(c.id)}" ${count ? '' : 'disabled'}>${esc(c.name || c.id)} (${count})</option>`;
       }).join('');
     }
     const preferredCat = setup.catId || (validDef && validDef.categoryId) || (cats[0] ? cats[0].id : '');
@@ -986,10 +996,14 @@ function renderSetup(s, preloadedCats = null) {
     } else if (cats[0]) {
       catSel.value = cats[0].id;
     }
-    const chosen = cats.find((c) => c.id === catSel.value);
+    const chosen = cats.find((c) => c.id === catSel.value) || cats[0] || null;
+    syncTopicTriggerButton(chosen);
     if ($('btnStartDuel')) {
       $('btnStartDuel').disabled = !(validChal && validDef && chosen && Array.isArray(chosen.items) && chosen.items.length) || !!s.championId;
     }
+  }
+  if ($('topicPickerModal') && !$('topicPickerModal').classList.contains('hidden')) {
+    renderTopicModalGrid(cats);
   }
 
   document.querySelectorAll('#playerCountSeg [data-pc]').forEach((b) => {
@@ -1012,13 +1026,22 @@ function renderSetup(s, preloadedCats = null) {
       if (field === 'durationSec') inp.value = String(val);
       dispatch('updatePlayer', { id: row.dataset.pid, patch: { [field]: val } });
     });
+    roster.addEventListener('click', (e) => {
+      const topicBtn = e.target.closest('[data-open-player-topic]');
+      if (!topicBtn) return;
+      e.preventDefault();
+      openTopicPickerModal({ mode: 'player', playerId: topicBtn.dataset.openPlayerTopic });
+    });
   }
-  const sig = JSON.stringify([s.players, cats.map((c) => `${c.id}:${c.name}`)]);
+  const sig = JSON.stringify([s.players, cats.map((c) => `${c.id}:${c.name}:${c.coverUrl || ''}:${(c.items || []).length}`)]);
   if (roster.dataset.sig !== sig && !roster.contains(document.activeElement)) {
     roster.dataset.sig = sig;
     roster.innerHTML = '';
     const rFrag = document.createDocumentFragment();
+    const catById = new Map(cats.map((c) => [c.id, c]));
     s.players.forEach((p, idx) => {
+      const pCat = catById.get(p.categoryId) || cats[0] || null;
+      const pCatLabel = pCat ? (pCat.name || pCat.id) : (p.categoryId || 'Chọn chủ đề');
       const row = document.createElement('div');
       row.dataset.pid = p.id;
       row.className = 'roster-grid roster-row';
@@ -1031,12 +1054,179 @@ function renderSetup(s, preloadedCats = null) {
           <input class="input roster-avatar-inp" data-f="avatar" value="${esc(p.avatar)}" maxlength="4" title="Biểu tượng" />
         </div>
         <input class="input" data-f="name" value="${esc(p.name)}" maxlength="14" title="Tên người chơi" placeholder="Tên…" />
-        <select class="input" data-f="categoryId" title="Chủ đề sở trường">${cats.map((c) => `<option value="${esc(c.id)}" ${c.id === p.categoryId ? 'selected' : ''}>${esc(c.icon || '🖼️')} ${esc(c.name)}</option>`).join('')}</select>
+        <div class="min-w-0">
+          <select class="input hidden" style="display:none" data-f="categoryId" title="Chủ đề sở trường" tabindex="-1" aria-hidden="true">${cats.map((c) => `<option value="${esc(c.id)}" ${c.id === p.categoryId ? 'selected' : ''}>${esc(c.name || c.id)}</option>`).join('')}</select>
+          <button type="button" class="roster-topic-btn" data-open-player-topic="${esc(p.id)}" title="Chọn chủ đề sở trường cho ${esc(p.name)}">
+            <span class="roster-topic-btn-label">${esc(pCatLabel)}</span>
+            <span class="roster-topic-btn-caret" aria-hidden="true">▾</span>
+          </button>
+        </div>
         <input type="number" min="10" max="600" step="5" class="input text-center font-num" data-f="durationSec" value="${clampDurationSec(p.durationSec)}" title="Thời gian thi đấu (giây)" />`;
       rFrag.appendChild(row);
     });
     roster.appendChild(rFrag);
   }
+}
+
+function syncTopicTriggerButton(chosenCat) {
+  const nameEl = $('selectedTopicName');
+  const countEl = $('selectedTopicCount');
+  if (!chosenCat) {
+    if (nameEl) nameEl.textContent = 'Chọn chủ đề thi đấu';
+    if (countEl) countEl.textContent = '0 câu';
+    return;
+  }
+  const count = Array.isArray(chosenCat.items) ? chosenCat.items.length : 0;
+  if (nameEl) nameEl.textContent = chosenCat.name || chosenCat.id;
+  if (countEl) countEl.textContent = `${count} câu`;
+}
+
+function getActiveTopicIdForModal(cats) {
+  if (topicModalContext.mode === 'player' && topicModalContext.playerId && state) {
+    const p = playerById(state, topicModalContext.playerId);
+    if (p && p.categoryId) return p.categoryId;
+  }
+  const sel = $('selCat');
+  if (sel && sel.value) return sel.value;
+  if (state && state.setup && state.setup.catId) return state.setup.catId;
+  return cats && cats[0] ? cats[0].id : '';
+}
+
+function renderTopicModalGrid(preloadedCats = null) {
+  const grid = $('topicModalGrid');
+  if (!grid) return;
+  const cats = Array.isArray(preloadedCats) && preloadedCats.length ? preloadedCats : getCategories100();
+  if ($('topicModalTotalBadge')) {
+    $('topicModalTotalBadge').textContent = `${cats.length} chủ đề`;
+  }
+  const activeId = getActiveTopicIdForModal(cats);
+  const q = (topicModalSearchQuery || '').trim().toLowerCase();
+
+  const indexed = cats.map((cat, idx) => ({
+    cat,
+    numStr: String(idx + 1).padStart(2, '0'),
+  })).filter(({ cat, numStr }) => {
+    if (!q) return true;
+    const name = String(cat.name || '').toLowerCase();
+    const id = String(cat.id || '').toLowerCase();
+    return name.includes(q) || id.includes(q) || numStr.includes(q);
+  });
+
+  grid.innerHTML = '';
+  if (!indexed.length) {
+    grid.innerHTML = '<div class="topic-modal-empty">Không tìm thấy chủ đề phù hợp với từ khóa.</div>';
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  indexed.forEach(({ cat, numStr }) => {
+    const count = Array.isArray(cat.items) ? cat.items.length : 0;
+    const isSelected = cat.id === activeId;
+    const isDuelMode = topicModalContext.mode !== 'player';
+    const isDisabled = isDuelMode && count === 0;
+    const thumbUrl = getTopicCoverThumb(cat);
+    const card = document.createElement('div');
+    card.setAttribute('role', 'button');
+    card.tabIndex = isDisabled ? -1 : 0;
+    card.setAttribute('aria-disabled', isDisabled ? 'true' : 'false');
+    card.dataset.topicPickId = cat.id;
+    card.className = `topic-card${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-empty' : ''}`;
+    // Tuyệt đối KHÔNG gắn text đáp án hay emoji biểu tượng lên thẻ chủ đề
+    card.innerHTML = `
+      <div class="topic-card-media">
+        ${thumbUrl ? `<img class="topic-card-thumb" src="${esc(thumbUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />` : ''}
+        <div class="topic-card-fallback">
+          <span class="topic-card-fallback-num">${esc(numStr)}</span>
+        </div>
+        <span class="topic-card-num-badge">${esc(numStr)}</span>
+        <span class="topic-card-selected-pill" aria-hidden="true">✓</span>
+      </div>
+      <div class="topic-card-body">
+        <div class="topic-card-name">${esc(cat.name || cat.id)}</div>
+        <div class="topic-card-foot">
+          <span class="topic-card-count">${count} câu hỏi</span>
+        </div>
+      </div>`;
+    const thumbImg = card.querySelector('.topic-card-thumb');
+    if (thumbImg) {
+      thumbImg.removeAttribute('crossorigin');
+      let retried = false;
+      thumbImg.addEventListener('error', () => {
+        if (!retried && thumbUrl) {
+          retried = true;
+          const fb = driveFallbackUrl(thumbUrl);
+          if (fb && thumbImg.src !== fb) {
+            thumbImg.src = fb;
+            return;
+          }
+        }
+        thumbImg.classList.add('hidden');
+      });
+    }
+    frag.appendChild(card);
+  });
+  grid.appendChild(frag);
+}
+
+function openTopicPickerModal(ctx = { mode: 'duel', playerId: null }) {
+  const modal = $('topicPickerModal');
+  if (!modal) return;
+  topicModalContext = {
+    mode: ctx && ctx.mode === 'player' ? 'player' : 'duel',
+    playerId: ctx && ctx.playerId ? ctx.playerId : null,
+  };
+  topicModalSearchQuery = '';
+  const searchInp = $('topicSearchInput');
+  if (searchInp) searchInp.value = '';
+
+  const titleEl = $('topicModalTitle');
+  const subEl = $('topicModalSubtitle');
+  if (topicModalContext.mode === 'player' && topicModalContext.playerId && state) {
+    const p = playerById(state, topicModalContext.playerId);
+    if (titleEl) titleEl.textContent = p ? `Chủ đề sở trường · ${p.avatar} ${p.name}` : 'Chọn chủ đề sở trường';
+    if (subEl) subEl.textContent = 'Chạm vào thẻ chủ đề để gán làm sở trường cho người chơi này';
+  } else {
+    if (titleEl) titleEl.textContent = 'Chọn chủ đề thi đấu';
+    if (subEl) subEl.textContent = 'Chạm vào thẻ chủ đề bất kỳ để áp dụng ngay cho cặp đấu hiện tại';
+  }
+
+  renderTopicModalGrid();
+  modal.classList.remove('hidden');
+}
+
+function closeTopicPickerModal() {
+  const modal = $('topicPickerModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function selectTopicFromModal(catId) {
+  if (!catId) return;
+  const cats = getCategories100();
+  const chosen = cats.find((c) => c.id === catId);
+  if (!chosen) return;
+
+  if (topicModalContext.mode === 'player' && topicModalContext.playerId) {
+    const pid = topicModalContext.playerId;
+    const rowSel = document.querySelector(`#roster [data-pid="${CSS.escape ? CSS.escape(pid) : pid}"] select[data-f="categoryId"]`);
+    if (rowSel) {
+      rowSel.value = catId;
+      rowSel.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      dispatch('updatePlayer', { id: pid, patch: { categoryId: catId } });
+    }
+    closeTopicPickerModal();
+    return;
+  }
+
+  const selCat = $('selCat');
+  if (selCat) {
+    selCat.value = catId;
+    syncTopicTriggerButton(chosen);
+    selCat.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    dispatch('setCategory', { id: catId });
+  }
+  closeTopicPickerModal();
 }
 
 // ----- Đấu trường -----
@@ -1076,7 +1266,7 @@ function renderArena(s) {
   document.documentElement.style.setProperty('--turn', led);
   $('qWrap').classList.toggle('paused', s.phase === 'paused');
   $('turnBanner').textContent = banner;
-  $('catBadge').textContent = `${d.catIcon || '🖼️'} ${d.catName || ''}`;
+  $('catBadge').textContent = d.catName || '';
 
   // Nội dung câu đố / màn chuẩn bị / màn đếm ngược
   const key = `${s.phase}-${d.categoryId}-${d.qPos}`;
@@ -1087,7 +1277,7 @@ function renderArena(s) {
     if (s.phase === 'ready') {
       content.innerHTML = `
         <div class="cd-stage">
-          <div class="eyebrow">${esc(d.catIcon || '🖼️')} ${esc(d.catName || '')}</div>
+          <div class="eyebrow">${esc(d.catName || '')}</div>
           <div class="font-display text-5xl md:text-7xl t-1">SẴN SÀNG?</div>
           <div class="t-2 text-base md:text-lg">Chờ Host bấm <b>Bắt đầu trận</b></div>
           <div class="cd-status"><span id="cdLoadDot" class="cd-dot"></span><span id="cdLoadText">Đang nạp dữ liệu câu hỏi...</span></div>
@@ -1537,29 +1727,53 @@ function setupPageTransitions() {
 
 // ---------- UI tĩnh & phím tắt ----------
 function bindStaticUi() {
-  const unlock = (e) => {
-    if (e) e.stopPropagation();
-    const gate = $('soundGate');
-    if (gate) {
-      gate.classList.add('hidden');
-      gate.style.display = 'none';
-      gate.style.pointerEvents = 'none';
-    }
+  const gate = $('soundGate');
+  if (gate) {
+    gate.classList.add('hidden');
+    gate.style.display = 'none';
+    gate.style.pointerEvents = 'none';
+  }
+  const unlockOnce = () => {
     try { Sfx.unlock(); } catch { /* ignore */ }
-    if (state) render(state);
   };
-  ['soundGate', 'btnSoundGate'].forEach((id) => {
-    const el = $(id);
-    if (el) {
-      el.addEventListener('pointerdown', unlock);
-      el.addEventListener('click', unlock);
-    }
-  });
-  window.addEventListener('keydown', () => {
-    try { Sfx.unlock(); } catch { /* ignore */ }
-  }, { once: true });
+  document.addEventListener('pointerdown', unlockOnce, { once: true, capture: true });
+  document.addEventListener('keydown', unlockOnce, { once: true, capture: true });
 
   setupPageTransitions();
+
+  if ($('btnOpenTopicModal')) {
+    $('btnOpenTopicModal').addEventListener('click', () => {
+      openTopicPickerModal({ mode: 'duel', playerId: null });
+    });
+  }
+  if ($('btnCloseTopicModal')) {
+    $('btnCloseTopicModal').addEventListener('click', closeTopicPickerModal);
+  }
+  if ($('topicPickerModal')) {
+    $('topicPickerModal').addEventListener('mousedown', (e) => {
+      if (e.target === $('topicPickerModal')) closeTopicPickerModal();
+    });
+  }
+  if ($('topicSearchInput')) {
+    $('topicSearchInput').addEventListener('input', (e) => {
+      topicModalSearchQuery = e.target.value || '';
+      renderTopicModalGrid();
+    });
+  }
+  if ($('topicModalGrid')) {
+    $('topicModalGrid').addEventListener('click', (e) => {
+      const card = e.target.closest('[data-topic-pick-id]');
+      if (!card || card.classList.contains('is-empty') || card.getAttribute('aria-disabled') === 'true') return;
+      selectTopicFromModal(card.dataset.topicPickId);
+    });
+    $('topicModalGrid').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const card = e.target.closest('[data-topic-pick-id]');
+      if (!card || card.classList.contains('is-empty') || card.getAttribute('aria-disabled') === 'true') return;
+      e.preventDefault();
+      selectTopicFromModal(card.dataset.topicPickId);
+    });
+  }
 
   window.addEventListener('storage', (e) => {
     if (e.key === TOPICS_KEY && state) render(state);
@@ -1753,6 +1967,11 @@ function bindStaticUi() {
   if ($('miniPin')) $('miniPin').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.stopPropagation(); tryUnlock(); } });
 
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('topicPickerModal') && !$('topicPickerModal').classList.contains('hidden')) {
+      e.preventDefault();
+      closeTopicPickerModal();
+      return;
+    }
     if (!controller || !state) return;
     const tag = (e.target.tagName || '').toLowerCase();
     if (['input', 'select', 'textarea'].includes(tag)) return;

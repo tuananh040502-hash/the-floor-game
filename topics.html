@@ -7,7 +7,7 @@
   <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=fixui7" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -117,17 +117,51 @@
         <div id="editorBody" class="hidden space-y-6 mx-auto anim-zoom-center" style="max-width:980px">
           <!-- Thông tin chủ đề -->
           <div class="group group-pad space-y-5">
-            <div class="grid gap-4 md:grid-cols-[84px_1fr_auto] items-end">
-              <label class="field-label"><span class="eyebrow">Biểu tượng</span>
-                <input id="tIcon" class="input text-center" style="font-size:1.5rem;padding:6px" maxlength="4" />
-              </label>
+            <div class="grid gap-4 md:grid-cols-[1fr_auto] items-end">
               <label class="field-label"><span class="eyebrow">Tên chủ đề</span>
-                <input id="tName" class="input" style="font-size:17px;font-weight:600" maxlength="60" />
+                <input id="tName" class="input" style="font-size:17px;font-weight:600" maxlength="60" placeholder="Nhập tên chủ đề…" />
               </label>
               <div class="flex items-center gap-4 flex-wrap">
                 <label class="flex items-center gap-2 text-sm t-2 font-medium cursor-pointer"><input id="tShuffle" type="checkbox" /> Xáo trộn khi chơi</label>
                 <span class="font-display text-2xl font-num"><span id="countNow" class="t-accent">0</span><span class="t-3">/<span id="countMax">100</span></span></span>
                 <button id="btnDeleteTopic" class="btn btn-pass btn-sm">Xóa chủ đề</button>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Khu vực Ảnh bìa chủ đề (Cover Image 16:9) -->
+            <div class="space-y-3">
+              <div class="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <div class="eyebrow">🖼️ Ảnh bìa chủ đề (Cover Image)</div>
+                  <p class="t-3 mt-0.5 text-[12px]">Hiển thị trực quan trong bảng chọn chủ đề của Host (không lộ đáp án). Tự động lấy ảnh #1 nếu để trống.</p>
+                </div>
+                <span id="coverSourceBadge" class="chip">Tự động (Ảnh #1)</span>
+              </div>
+
+              <div class="cover-editor-grid">
+                <div id="coverPreviewBox" class="cover-preview-box">
+                  <img id="coverPreviewImg" class="cover-preview-img hidden" alt="Ảnh bìa chủ đề" referrerpolicy="no-referrer" />
+                  <div id="coverPreviewFallback" class="cover-preview-fallback">
+                    <span class="text-xs t-3 font-semibold uppercase tracking-wider">Chưa có ảnh bìa</span>
+                  </div>
+                </div>
+
+                <div class="space-y-3 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <button id="btnPickCoverFile" type="button" class="btn btn-ok btn-sm">⬆ Tải ảnh bìa riêng…</button>
+                    <input id="fileCoverPick" type="file" accept="image/*" class="hidden" />
+                    <button id="btnClearCoverUrl" type="button" class="btn btn-ghost btn-sm hidden" title="Xóa ảnh bìa riêng, quay về dùng tự động ảnh câu hỏi đầu tiên">✕ Dùng lại ảnh #1</button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input id="tCoverUrl" class="input flex-1" placeholder="Hoặc dán trực tiếp URL ảnh bìa (Google Drive / http / https)…" />
+                    <button id="btnApplyCoverUrl" type="button" class="btn btn-gold btn-sm shrink-0">Áp dụng</button>
+                  </div>
+                  <p class="t-3 text-[11.5px] leading-relaxed">
+                    💡 Mẹo nhanh: Bấm nút <b>⭐ Ảnh bìa</b> ở góc trên mỗi thẻ ảnh trong danh sách bên dưới để chọn ngay bức ảnh đó làm ảnh bìa chủ đề.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -278,8 +312,8 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script type="module" src="js/theme.js"></script>
-  <script type="module" src="js/cms.js"></script>
+  <script type="module" src="js/theme.js?v=fixui7"></script>
+  <script type="module" src="js/cms.js?v=fixui7"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')

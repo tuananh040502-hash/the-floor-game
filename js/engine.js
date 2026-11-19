@@ -91,7 +91,7 @@ export function safeAllCategories() {
   return FALLBACK_CATEGORIES.map((c) => ({ ...c, items: [...c.items] }));
 }
 
-function safeGetCategory(id) {
+export function safeGetCategory(id) {
   try {
     const c = getCategory(id);
     if (c && typeof c === 'object') {

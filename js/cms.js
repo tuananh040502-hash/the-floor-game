@@ -1,6 +1,6 @@
 import { CATEGORIES } from './data.js';
 import { loadFirebaseConfig } from './firebase-config.js';
-import { createSharedTopicsSync, sanitizeCloudTopic } from './transport.js';
+import { createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl } from './transport.js';
 import {
   TOPICS_KEY, loadCustom, saveCustom, newId, loadDrive, saveDrive,
   parseVictoryAudio, normalizeVictoryAudioUrl,
@@ -25,8 +25,13 @@ function loadTopicsUpToLimit() {
       const byId = new Map(raw.map((t) => [t && t.id, t]));
       base.forEach((t) => {
         const src = byId.get(t.id);
-        if (src && Array.isArray(src.items) && src.items.length > t.items.length) {
-          t.items = src.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+        if (src) {
+          if (Array.isArray(src.items) && src.items.length > t.items.length) {
+            t.items = src.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+          }
+          t.coverUrl = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
+        } else {
+          t.coverUrl = normalizeCoverUrl(t.coverUrl) || normalizeImageUrl(t.coverUrl) || '';
         }
       });
     }
@@ -43,7 +48,7 @@ let pendingDeleteId = null;
 
 const cur = () => topics.find((t) => t.id === currentId) || null;
 
-/** Lưu bản đệm cục bộ vào localStorage (giữ tối đa 100 ảnh mỗi chủ đề). */
+/** Lưu bản đệm cục bộ vào localStorage (giữ tối đa 100 ảnh mỗi chủ đề và bảo toàn coverUrl). */
 function persistLocalCache() {
   saveCustom(topics);
   try {
@@ -53,8 +58,14 @@ function persistLocalCache() {
       let changed = false;
       saved.forEach((st) => {
         const src = byId.get(st && st.id);
-        if (src && Array.isArray(src.items) && src.items.length > (st.items?.length || 0)) {
+        if (!src) return;
+        if (Array.isArray(src.items) && src.items.length > (st.items?.length || 0)) {
           st.items = src.items.slice(0, MAX_TOPIC_IMAGES);
+          changed = true;
+        }
+        const cleanCover = normalizeCoverUrl(src.coverUrl) || normalizeImageUrl(src.coverUrl) || '';
+        if ((st.coverUrl || '') !== cleanCover) {
+          st.coverUrl = cleanCover;
           changed = true;
         }
       });
@@ -152,6 +163,7 @@ async function handleCloudSnapshot(cloudList) {
     const sanitized = sanitizeTopic({ ...ct, items: [] });
     if (!sanitized) return null;
     sanitized.items = (ct.items || []).map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+    sanitized.coverUrl = normalizeCoverUrl(ct.coverUrl) || normalizeImageUrl(ct.coverUrl) || '';
     sanitized.updatedAt = ct.updatedAt || 0;
     const vc = voiceCache.get(sanitized.id);
     if (vc) {
@@ -234,7 +246,7 @@ function renderTopics() {
     const hasVoice = !!(t.victoryVoiceData || t.victoryVoiceName);
     const hasMusic = !!t.victoryAudioUrl;
     const audioDots = `${hasVoice ? '<span title="Có file ghi âm / SFX riêng">🎙️</span>' : ''}${hasMusic ? '<span title="Có link nhạc chiến thắng riêng">🎵</span>' : ''}`;
-    el.innerHTML = `<span class="topic-icon">${esc(t.icon)}</span><span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${audioDots}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_TOPIC_IMAGES}</span>`;
+    el.innerHTML = `<span class="flex-1 truncate font-semibold">${esc(t.name)}</span>${audioDots}<span class="text-xs t-3 font-semibold">${t.items.length}/${MAX_TOPIC_IMAGES}</span>`;
     frag.appendChild(el);
   });
   list.appendChild(frag);
@@ -312,6 +324,65 @@ function renderAudioBadges(t) {
   }
 }
 
+function renderCoverEditor(t) {
+  const imgEl = $('coverPreviewImg');
+  const fallbackEl = $('coverPreviewFallback');
+  const emojiEl = $('coverPreviewEmoji');
+  const badgeEl = $('coverSourceBadge');
+  const urlInp = $('tCoverUrl');
+  const clearBtn = $('btnClearCoverUrl');
+
+  const explicitCover = t && typeof t.coverUrl === 'string' ? t.coverUrl.trim() : '';
+  const thumbUrl = getTopicCoverThumb(t);
+
+  if (emojiEl) emojiEl.textContent = (t && t.icon) || '🖼️';
+  if (urlInp && document.activeElement !== urlInp) {
+    urlInp.value = explicitCover;
+  }
+  if (clearBtn) {
+    clearBtn.classList.toggle('hidden', !explicitCover);
+  }
+  if (badgeEl) {
+    if (explicitCover) {
+      badgeEl.textContent = '⭐ Ảnh bìa riêng';
+    } else if (thumbUrl) {
+      badgeEl.textContent = 'Tự động (Ảnh #1)';
+    } else {
+      badgeEl.textContent = 'Chưa có ảnh';
+    }
+  }
+
+  if (imgEl && fallbackEl) {
+    if (thumbUrl) {
+      imgEl.classList.remove('hidden');
+      fallbackEl.classList.add('hidden');
+      if (imgEl.dataset.src !== thumbUrl) {
+        imgEl.dataset.src = thumbUrl;
+        imgEl.removeAttribute('crossorigin');
+        imgEl.onload = () => {
+          imgEl.classList.remove('hidden');
+          fallbackEl.classList.add('hidden');
+        };
+        imgEl.onerror = () => {
+          const fb = driveFallbackUrl(thumbUrl);
+          if (fb && imgEl.src !== fb) {
+            imgEl.src = fb;
+            return;
+          }
+          imgEl.classList.add('hidden');
+          fallbackEl.classList.remove('hidden');
+        };
+        imgEl.src = thumbUrl;
+      }
+    } else {
+      imgEl.dataset.src = '';
+      imgEl.removeAttribute('src');
+      imgEl.classList.add('hidden');
+      fallbackEl.classList.remove('hidden');
+    }
+  }
+}
+
 function render() {
   renderTopics();
   updateCloudCountBadge();
@@ -320,9 +391,10 @@ function render() {
   $('editorBody').classList.toggle('hidden', !t);
   if (!t) return;
   hydrateTopicVoice(t);
-  if (document.activeElement !== $('tName')) $('tName').value = t.name;
-  if (document.activeElement !== $('tIcon')) $('tIcon').value = t.icon;
-  if (document.activeElement !== $('tVictoryAudio')) $('tVictoryAudio').value = t.victoryAudioUrl || '';
+  if ($('tName') && document.activeElement !== $('tName')) $('tName').value = t.name;
+  if ($('tIcon') && document.activeElement !== $('tIcon')) $('tIcon').value = '';
+  if ($('tVictoryAudio') && document.activeElement !== $('tVictoryAudio')) $('tVictoryAudio').value = t.victoryAudioUrl || '';
+  renderCoverEditor(t);
   renderAudioBadges(t);
   $('tShuffle').checked = !!t.shuffle;
   $('countNow').textContent = t.items.length;
@@ -341,22 +413,37 @@ function renderItems() {
     box.innerHTML = '<div class="t-3 text-center py-10" style="grid-column:1/-1">Chưa có ảnh nào. Hãy tải ảnh lên hoặc dán link.</div>';
     return;
   }
+  const explicitCoverNorm = t.coverUrl ? (normalizeImageUrl(t.coverUrl) || t.coverUrl.trim()) : '';
+  let firstImgIndex = -1;
+  for (let idx = 0; idx < t.items.length; idx++) {
+    if (t.items[idx] && t.items[idx].type === 'img' && t.items[idx].src) {
+      firstImgIndex = idx;
+      break;
+    }
+  }
   const frag = document.createDocumentFragment();
   t.items.forEach((it, i) => {
     if (it.type === 'img' && it.src) {
       it.src = normalizeImageUrl(it.src) || it.src;
     }
+    const itemNorm = it.type === 'img' && it.src ? (normalizeImageUrl(it.src) || it.src.trim()) : '';
+    const isExplicitCover = Boolean(explicitCoverNorm && itemNorm && explicitCoverNorm === itemNorm);
+    const isAutoCover = Boolean(!explicitCoverNorm && i === firstImgIndex && itemNorm);
     const card = document.createElement('div');
-    card.className = 'photo-card';
+    card.className = `photo-card${isExplicitCover ? ' is-cover-card' : ''}`;
     card.draggable = true;
     card.dataset.idx = String(i);
     const art = it.type === 'emoji'
       ? `<div class="photo-emoji">${esc(it.emoji)}</div>`
       : `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(it.src)}" alt="">`;
+    const coverBtnHtml = it.type === 'img' && it.src
+      ? `<button type="button" data-a="cover" class="photo-cover-btn${isExplicitCover ? ' is-active' : isAutoCover ? ' is-auto' : ''}" title="${isExplicitCover ? 'Đang là ảnh bìa chủ đề' : 'Đặt ảnh này làm ảnh bìa chủ đề'}">${isExplicitCover ? '⭐ Ảnh bìa' : isAutoCover ? '⭐ Ảnh bìa (#1)' : '☆ Ảnh bìa'}</button>`
+      : '';
     card.innerHTML = `
       <div class="photo-frame" title="Kéo để đổi thứ tự">
         ${art}
         <span class="photo-num">${i + 1}</span>
+        ${coverBtnHtml}
         <div class="photo-actions">
           <button type="button" data-a="up" title="Lên trước" ${i === 0 ? 'disabled' : ''}>‹</button>
           <button type="button" data-a="down" title="Xuống sau" ${i === t.items.length - 1 ? 'disabled' : ''}>›</button>
@@ -687,8 +774,11 @@ function importFile(file) {
         const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.topics) ? parsed.topics : []);
         incoming.forEach((t, idx) => {
           const rawT = rawList.find((r) => r && ((r.id && r.id === t.id) || r.name === t.name)) || rawList[idx];
-          if (rawT && Array.isArray(rawT.items) && rawT.items.length > t.items.length) {
-            t.items = rawT.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+          if (rawT) {
+            if (Array.isArray(rawT.items) && rawT.items.length > t.items.length) {
+              t.items = rawT.items.map(sanitizeItem).filter(Boolean).slice(0, MAX_TOPIC_IMAGES);
+            }
+            t.coverUrl = normalizeCoverUrl(rawT.coverUrl) || normalizeImageUrl(rawT.coverUrl) || '';
           }
         });
       } catch { /* ignore */ }
@@ -730,7 +820,7 @@ function openDeleteModal(t) {
     return;
   }
   pendingDeleteId = t.id;
-  if ($('delModalTopicName')) $('delModalTopicName').textContent = `${t.icon || '🖼️'} ${t.name}`;
+  if ($('delModalTopicName')) $('delModalTopicName').textContent = t.name;
   if ($('delModalTopicCount')) $('delModalTopicCount').textContent = `Gồm ${t.items.length} câu hỏi ảnh · Nhánh shared_topics`;
   if ($('delConfirmCheck')) $('delConfirmCheck').checked = false;
   if ($('btnConfirmDeleteTopic')) $('btnConfirmDeleteTopic').disabled = true;
@@ -873,8 +963,20 @@ function bind() {
     const a = actBtn.dataset.a;
     if (a === 'up') move(i, i - 1);
     else if (a === 'down') move(i, i + 1);
-    else if (a === 'del') {
+    else if (a === 'cover') {
+      const it = t.items[i];
+      if (!it || it.type !== 'img' || !it.src) return;
+      const cleanSrc = normalizeCoverUrl(it.src) || normalizeImageUrl(it.src) || it.src;
+      t.coverUrl = cleanSrc;
+      persist(t);
+      render();
+      toast(`⭐ Đã chọn ảnh #${i + 1} làm ảnh bìa chủ đề & đồng bộ Cloud.`);
+    } else if (a === 'del') {
+      const removed = t.items[i];
       t.items.splice(i, 1);
+      if (removed && removed.src && t.coverUrl && normalizeImageUrl(removed.src) === normalizeImageUrl(t.coverUrl)) {
+        t.coverUrl = '';
+      }
       persist(t);
       render();
     }
@@ -917,7 +1019,8 @@ function bind() {
   $('btnNew').addEventListener('click', () => {
     const name = prompt('Tên chủ đề mới (ví dụ: Cầu thủ bóng đá):');
     if (!name || !name.trim()) return;
-    const t = sanitizeTopic({ id: newId(), name, icon: '🖼️', shuffle: false, items: [] });
+    const t = sanitizeTopic({ id: newId(), name, icon: '', shuffle: false, items: [] });
+    t.icon = '';
     topics.push(t);
     currentId = t.id;
     persist(t);
@@ -926,14 +1029,15 @@ function bind() {
   });
 
   $('btnClone').addEventListener('click', () => {
-    const menu = CATEGORIES.map((c, i) => `${i + 1}. ${c.icon} ${c.name} (${c.items.length})`).join('\n');
+    const menu = CATEGORIES.map((c, i) => `${i + 1}. ${c.name} (${c.items.length})`).join('\n');
     const n = parseInt(prompt(`Nhân bản chủ đề nào? Nhập số:\n${menu}`), 10);
     const src = CATEGORIES[n - 1];
     if (!src) return;
     const t = sanitizeTopic({
-      id: newId(), name: `${src.name} (bản sao)`, icon: src.icon, shuffle: true,
+      id: newId(), name: `${src.name} (bản sao)`, icon: '', shuffle: true,
       items: src.items.slice(0, MAX_TOPIC_IMAGES),
     });
+    t.icon = '';
     topics.push(t);
     currentId = t.id;
     persist(t);
@@ -941,28 +1045,117 @@ function bind() {
     toast(`Đã nhân bản “${src.name}” lên Kho dùng chung.`);
   });
 
-  $('tName').addEventListener('change', () => {
-    const t = cur();
-    const v = $('tName').value.trim();
-    if (!t || !v) return render();
-    t.name = v;
-    persist(t);
-    renderTopics();
-  });
-  $('tIcon').addEventListener('change', () => {
-    const t = cur();
-    const v = $('tIcon').value.trim();
-    if (!t || !v) return render();
-    t.icon = v.slice(0, 8);
-    persist(t);
-    renderTopics();
-  });
+  if ($('tName')) {
+    $('tName').addEventListener('change', () => {
+      const t = cur();
+      const v = $('tName').value.trim();
+      if (!t || !v) return render();
+      t.name = v;
+      t.icon = '';
+      persist(t);
+      renderTopics();
+    });
+  }
+  if ($('tIcon')) {
+    $('tIcon').addEventListener('change', () => {
+      const t = cur();
+      if (!t) return;
+      t.icon = '';
+      persist(t);
+      renderTopics();
+    });
+  }
   $('tShuffle').addEventListener('change', () => {
     const t = cur();
     if (!t) return;
     t.shuffle = $('tShuffle').checked;
     persist(t);
   });
+
+  // --- Ảnh bìa chủ đề (Cover Image: tải file riêng lên Drive hoặc dán URL trực tiếp) ---
+  const applyCoverUrlInput = () => {
+    const t = cur();
+    if (!t || !$('tCoverUrl')) return;
+    const raw = $('tCoverUrl').value.trim();
+    if (!raw) {
+      t.coverUrl = '';
+      persist(t);
+      render();
+      toast('Đã đặt ảnh bìa về chế độ tự động (Ảnh #1).');
+      return;
+    }
+    const normalized = normalizeCoverUrl(raw) || normalizeImageUrl(raw);
+    if (!normalized) {
+      toast('Link ảnh bìa không hợp lệ (hãy dán link Google Drive hoặc URL http/https).', true);
+      return;
+    }
+    t.coverUrl = normalized;
+    $('tCoverUrl').value = normalized;
+    persist(t);
+    render();
+    toast('⭐ Đã cập nhật ảnh bìa chủ đề & đồng bộ Cloud.');
+  };
+  if ($('btnApplyCoverUrl')) {
+    $('btnApplyCoverUrl').addEventListener('click', applyCoverUrlInput);
+  }
+  if ($('tCoverUrl')) {
+    $('tCoverUrl').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyCoverUrlInput();
+      }
+    });
+  }
+  if ($('btnClearCoverUrl')) {
+    $('btnClearCoverUrl').addEventListener('click', () => {
+      const t = cur();
+      if (!t) return;
+      t.coverUrl = '';
+      if ($('tCoverUrl')) $('tCoverUrl').value = '';
+      persist(t);
+      render();
+      toast('Đã đặt lại ảnh bìa về tự động (Ảnh #1).');
+    });
+  }
+  if ($('btnPickCoverFile') && $('fileCoverPick')) {
+    $('btnPickCoverFile').addEventListener('click', () => $('fileCoverPick').click());
+    $('fileCoverPick').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      const t = cur();
+      if (!file || !t || uploading) return;
+      if (!file.type.startsWith('image/')) {
+        toast('Vui lòng chọn một file hình ảnh hợp lệ.', true);
+        return;
+      }
+      const cfg = loadDrive();
+      if (!cfg.url || !cfg.folderId) {
+        $('drivePanel').open = true;
+        toast('Hãy nhập Web App URL và Folder ID Google Drive trước (hoặc dán link ảnh bìa).', true);
+        return;
+      }
+      try {
+        uploading = true;
+        toast(`Đang nén WebP & tải ảnh bìa “${file.name}” lên Google Drive…`);
+        const { blob, name } = await prepareImage(file);
+        let id;
+        try {
+          id = await uploadToDrive(cfg, blob, `cover_${name}`);
+        } catch {
+          id = await uploadToDrive(cfg, blob, `cover_${name}`);
+        }
+        const coverSrc = normalizeImageUrl(`https://lh3.googleusercontent.com/d/${id}=w1280`);
+        t.coverUrl = coverSrc;
+        persist(t);
+        render();
+        toast('⭐ Đã tải ảnh bìa riêng lên Drive & đồng bộ lên Kho dùng chung.');
+      } catch (err) {
+        toast(`Lỗi tải ảnh bìa: ${err.message || err}`, true);
+      } finally {
+        uploading = false;
+      }
+    });
+  }
 
   // --- Kênh 1: Tải file âm thanh từ máy (.mp3, .m4a, .wav) + Thanh trượt âm lượng 1 ---
   $('btnPickVoiceAudio').addEventListener('click', () => $('fileVoiceAudio').click());

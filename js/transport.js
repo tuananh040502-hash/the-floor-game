@@ -27,8 +27,77 @@ export async function createTransport(room, config) {
 }
 
 /**
+ * Trích xuất Google Drive File ID từ URL hoặc chuỗi ID.
+ */
+function extractDriveId(raw) {
+  if (typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (!s || /^data:/i.test(s)) return '';
+  const byPath = /\/(?:file\/)?d\/([a-zA-Z0-9_-]{10,})/i.exec(s);
+  if (byPath && byPath[1]) return byPath[1];
+  const byQuery = /[?&]id=([a-zA-Z0-9_-]{10,})/i.exec(s);
+  if (byQuery && byQuery[1]) return byQuery[1];
+  if (/^[a-zA-Z0-9_-]{25,}$/.test(s)) return s;
+  return '';
+}
+
+/**
+ * Chuẩn hóa URL ảnh bìa (Drive -> lh3.googleusercontent.com/d/{ID}=w1280 hoặc giữ nguyên URL http/https).
+ */
+export function normalizeCoverUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return '';
+  const s = rawUrl.trim();
+  if (!s || /^data:/i.test(s) || s.length > MAX_INLINE_STR_LEN) return '';
+  const driveId = extractDriveId(s);
+  if (driveId && (/(?:drive\.google\.com|docs\.google\.com|googleusercontent\.com)/i.test(s) || /^[a-zA-Z0-9_-]{25,}$/.test(s))) {
+    return `https://lh3.googleusercontent.com/d/${driveId}=w1280`;
+  }
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
+/**
+ * Chuyển URL ảnh sang dạng thumbnail siêu nhẹ (=w400 cho Google Drive CDN).
+ */
+export function toThumbUrl400(rawUrl) {
+  if (typeof rawUrl !== 'string') return '';
+  const s = rawUrl.trim();
+  if (!s) return '';
+  if (/^data:image\//i.test(s)) return s;
+  const driveId = extractDriveId(s);
+  if (driveId && (/(?:drive\.google\.com|docs\.google\.com|googleusercontent\.com)/i.test(s) || /^[a-zA-Z0-9_-]{25,}$/.test(s))) {
+    return `https://lh3.googleusercontent.com/d/${driveId}=w400`;
+  }
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
+/**
+ * Lấy URL ảnh bìa thu nhỏ (thumbnail) cho một chủ đề:
+ *  - Ưu tiên `topic.coverUrl`.
+ *  - Nếu trống, lấy URL của ảnh hợp lệ đầu tiên trong `topic.items`.
+ *  - Tự động chuyển link Google Drive sang kích thước `=w400` siêu nhẹ.
+ */
+export function getTopicCoverThumb(topic) {
+  if (!topic || typeof topic !== 'object') return '';
+  if (typeof topic.coverUrl === 'string' && topic.coverUrl.trim()) {
+    const coverThumb = toThumbUrl400(topic.coverUrl);
+    if (coverThumb) return coverThumb;
+  }
+  if (Array.isArray(topic.items)) {
+    for (const it of topic.items) {
+      if (it && typeof it === 'object' && it.type !== 'emoji' && typeof it.src === 'string' && it.src.trim()) {
+        const itemThumb = toThumbUrl400(it.src);
+        if (itemThumb) return itemThumb;
+      }
+    }
+  }
+  return '';
+}
+
+/**
  * Làm sạch dữ liệu chủ đề trước khi đẩy lên Firebase (`shared_topics`):
- *  - Chỉ giữ tên, biểu tượng, cờ xáo trộn, cấu hình âm thanh, danh sách URL ảnh Drive/HTTP và đáp án.
+ *  - Chỉ giữ tên, biểu tượng, ảnh bìa (`coverUrl`), cờ xáo trộn, cấu hình âm thanh, danh sách URL ảnh Drive/HTTP và đáp án.
  *  - Loại bỏ chuỗi Base64 thô (`data:...`) hoặc chuỗi quá lớn để tránh nghẽn Firebase.
  */
 export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
@@ -59,6 +128,8 @@ export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
     }
   }
 
+  const coverUrl = normalizeCoverUrl(raw.coverUrl);
+
   const audioUrl = typeof raw.victoryAudioUrl === 'string' && !/^data:/i.test(raw.victoryAudioUrl) && raw.victoryAudioUrl.length <= MAX_INLINE_STR_LEN
     ? raw.victoryAudioUrl.trim()
     : '';
@@ -73,6 +144,7 @@ export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
     id,
     name,
     icon: String(raw.icon || '🖼️').trim().slice(0, 8) || '🖼️',
+    coverUrl,
     shuffle: !!raw.shuffle,
     victoryAudioUrl: audioUrl,
     victoryVoiceName: String(raw.victoryVoiceName || '').trim().slice(0, 80),

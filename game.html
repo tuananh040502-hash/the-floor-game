@@ -9,14 +9,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/style.css?v=fiximg4" />
+  <link rel="stylesheet" href="css/style.css?v=fixui7" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
   <canvas id="fx"></canvas>
 
-  <!-- Cổng bật âm thanh (Tầng cao nhất z-index: 9999, tách biệt hoàn toàn khỏi transform/contain) -->
-  <div id="soundGate" class="sound-gate scrim cursor-pointer p-4" role="dialog" aria-modal="true" aria-label="Bật âm thanh và vào phòng">
+  <!-- Cổng bật âm thanh đã được ẩn hoàn toàn để vào thẳng phòng; âm thanh tự mở khóa ngầm ở thao tác chạm đầu tiên -->
+  <div id="soundGate" class="sound-gate scrim hidden" style="display:none !important;pointer-events:none !important" role="dialog" aria-hidden="true">
     <div class="glass px-10 py-12 text-center max-w-md w-full">
       <div class="eyebrow">Game show</div>
       <div class="font-display wordmark text-5xl md:text-6xl mt-2">The Floor</div>
@@ -33,26 +33,18 @@
       if (gr) gr.textContent = rm;
       if (rl) rl.textContent = rm;
       var gate = document.getElementById('soundGate');
-      var btn = document.getElementById('btnSoundGate');
-      function dismissGate(e) {
-        if (e) e.stopPropagation();
-        if (gate) {
-          gate.classList.add('hidden');
-          gate.style.display = 'none';
-          gate.style.pointerEvents = 'none';
-        }
+      if (gate) {
+        gate.classList.add('hidden');
+        gate.style.display = 'none';
+        gate.style.pointerEvents = 'none';
+      }
+      function silentUnlock() {
         if (typeof window.__unlockFloorAudio === 'function') {
           try { window.__unlockFloorAudio(); } catch (_) {}
         }
       }
-      if (gate) {
-        gate.addEventListener('pointerdown', dismissGate);
-        gate.addEventListener('click', dismissGate);
-      }
-      if (btn) {
-        btn.addEventListener('pointerdown', dismissGate);
-        btn.addEventListener('click', dismissGate);
-      }
+      document.addEventListener('pointerdown', silentUnlock, { once: true, capture: true });
+      document.addEventListener('keydown', silentUnlock, { once: true, capture: true });
     })();
   </script>
 
@@ -134,13 +126,22 @@
               </div>
             </div>
 
-            <label class="field-label">
+            <div class="field-label">
               <div class="flex items-center justify-between gap-2 mb-1.5">
                 <span class="eyebrow !mb-0">Chủ đề thi đấu</span>
                 <span id="gameTopicsCloudBadge" class="text-[11px] font-medium t-2">☁️ Đang đồng bộ chủ đề…</span>
               </div>
-              <select id="selCat" class="input"></select>
-            </label>
+              <select id="selCat" class="input hidden" style="display:none" aria-hidden="true" tabindex="-1"></select>
+              <button id="btnOpenTopicModal" type="button" class="topic-picker-trigger" title="Bấm để mở bảng chọn chủ đề thi đấu">
+                <span class="topic-picker-trigger-main">
+                  <span id="selectedTopicName" class="topic-picker-trigger-name">Quốc kỳ</span>
+                </span>
+                <span class="topic-picker-trigger-meta">
+                  <span id="selectedTopicCount" class="topic-picker-trigger-badge">6 câu</span>
+                  <span class="topic-picker-trigger-chevron" aria-hidden="true">▾</span>
+                </span>
+              </button>
+            </div>
             <div id="setupPreload" class="hidden surface-sub rounded-2xl px-3.5 py-2.5 space-y-1.5">
               <div class="flex items-center justify-between text-xs">
                 <span id="setupPreloadText" class="t-2 font-medium">Đang tải ngầm ảnh…</span>
@@ -342,7 +343,7 @@
     </button>
     <div class="mini-body p-4 pt-0 space-y-3">
       <div id="miniLock" class="space-y-2">
-        <input id="miniPin" type="password" placeholder="Mật khẩu Host" class="input" />
+        <input id="miniPin" type="text" class="input pin-mask" inputmode="numeric" autocomplete="one-time-code" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" placeholder="Mật khẩu Host" />
         <button id="miniUnlock" class="btn btn-gold btn-sm w-full">Mở khóa</button>
         <div id="miniErr" class="t-danger text-xs hidden">Mật khẩu không đúng.</div>
       </div>
@@ -354,7 +355,30 @@
     </div>
   </div>
 
-  <script type="module" src="js/theme.js?v=fixfloor3"></script>
-  <script type="module" src="js/app.js?v=fixfloor3"></script>
+  <!-- ===== MODAL CHỌN CHỦ ĐỀ KHOA HỌC (APPLE DARK MODE) ===== -->
+  <div id="topicPickerModal" class="topic-modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="topicModalTitle">
+    <div class="topic-modal-card">
+      <div class="topic-modal-head">
+        <div class="topic-modal-title-row">
+          <div class="min-w-0">
+            <h2 id="topicModalTitle" class="topic-modal-title">Chọn chủ đề thi đấu</h2>
+            <p id="topicModalSubtitle" class="topic-modal-sub">Chạm vào thẻ chủ đề để áp dụng ngay</p>
+          </div>
+          <div class="flex items-center gap-2.5 shrink-0">
+            <span id="topicModalTotalBadge" class="topic-modal-total">0 chủ đề</span>
+            <button id="btnCloseTopicModal" type="button" class="topic-modal-close" aria-label="Đóng">✕</button>
+          </div>
+        </div>
+        <div class="topic-modal-search-wrap">
+          <span class="topic-modal-search-icon" aria-hidden="true">⌕</span>
+          <input id="topicSearchInput" type="search" class="topic-modal-search" placeholder="Tìm nhanh chủ đề theo tên hoặc số thứ tự (01, 02…)" autocomplete="off" />
+        </div>
+      </div>
+      <div id="topicModalGrid" class="topic-modal-grid"></div>
+    </div>
+  </div>
+
+  <script type="module" src="js/theme.js?v=fixui7"></script>
+  <script type="module" src="js/app.js?v=fixui7"></script>
 </body>
 </html>
