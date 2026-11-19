@@ -1033,31 +1033,33 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   min-height: 0;
   padding: 16px 20px 22px;
   overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  grid-auto-rows: auto;
-  gap: 14px;
-  align-items: stretch;
-  align-content: start;
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)) !important;
+  grid-auto-rows: auto !important;
+  gap: 16px !important;
+  align-items: stretch !important;
+  align-content: start !important;
 }
 #topicPickerModal .topic-card,
 #topicModalGrid > .topic-card,
+#topicModalGrid > :not(.topic-modal-empty),
 .topic-card {
-  all: unset;
-  box-sizing: border-box;
-  position: relative;
+  box-sizing: border-box !important;
+  position: relative !important;
   display: flex !important;
   flex-direction: column !important;
-  width: 100%;
+  width: 100% !important;
   height: auto !important;
-  min-height: 195px;
+  min-height: 0 !important;
   max-height: none !important;
+  aspect-ratio: auto !important;
   border-radius: 16px !important;
-  overflow: hidden;
-  background: #1C1C1E;
+  overflow: hidden !important;
+  background: #1C1C1E !important;
   border: 1.5px solid rgba(255, 255, 255, 0.12);
   padding: 0 !important;
-  text-align: left;
+  margin: 0 !important;
+  text-align: left !important;
   color: #F5F5F7;
   cursor: pointer;
   user-select: none;
@@ -1082,23 +1084,30 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   opacity: 0.42;
   cursor: not-allowed;
 }
+#topicPickerModal .topic-card-media,
 .topic-card-media {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 10;
-  height: auto;
-  flex-shrink: 0;
-  overflow: hidden;
-  background: #2C2C2E;
+  position: relative !important;
+  width: 100% !important;
+  aspect-ratio: 16 / 10 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 0 0 auto !important;
+  overflow: hidden !important;
+  background: #2C2C2E !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
+#topicPickerModal .topic-card-thumb,
+.topic-card-media > img,
 .topic-card-thumb {
-  position: relative;
+  position: absolute !important;
+  inset: 0 !important;
   z-index: 2;
   width: 100% !important;
   height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
   object-fit: cover !important;
-  display: block;
+  display: block !important;
   transition: transform 0.28s var(--ease);
 }
 .topic-card:hover:not(.is-empty) .topic-card-thumb {
@@ -1157,48 +1166,62 @@ html[data-theme='light'] .topic-picker-trigger-badge {
 .topic-card.is-selected .topic-card-selected-pill {
   display: inline-flex;
 }
+#topicPickerModal .topic-card-body,
 .topic-card-body {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  flex: 1;
-  padding: 12px 14px 14px;
-  gap: 6px;
-  background: #1C1C1E;
-  overflow: visible;
+  position: relative !important;
+  z-index: 2;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  flex: 1 0 auto !important;
+  padding: 12px 14px 14px !important;
+  gap: 6px !important;
+  background: #1C1C1E !important;
+  min-height: 78px !important;
+  overflow: visible !important;
 }
+#topicPickerModal .topic-card.is-selected .topic-card-body,
 .topic-card.is-selected .topic-card-body {
-  background: rgba(10, 132, 255, 0.1);
+  background: rgba(10, 132, 255, 0.12) !important;
 }
+#topicPickerModal .topic-card-name,
 .topic-card-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #FFFFFF;
-  line-height: 1.35;
-  height: 2.7em;
-  display: -webkit-box;
+  display: -webkit-box !important;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: #FFFFFF !important;
+  line-height: 1.35 !important;
+  height: 2.7em !important;
+  min-height: 2.7em !important;
+  margin: 0 !important;
+  text-align: left !important;
   word-break: break-word;
 }
 .topic-card-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
   gap: 6px;
-  margin-top: auto;
-  flex-shrink: 0;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
 }
+#topicPickerModal .topic-card-count,
 .topic-card-count {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.2;
+  display: block !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #8E8E93 !important;
+  line-height: 1.2 !important;
+  margin: 0 !important;
+  text-align: left !important;
   font-variant-numeric: tabular-nums;
-  color: #8E8E93;
 }
+#topicPickerModal .topic-card.is-selected .topic-card-count,
 .topic-card.is-selected .topic-card-count {
-  color: #64D2FF;
+  color: #64D2FF !important;
 }
 .topic-modal-empty {
   grid-column: 1 / -1;
@@ -1207,7 +1230,15 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   color: #8E8E93;
   font-size: 14px;
 }
-@media (max-width: 600px) {
+/* iPad dọc & ngang (560px – 900px) */
+@media (max-width: 900px) {
+  .topic-modal-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+  }
+}
+/* iPhone (< 560px) */
+@media (max-width: 559px) {
   .topic-modal-backdrop {
     padding: 10px;
   }
@@ -1216,25 +1247,30 @@ html[data-theme='light'] .topic-picker-trigger-badge {
   }
   .topic-modal-grid {
     padding: 12px 14px 18px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: auto;
-    gap: 10px;
-    align-items: stretch;
-    align-content: start;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-auto-rows: auto !important;
+    gap: 10px !important;
+    align-items: stretch !important;
+    align-content: start !important;
   }
   #topicPickerModal .topic-card,
   #topicModalGrid > .topic-card,
+  #topicModalGrid > :not(.topic-modal-empty),
   .topic-card {
     height: auto !important;
-    min-height: 170px;
+    min-height: 0 !important;
   }
+  #topicPickerModal .topic-card-body,
   .topic-card-body {
-    padding: 10px 12px 12px;
-    gap: 6px;
+    padding: 10px 10px 12px !important;
+    min-height: 68px !important;
+    gap: 5px !important;
   }
+  #topicPickerModal .topic-card-name,
   .topic-card-name {
-    font-size: 13px;
-    height: 2.7em;
+    font-size: 13px !important;
+    height: 2.7em !important;
+    min-height: 2.7em !important;
   }
 }
 
