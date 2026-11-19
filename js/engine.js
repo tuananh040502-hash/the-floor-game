@@ -23,63 +23,100 @@ const LEGACY_EMOJI_NAMES = new Set([
   'đồ vật (bản sao)', 'thể thao (bản sao)', 'thiên nhiên (bản sao)',
 ]);
 
-/** Kiểm tra chủ đề có chứa ảnh thật (coverUrl hoặc ít nhất 1 câu hỏi chứa URL ảnh http/https/data:image). */
-export function hasRealImageTopic(topic) {
-  if (!topic || typeof topic !== 'object') return false;
-  if (typeof topic.coverUrl === 'string' && /^(?:https?:\/\/|data:image\/)/i.test(topic.coverUrl.trim())) {
-    return true;
-  }
-  if (Array.isArray(topic.items)) {
-    return topic.items.some((it) => (
+/** Đếm số câu hỏi ảnh hợp lệ (URL http/https hoặc data:image) trong một chủ đề. */
+export function countValidImageItems(topic) {
+  if (!topic || typeof topic !== 'object' || !Array.isArray(topic.items)) return 0;
+  let count = 0;
+  for (const it of topic.items) {
+    if (
       it
       && typeof it === 'object'
       && it.type !== 'emoji'
       && typeof it.src === 'string'
       && /^(?:https?:\/\/|data:image\/)/i.test(it.src.trim())
-    ));
+    ) {
+      count += 1;
+    }
   }
-  return false;
+  return count;
+}
+
+/** Kiểm tra chủ đề có ít nhất 1 câu hỏi ảnh hợp lệ. */
+export function hasRealImageTopic(topic) {
+  return countValidImageItems(topic) > 0;
 }
 
 /**
- * Nhận diện các chủ đề mẫu cũ chỉ dùng emoji (không có ảnh thật):
- *  - Nếu chủ đề có bất kỳ ảnh thật nào (`hasRealImageTopic`), LUÔN giữ nguyên (trả về false).
- *  - Chỉ loại bỏ các chủ đề mẫu cũ không có ảnh (ID/tên mẫu cũ hoặc toàn bộ câu hỏi chỉ là emoji).
+ * Nhận diện các chủ đề mặc định cũ hoặc chủ đề trống (0 câu hỏi ảnh hợp lệ):
+ *  - Giữ nguyên 100% mọi chủ đề có từ 1 câu hỏi ảnh hợp lệ trở lên (`countValidImageItems(topic) >= 1`).
+ *  - Loại bỏ toàn bộ chủ đề có 0 câu hỏi ảnh hợp lệ (bao gồm cả 6 chủ đề mẫu cũ không ảnh và các bản nháp rỗng 0 câu hỏi).
  */
 export function isLegacyEmojiSampleTopic(topic) {
   if (!topic || typeof topic !== 'object') return true;
-  if (hasRealImageTopic(topic)) return false;
-  const idLower = String(topic.id || '').trim().toLowerCase();
-  const nameLower = String(topic.name || '').trim().toLowerCase();
-  if (LEGACY_EMOJI_IDS.has(idLower) || LEGACY_EMOJI_NAMES.has(nameLower)) {
-    return true;
-  }
-  if (Array.isArray(topic.items) && topic.items.length > 0) {
-    const allEmojiOrInvalid = topic.items.every((it) => (
-      !it || it.type === 'emoji' || !it.src || !/^(?:https?:\/\/|data:image\/)/i.test(String(it.src).trim())
-    ));
-    if (allEmojiOrInvalid) return true;
-  }
-  return false;
+  if (countValidImageItems(topic) > 0) return false;
+  return true;
 }
 
-/** Chỉ đọc danh sách chủ đề thực tế của người dùng từ bộ nhớ đệm (không gộp chủ đề mẫu emoji mặc định). */
+/**
+ * Lọc dọn tự động danh sách chủ đề:
+ *  - Giữ lại 100% chủ đề có từ 1 câu hỏi ảnh hợp lệ trở lên (hoặc ID đang tạo mới trực tiếp trong phiên soạn thảo qua `keepIds`).
+ *  - Trả về `{ kept, purged, purgedIds }` để xóa vĩnh viễn khỏi Firebase, localStorage và ghi vào `deleted_topic_ids`.
+ */
+export function purgeEmptyAndDefaultTopics(topicsList, options = {}) {
+  const keepIds = options && options.keepIds instanceof Set ? options.keepIds : new Set();
+  const deletedIds = options && options.deletedIds instanceof Set ? options.deletedIds : new Set();
+  const kept = [];
+  const purged = [];
+  const purgedIds = [];
+  const seen = new Set();
+
+  (Array.isArray(topicsList) ? topicsList : []).forEach((t) => {
+    if (!t || typeof t !== 'object' || !t.id) return;
+    const id = String(t.id).trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+
+    if (deletedIds.has(id)) {
+      purged.push(t);
+      purgedIds.push(id);
+      return;
+    }
+
+    const validCount = countValidImageItems(t);
+    const idLower = id.toLowerCase();
+    const nameLower = String(t.name || '').trim().toLowerCase();
+    const isOldDefaultWithoutImages = validCount === 0 && (LEGACY_EMOJI_IDS.has(idLower) || LEGACY_EMOJI_NAMES.has(nameLower));
+
+    if (validCount > 0 || (keepIds.has(id) && !isOldDefaultWithoutImages)) {
+      kept.push(t);
+    } else {
+      purged.push(t);
+      purgedIds.push(id);
+    }
+  });
+
+  return { kept, purged, purgedIds };
+}
+
+/** Chỉ đọc danh sách chủ đề thực tế của người dùng có ảnh hợp lệ từ bộ nhớ đệm (không nạp chủ đề mặc định hay chủ đề rỗng). */
 export function safeAllCategories() {
   try {
     if (typeof localStorage === 'undefined') return [];
     const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || '[]');
     if (Array.isArray(raw)) {
-      return raw
-        .filter((c) => c && typeof c === 'object' && c.id && !isLegacyEmojiSampleTopic(c))
-        .map((c) => ({
-          ...c,
-          id: String(c.id),
-          name: String(c.name || 'Chủ đề'),
-          icon: '',
-          coverUrl: typeof c.coverUrl === 'string' ? c.coverUrl.trim() : '',
-          custom: true,
-          items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
-        }));
+      const { kept, purgedIds } = purgeEmptyAndDefaultTopics(raw);
+      if (purgedIds.length) {
+        try { localStorage.setItem(TOPICS_KEY, JSON.stringify(kept)); } catch { /* ignore */ }
+      }
+      return kept.map((c) => ({
+        ...c,
+        id: String(c.id),
+        name: String(c.name || 'Chủ đề'),
+        icon: '',
+        coverUrl: typeof c.coverUrl === 'string' ? c.coverUrl.trim() : '',
+        custom: true,
+        items: Array.isArray(c.items) ? c.items.filter(Boolean) : [],
+      }));
     }
   } catch (err) {
     console.warn('Lỗi đọc danh sách chủ đề người dùng:', err);

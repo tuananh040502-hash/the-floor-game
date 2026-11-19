@@ -10,7 +10,10 @@ import {
   saveTopicAudioIDB, loadTopicAudioIDB, deleteTopicAudioIDB, encodeAudioFile,
   clampVolume01, sanitizeItem, sanitizeTopic, exportPayload, parseImport,
 } from './topics.js';
-import { normalizeImageUrl, driveFallbackUrl, isLegacyEmojiSampleTopic } from './engine.js';
+import {
+  normalizeImageUrl, driveFallbackUrl, isLegacyEmojiSampleTopic,
+  purgeEmptyAndDefaultTopics,
+} from './engine.js';
 import { Sfx } from './audio.js';
 
 export const MAX_TOPIC_IMAGES = 100;
@@ -55,10 +58,11 @@ function canDeleteTopic(topic) {
   return scriptUrl === ownerUrl && folderId === ownerFolder;
 }
 
+const sessionDraftIds = new Set();
+
 function loadTopicsUpToLimit() {
   const base = loadCustom();
   const deletedIds = getDeletedTopicIds();
-  let needsRewrite = false;
   try {
     const raw = JSON.parse(localStorage.getItem(TOPICS_KEY) || 'null');
     if (Array.isArray(raw)) {
@@ -84,17 +88,15 @@ function loadTopicsUpToLimit() {
       });
     }
   } catch { /* ignore */ }
-  const cleaned = base.filter((t) => {
-    if (!t || !t.id || isLegacyEmojiSampleTopic(t) || deletedIds.has(t.id)) {
-      needsRewrite = true;
-      return false;
-    }
-    return true;
+  const { kept, purgedIds } = purgeEmptyAndDefaultTopics(base, {
+    keepIds: sessionDraftIds,
+    deletedIds,
   });
-  if (needsRewrite) {
-    try { localStorage.setItem(TOPICS_KEY, JSON.stringify(cleaned)); } catch { /* ignore */ }
+  if (purgedIds.length) {
+    purgedIds.forEach((pid) => markTopicDeleted(pid));
+    try { localStorage.setItem(TOPICS_KEY, JSON.stringify(kept)); } catch { /* ignore */ }
   }
-  return cleaned;
+  return kept;
 }
 
 let topics = loadTopicsUpToLimit();
@@ -222,25 +224,18 @@ async function handleCloudSnapshot(cloudList) {
   });
 
   const deletedIds = getDeletedTopicIds();
-  const cloudById = new Map();
+  const { kept: keptCloud, purgedIds: purgedCloudIds } = purgeEmptyAndDefaultTopics(cloudList || [], {
+    keepIds: sessionDraftIds,
+    deletedIds,
+  });
+  const cloudById = new Map(keptCloud.map((t) => [t.id, t]));
   const legacyToRemove = [];
-  (cloudList || []).forEach((t) => {
-    if (!t || !t.id) return;
-    if (isLegacyEmojiSampleTopic(t)) {
-      if (!cleanedLegacyCloudIds.has(t.id)) {
-        cleanedLegacyCloudIds.add(t.id);
-        legacyToRemove.push(t.id);
-      }
-      return;
+  purgedCloudIds.forEach((pid) => {
+    markTopicDeleted(pid);
+    if (!cleanedLegacyCloudIds.has(pid)) {
+      cleanedLegacyCloudIds.add(pid);
+      legacyToRemove.push(pid);
     }
-    if (deletedIds.has(t.id)) {
-      if (!cleanedLegacyCloudIds.has(t.id)) {
-        cleanedLegacyCloudIds.add(t.id);
-        legacyToRemove.push(t.id);
-      }
-      return;
-    }
-    cloudById.set(t.id, t);
   });
 
   if (legacyToRemove.length && cloudSync && cloudSync.mode === 'firebase') {
@@ -249,12 +244,15 @@ async function handleCloudSnapshot(cloudList) {
     });
   }
 
-  // Auto-Migration ngay khi khởi tạo: đẩy các chủ đề cục bộ hợp lệ chưa có trên shared_topics lên Firebase (bỏ qua ID đã xóa trong deleted_topic_ids)
+  // Auto-Migration ngay khi khởi tạo: chỉ đẩy chủ đề có ảnh hợp lệ, bỏ qua chủ đề rỗng và ID đã xóa
   if (!initialMigrationDone) {
     initialMigrationDone = true;
-    const missingOnCloud = localBefore.filter((lt) => (
-      lt && lt.id && !isLegacyEmojiSampleTopic(lt) && !deletedIds.has(lt.id) && !cloudById.has(lt.id)
-    ));
+    const latestDeleted = getDeletedTopicIds();
+    const { kept: migratableLocal } = purgeEmptyAndDefaultTopics(localBefore, {
+      keepIds: sessionDraftIds,
+      deletedIds: latestDeleted,
+    });
+    const missingOnCloud = migratableLocal.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
     if (missingOnCloud.length && cloudSync && cloudSync.mode === 'firebase') {
       missingOnCloud.forEach((lt) => {
         stampOwnership(lt);
@@ -1272,11 +1270,12 @@ function bind() {
     if (!name || !name.trim()) return;
     const t = sanitizeTopic({ id: newId(), name, icon: '', shuffle: false, items: [] });
     t.icon = '';
+    sessionDraftIds.add(t.id);
     topics.push(t);
     currentId = t.id;
     persist(t);
     render();
-    toast(`Đã tạo chủ đề “${t.name}” trên Kho dùng chung.`);
+    toast(`Đã tạo chủ đề “${t.name}” — hãy thêm ít nhất 1 ảnh câu hỏi để hiển thị trong game.`);
   });
 
   $('btnClone').addEventListener('click', () => {

@@ -2,7 +2,7 @@ import { loadFirebaseConfig } from './firebase-config.js';
 import { openFirebaseSettings } from './settings.js';
 import {
   createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
-  normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, getDeletedTopicIds,
+  normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, getDeletedTopicIds, markTopicDeleted,
 } from './transport.js';
 import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js';
 import {
@@ -10,8 +10,8 @@ import {
   playerById, cellCount, currentQuestion, DUEL_MS, COUNTDOWN_MS, alivePlayers,
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
-  isLegacyEmojiSampleTopic,
-} from './engine.js?v=clean8';
+  isLegacyEmojiSampleTopic, purgeEmptyAndDefaultTopics,
+} from './engine.js?v=purge10';
 import { Sfx } from './audio.js';
 import { Fireworks } from './fx.js';
 import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js';
@@ -143,18 +143,15 @@ async function initSharedTopics(fbCfg) {
     });
     topicsSync.subscribe(async (cloudList) => {
       const deletedIds = getDeletedTopicIds();
-      const cloudById = new Map();
+      const { kept: keptCloud, purgedIds: purgedCloudIds } = purgeEmptyAndDefaultTopics(cloudList || [], { deletedIds });
+      const cloudById = new Map(keptCloud.map((t) => [t.id, t]));
       const legacyToRemove = [];
-      (cloudList || []).forEach((t) => {
-        if (!t || !t.id) return;
-        if (isLegacyEmojiSampleTopic(t) || deletedIds.has(t.id)) {
-          if (!cleanedLegacyCloudIds.has(t.id)) {
-            cleanedLegacyCloudIds.add(t.id);
-            legacyToRemove.push(t.id);
-          }
-          return;
+      purgedCloudIds.forEach((pid) => {
+        markTopicDeleted(pid);
+        if (!cleanedLegacyCloudIds.has(pid)) {
+          cleanedLegacyCloudIds.add(pid);
+          legacyToRemove.push(pid);
         }
-        cloudById.set(t.id, t);
       });
       if (legacyToRemove.length && topicsSync && topicsSync.mode === 'firebase') {
         legacyToRemove.forEach((legacyId) => {
@@ -166,13 +163,14 @@ async function initSharedTopics(fbCfg) {
         try {
           const localRaw = JSON.parse(localStorage.getItem(TOPICS_KEY) || '[]');
           if (Array.isArray(localRaw) && topicsSync.mode === 'firebase') {
-            const missing = localRaw.filter((lt) => (
-              lt && lt.id && !isLegacyEmojiSampleTopic(lt) && !deletedIds.has(lt.id) && !cloudById.has(lt.id)
-            ));
+            const latestDeleted = getDeletedTopicIds();
+            const { kept: validLocal, purgedIds: purgedLocalIds } = purgeEmptyAndDefaultTopics(localRaw, { deletedIds: latestDeleted });
+            purgedLocalIds.forEach((pid) => markTopicDeleted(pid));
+            const missing = validLocal.filter((lt) => lt && lt.id && !cloudById.has(lt.id));
             if (missing.length) {
               missing.forEach((lt) => {
                 const clean = sanitizeCloudTopic(lt, MAX_TOPIC_IMAGES);
-                if (clean && !isLegacyEmojiSampleTopic(clean) && !deletedIds.has(clean.id)) {
+                if (clean && !isLegacyEmojiSampleTopic(clean) && !latestDeleted.has(clean.id)) {
                   cloudById.set(clean.id, clean);
                 }
               });
@@ -515,7 +513,7 @@ function makeEvent(next, type) {
   return { id, type };
 }
 
-/** Chỉ lấy kho chủ đề thực tế của người dùng từ Firebase `shared_topics` / `localStorage` (loại bỏ hoàn toàn chủ đề mẫu emoji cũ). */
+/** Chỉ lấy kho chủ đề thực tế của người dùng có ảnh hợp lệ từ Firebase `shared_topics` / `localStorage` (tự dọn chủ đề rỗng & mặc định cũ). */
 function getCategories100() {
   const cats = [];
   try {
@@ -525,17 +523,9 @@ function getCategories100() {
       ? sharedCustomTopics
       : (Array.isArray(localRaw) ? localRaw : safeAllCategories());
 
-    let hadLegacyInLocal = false;
-    const seen = new Set();
-    (sourceList || []).forEach((t) => {
-      if (!t || typeof t !== 'object' || !t.id) return;
-      if (isLegacyEmojiSampleTopic(t) || deletedIds.has(String(t.id))) {
-        hadLegacyInLocal = true;
-        return;
-      }
+    const { kept, purgedIds } = purgeEmptyAndDefaultTopics(sourceList || [], { deletedIds });
+    kept.forEach((t) => {
       const id = String(t.id);
-      if (seen.has(id)) return;
-      seen.add(id);
       const items = (Array.isArray(t.items) ? t.items : [])
         .slice(0, MAX_TOPIC_IMAGES)
         .map((it) => {
@@ -557,10 +547,13 @@ function getCategories100() {
       });
     });
 
-    if (hadLegacyInLocal && !Array.isArray(sharedCustomTopics) && Array.isArray(localRaw)) {
-      try {
-        localStorage.setItem(TOPICS_KEY, JSON.stringify(cats));
-      } catch { /* ignore */ }
+    if (purgedIds.length) {
+      purgedIds.forEach((pid) => markTopicDeleted(pid));
+      if (!Array.isArray(sharedCustomTopics) && Array.isArray(localRaw)) {
+        try {
+          localStorage.setItem(TOPICS_KEY, JSON.stringify(cats));
+        } catch { /* ignore */ }
+      }
     }
   } catch (err) {
     console.warn('Lỗi đọc danh sách chủ đề người dùng:', err);

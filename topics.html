@@ -7,7 +7,7 @@
   <script>(function(){var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})();</script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/style.css?v=clean8" />
+  <link rel="stylesheet" href="css/style.css?v=purge10" />
 </head>
 <body>
   <div class="ambient"><i></i><i></i><i></i><b></b></div>
@@ -313,8 +313,8 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script type="module" src="js/theme.js?v=owner9"></script>
-  <script type="module" src="js/cms.js?v=owner9"></script>
+  <script type="module" src="js/theme.js?v=purge10"></script>
+  <script type="module" src="js/cms.js?v=purge10"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')
