@@ -4,7 +4,7 @@
  * - Hỗ trợ 4 nhóm màu Đơn sắc / Chuyển sắc (cardStyle, borderStyle, textStyle, titleStyle) và hiệu ứng Tuyết / Emoji rơi tối ưu GPU.
  * - Quản lý lớp nền chuẩn Retina `#seasonalBgLayer` (`=w2560`) và lớp rơi tối ưu GPU `#seasonalSnowLayer`.
  */
-import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
+import { loadFirebaseConfig } from './firebase-config.js?v=2026v1';
 import {
   THEME_CONFIG_KEY,
   THEMES_LIBRARY_KEY,
@@ -17,7 +17,7 @@ import {
   readThemeLibraryCache,
   writeThemeLibraryCache,
   createSharedThemeLibrarySync,
-} from './transport.js?v=bgm1';
+} from './transport.js?v=2026v1';
 
 const KEY = 'thefloor:theme';
 const SEASON_INIT_KEY = 'thefloor:themeSeasonInit';
@@ -247,6 +247,90 @@ export function upgradeDriveBgToS0(rawUrl) {
   return trimmed;
 }
 
+function applyThemeColorCssVars(active, t, showCustomAssets) {
+  const root = document.documentElement;
+  const factory = BUILTIN_THEMES[active.id]
+    || THEME_PRESET_DEFAULTS[active.basePreset]
+    || THEME_PRESET_DEFAULTS.default;
+  const isCustomProfile = !active.isBuiltIn;
+
+  const cardStyle = sanitizeColorStyle(active.cardStyle || active.cardBg, factory.cardStyle);
+  const borderStyle = sanitizeColorStyle(active.borderStyle || active.borderColor, factory.borderStyle);
+  const textStyle = sanitizeColorStyle(active.textStyle, factory.textStyle);
+  const titleStyle = sanitizeColorStyle(active.titleStyle, factory.titleStyle);
+  const accentStyle = sanitizeColorStyle(active.accentStyle || active.accentColor, factory.accentStyle);
+
+  const applyCard = showCustomAssets && (isCustomProfile || !isSameColorStyle(cardStyle, factory.cardStyle));
+  const applyBorder = showCustomAssets && (isCustomProfile || !isSameColorStyle(borderStyle, factory.borderStyle));
+  const applyText = showCustomAssets && (isCustomProfile || !isSameColorStyle(textStyle, factory.textStyle));
+  const applyTitle = showCustomAssets && (isCustomProfile || !isSameColorStyle(titleStyle, factory.titleStyle));
+  const applyAccent = showCustomAssets && (isCustomProfile || !isSameColorStyle(accentStyle, factory.accentStyle));
+
+  root.style.setProperty('--seasonal-card-bg', cardStyle.c1);
+  root.style.setProperty('--seasonal-border', borderStyle.c1);
+  root.style.setProperty('--seasonal-accent', accentStyle.c1);
+
+  const cardFill = colorStyleToCss(cardStyle, factory.cardStyle.c1);
+  // Giữ độ bán trong suốt (0.88) của thẻ Noel khi chỉ bật viền gradient mà chưa đổi màu nền thẻ
+  const defaultCardLayer = (t === 'christmas' && !applyCard)
+    ? 'linear-gradient(0deg, rgba(251, 246, 236, 0.88), rgba(251, 246, 236, 0.88))'
+    : `linear-gradient(0deg, ${cardStyle.c1}, ${cardStyle.c1})`;
+  const cardLayer = cardStyle.mode === 'gradient' ? cardFill : defaultCardLayer;
+
+  root.style.setProperty('--tf-card-fill', cardFill);
+  root.style.setProperty('--tf-card-layer', cardLayer);
+  root.style.setProperty('--tf-border-color', borderStyle.c1);
+  root.style.setProperty('--tf-border-grad', colorStyleToCss(borderStyle, factory.borderStyle.c1));
+  root.style.setProperty('--tf-text-color', textStyle.c1);
+  root.style.setProperty('--tf-text-grad', colorStyleToCss(textStyle, factory.textStyle.c1));
+  root.style.setProperty('--tf-title-color', titleStyle.c1);
+  root.style.setProperty('--tf-title-grad', colorStyleToCss(titleStyle, factory.titleStyle.c1));
+  root.style.setProperty('--tf-accent-c1', accentStyle.c1);
+  root.style.setProperty('--tf-accent-fill', colorStyleToCss(accentStyle, factory.accentStyle.c1));
+
+  root.dataset.customCard = applyCard ? cardStyle.mode : 'none';
+  root.dataset.customBorder = applyBorder ? borderStyle.mode : 'none';
+  root.dataset.customText = applyText ? textStyle.mode : 'none';
+  root.dataset.customTitle = applyTitle ? titleStyle.mode : 'none';
+  root.dataset.customAccent = applyAccent ? accentStyle.mode : 'none';
+}
+
+/** Xem trước trực tiếp màu & gradient trên DOM (0 localStorage / 0 BroadcastChannel -> mượt 120Hz). */
+export function previewThemeColorsLive(themeProfile) {
+  if (!themeProfile || typeof themeProfile !== 'object') return;
+  applyThemeColorCssVars(themeProfile, currentTheme(), true);
+}
+
+function notifyBgmThemePlaylist(activeTheme) {
+  if (!activeTheme || typeof activeTheme !== 'object') return;
+  const themeId = activeTheme.id || '';
+  const bgmList = Array.isArray(activeTheme.bgmList) ? activeTheme.bgmList : [];
+  try {
+    const topWin = getTopWinSafe();
+    if (topWin && topWin.__theFloorBgmController && typeof topWin.__theFloorBgmController.setThemePlaylist === 'function') {
+      topWin.__theFloorBgmController.setThemePlaylist(themeId, bgmList);
+      return;
+    }
+    if (isInChildFrame() && window.top) {
+      window.top.postMessage({ type: 'THEFLOOR_BGM_THEME', themeId, bgmList }, '*');
+    }
+  } catch { /* ignore */ }
+}
+
+function notifyBgmScene(scene) {
+  const nextScene = scene === 'arena' ? 'arena' : scene === 'topics' ? 'topics' : 'lobby';
+  try {
+    const topWin = getTopWinSafe();
+    if (topWin && topWin.__theFloorBgmController && typeof topWin.__theFloorBgmController.setScene === 'function') {
+      topWin.__theFloorBgmController.setScene(nextScene);
+      return;
+    }
+    if (isInChildFrame() && window.top) {
+      window.top.postMessage({ type: 'THEFLOOR_BGM_SCENE', scene: nextScene }, '*');
+    }
+  } catch { /* ignore */ }
+}
+
 export function updateSeasonalBackground() {
   ensureSeasonalLayers();
   const root = document.documentElement;
@@ -278,44 +362,7 @@ export function updateSeasonalBackground() {
   const bg3 = upgradeDriveBgToS0(normalizeThemeAssetUrl(active.bg3Url, bg1));
   const bgMob = upgradeDriveBgToS0(normalizeThemeAssetUrl(active.bgMobileUrl, ''));
 
-  root.style.setProperty('--seasonal-card-bg', cardStyle.c1);
-  root.style.setProperty('--seasonal-border', borderStyle.c1);
-  root.style.setProperty('--seasonal-accent', accentStyle.c1);
-
-  // Xuất biến CSS cho 5 nhóm màu Đơn sắc / Chuyển sắc
-  const cardFill = colorStyleToCss(cardStyle, factory.cardStyle.c1);
-  const cardLayer = cardStyle.mode === 'gradient'
-    ? cardFill
-    : `linear-gradient(0deg, ${cardStyle.c1}, ${cardStyle.c1})`;
-  root.style.setProperty('--tf-card-fill', cardFill);
-  root.style.setProperty('--tf-card-layer', cardLayer);
-  root.style.setProperty('--tf-border-color', borderStyle.c1);
-  root.style.setProperty('--tf-border-grad', colorStyleToCss(borderStyle, factory.borderStyle.c1));
-  root.style.setProperty('--tf-text-color', textStyle.c1);
-  root.style.setProperty('--tf-text-grad', colorStyleToCss(textStyle, factory.textStyle.c1));
-  root.style.setProperty('--tf-title-color', titleStyle.c1);
-  root.style.setProperty('--tf-title-grad', colorStyleToCss(titleStyle, factory.titleStyle.c1));
-  root.style.setProperty('--tf-accent-c1', accentStyle.c1);
-  root.style.setProperty('--tf-accent-fill', colorStyleToCss(accentStyle, factory.accentStyle.c1));
-
-  if (showCustomAssets) {
-    const applyCard = isCustomProfile || !isSameColorStyle(cardStyle, factory.cardStyle);
-    const applyBorder = isCustomProfile || !isSameColorStyle(borderStyle, factory.borderStyle);
-    const applyText = isCustomProfile || !isSameColorStyle(textStyle, factory.textStyle);
-    const applyTitle = isCustomProfile || !isSameColorStyle(titleStyle, factory.titleStyle);
-    const applyAccent = isCustomProfile || !isSameColorStyle(accentStyle, factory.accentStyle);
-    root.dataset.customCard = applyCard ? cardStyle.mode : 'none';
-    root.dataset.customBorder = applyBorder ? borderStyle.mode : 'none';
-    root.dataset.customText = applyText ? textStyle.mode : 'none';
-    root.dataset.customTitle = applyTitle ? titleStyle.mode : 'none';
-    root.dataset.customAccent = applyAccent ? accentStyle.mode : 'none';
-  } else {
-    root.dataset.customCard = 'none';
-    root.dataset.customBorder = 'none';
-    root.dataset.customText = 'none';
-    root.dataset.customTitle = 'none';
-    root.dataset.customAccent = 'none';
-  }
+  applyThemeColorCssVars(active, t, showCustomAssets);
 
   const resolvedEffect = showCustomAssets
     ? (active.effect === 'snow' || active.effect === 'emoji' ? active.effect : 'none')
@@ -344,6 +391,7 @@ export function updateSeasonalBackground() {
 
   syncSnowParticles(resolvedEffect, active.effectEmojis || '❄️ 🎄 ⭐');
   syncSnowMotionState();
+  notifyBgmThemePlaylist(active);
 }
 
 function paint() {
@@ -541,11 +589,8 @@ function closeViewportFrame() {
     frame.remove();
   }
   setShellFrameActive(false);
-  try {
-    if (window.__theFloorBgmController && typeof window.__theFloorBgmController.setArenaPaused === 'function') {
-      window.__theFloorBgmController.setArenaPaused(false);
-    }
-  } catch { /* ignore */ }
+  notifyBgmScene(isTopicsPage() ? 'topics' : 'lobby');
+  notifyBgmThemePlaylist(getActiveTheme());
   paint();
 }
 
@@ -563,18 +608,19 @@ function openInViewportFrame(relUrl) {
     document.body.appendChild(frame);
   }
   setShellFrameActive(true);
-  // Khi mở topics.html hoặc index.html từ shell, nhả trạng thái tạm dừng nhạc nền của đấu trường nếu có
   const targetPage = getPageName(relUrl);
-  try {
-    if (window.__theFloorBgmController) {
-      if (targetPage === 'topics.html' || targetPage === 'index.html') {
-        window.__theFloorBgmController.setArenaPaused(false);
-      }
-      if ((targetPage === 'game.html' || targetPage === 'index.html') && typeof window.__theFloorBgmController.setAutoPlayAllowed === 'function') {
+  if (targetPage === 'topics.html') {
+    // Khóa tự động tắt nhạc nền ngay lập tức khi mở trang Soạn chủ đề
+    notifyBgmScene('topics');
+  } else {
+    notifyBgmScene('lobby');
+    try {
+      if (window.__theFloorBgmController && typeof window.__theFloorBgmController.setAutoPlayAllowed === 'function') {
         window.__theFloorBgmController.setAutoPlayAllowed(true);
       }
-    }
-  } catch { /* ignore */ }
+    } catch { /* ignore */ }
+    notifyBgmThemePlaylist(getActiveTheme());
+  }
   frame.src = relUrl;
 }
 
@@ -600,6 +646,14 @@ export function navigateApp(targetUrl, { pushHistory = true } = {}) {
   // Đang ở window.top: kiểm tra xem có quay về đúng trang gốc không
   const rootPage = getPageName(shellRootUrl || window.location.href);
   const destPage = getPageName(relUrl);
+
+  // Nếu window.top đang là game.html hoặc topics.html (do F5 sau pushState) mà quay về index.html:
+  // dùng location.href để giải phóng sạch toàn bộ kết nối Firebase phòng cũ, tránh chồng 2 phòng song song.
+  if (destPage === 'index.html' && rootPage !== 'index.html') {
+    window.location.href = relUrl;
+    return;
+  }
+
   const isReturningToRoot = (destPage === rootPage)
     && (destPage === 'index.html' || relUrl === shellRootUrl);
 
@@ -642,15 +696,13 @@ function initNavigationAndFullscreenShell() {
   bindFsBtn(document.getElementById('btnFull'));
   document.querySelectorAll('[data-fullscreen-toggle]').forEach(bindFsBtn);
 
-  const topWin = getTopWinSafe();
-  const topDoc = topWin.document || document;
   lastKnownFsState = isFullscreenActive();
 
-  topDoc.addEventListener('fullscreenchange', () => syncFullscreenButtons());
-  topDoc.addEventListener('webkitfullscreenchange', () => syncFullscreenButtons());
-  if (topDoc !== document) {
-    document.addEventListener('fullscreenchange', () => syncFullscreenButtons());
-    document.addEventListener('webkitfullscreenchange', () => syncFullscreenButtons());
+  // Chỉ window.top mới gắn listener fullscreenchange (iframe con chỉ nhận qua THEFLOOR_FS_SYNC -> 0 memory leak trên topDoc)
+  if (!isInChildFrame()) {
+    const onFsChange = () => syncFullscreenButtons();
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
   }
   syncFullscreenButtons();
 
@@ -700,6 +752,9 @@ export function initTheme() {
   ensureSeasonalLayers();
   paint();
   initNavigationAndFullscreenShell();
+  if (isTopicsPage()) {
+    notifyBgmScene('topics');
+  }
 
   document.querySelectorAll('[data-theme-toggle]').forEach((b) => {
     if (b.dataset.themeBound) return;
@@ -715,11 +770,12 @@ export function initTheme() {
     });
   });
 
+  let bodyObs = null;
   if (document.body && typeof MutationObserver === 'function') {
-    const obs = new MutationObserver(() => {
+    bodyObs = new MutationObserver(() => {
       updateSeasonalBackground();
     });
-    obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    bodyObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   }
 
   window.addEventListener('resize', () => {
@@ -738,41 +794,57 @@ export function initTheme() {
     if (!e.key || e.key === THEMES_LIBRARY_KEY || e.key === THEME_CONFIG_KEY || e.key === KEY) {
       activeLibrary = readThemeLibraryCache();
       paint();
+      window.dispatchEvent(new CustomEvent('thefloor:theme-library-updated', { detail: activeLibrary }));
     }
   });
 
+  let themeBc = null;
   try {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel('thefloor:shared_themes');
-      bc.onmessage = (ev) => {
+      themeBc = new BroadcastChannel('thefloor:shared_themes');
+      themeBc.onmessage = (ev) => {
         activeLibrary = ev && ev.data ? sanitizeThemeLibrary(ev.data) : readThemeLibraryCache();
         paint();
+        window.dispatchEvent(new CustomEvent('thefloor:theme-library-updated', { detail: activeLibrary }));
       };
     }
   } catch { /* ignore */ }
 
-  try {
-    const fbCfg = loadFirebaseConfig();
-    createSharedThemeLibrarySync(fbCfg).then((sync) => {
-      themeLibSync = sync;
-      sync.subscribe((cloudLib) => {
-        if (!cloudLib) return;
-        const clean = sanitizeThemeLibrary(cloudLib);
-        const switched = clean.activeThemeId !== lastSyncedActiveId
-          && clean.updatedAt && clean.updatedAt !== lastSyncedUpdatedAt;
-        lastSyncedUpdatedAt = clean.updatedAt || 0;
-        lastSyncedActiveId = clean.activeThemeId || 'builtin_christmas';
-        activeLibrary = clean;
-        if (switched) {
-          const active = getActiveTheme();
-          const nextTheme = active.basePreset === 'default' ? 'dark' : active.basePreset;
-          try { localStorage.setItem(KEY, nextTheme); } catch { /* ignore */ }
-        }
-        paint();
-        window.dispatchEvent(new CustomEvent('thefloor:theme-library-updated', { detail: clean }));
-      });
-    }).catch(() => {});
-  } catch { /* ignore */ }
+  // Dọn sạch MutationObserver, BroadcastChannel và Firebase listener khi đóng trang / unload iframe
+  window.addEventListener('pagehide', () => {
+    if (bodyObs) { try { bodyObs.disconnect(); } catch { /* ignore */ } bodyObs = null; }
+    if (themeBc) { try { themeBc.close(); } catch { /* ignore */ } themeBc = null; }
+    if (themeLibSync && typeof themeLibSync.dispose === 'function') {
+      try { themeLibSync.dispose(); } catch { /* ignore */ }
+      themeLibSync = null;
+    }
+  });
+
+  // Iframe con nhận theme từ window.top qua BroadcastChannel; trang topics.html do cms.js quản lý shared_themes -> tránh mở 2 kết nối trùng lặp
+  if (!isInChildFrame() && !isTopicsPage()) {
+    try {
+      const fbCfg = loadFirebaseConfig();
+      createSharedThemeLibrarySync(fbCfg).then((sync) => {
+        themeLibSync = sync;
+        sync.subscribe((cloudLib) => {
+          if (!cloudLib) return;
+          const clean = sanitizeThemeLibrary(cloudLib);
+          const switched = clean.activeThemeId !== lastSyncedActiveId
+            && clean.updatedAt && clean.updatedAt !== lastSyncedUpdatedAt;
+          lastSyncedUpdatedAt = clean.updatedAt || 0;
+          lastSyncedActiveId = clean.activeThemeId || 'builtin_christmas';
+          activeLibrary = clean;
+          if (switched) {
+            const active = getActiveTheme();
+            const nextTheme = active.basePreset === 'default' ? 'dark' : active.basePreset;
+            try { localStorage.setItem(KEY, nextTheme); } catch { /* ignore */ }
+          }
+          paint();
+          window.dispatchEvent(new CustomEvent('thefloor:theme-library-updated', { detail: clean }));
+        });
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  }
 }
 
 initTheme();

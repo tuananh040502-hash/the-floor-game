@@ -5,8 +5,8 @@
 import {
   CONFIG_FIELDS, DEFAULT_FIREBASE_CONFIG, getConfigSource, loadFirebaseConfig, parseConfigText,
   resetFirebaseConfig, saveFirebaseConfig, useLocalMode, validateConfig,
-} from './firebase-config.js';
-import { testFirebase } from './transport.js';
+} from './firebase-config.js?v=2026v1';
+import { testFirebase } from './transport.js?v=2026v1';
 
 const LABELS = {
   apiKey: 'apiKey',

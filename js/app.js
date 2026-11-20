@@ -1,10 +1,10 @@
-import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
-import { openFirebaseSettings } from './settings.js?v=iosfix15';
+import { loadFirebaseConfig } from './firebase-config.js?v=2026v1';
+import { openFirebaseSettings } from './settings.js?v=2026v1';
 import {
-  createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
+  asArr, createTransport, createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, getDeletedTopicIds, markTopicDeleted,
-} from './transport.js?v=bgm1';
-import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js?v=iosfix15';
+} from './transport.js?v=2026v1';
+import { TOPICS_KEY, loadTopicAudioIDB, clampVolume01 } from './topics.js?v=2026v1';
 import {
   createInitialState, reduce, remainingOf, remainingOfParticipant, minActiveRemaining,
   countdownRemainingOf, extractImageUrls,
@@ -12,11 +12,11 @@ import {
   clampPlayerCount, DEFAULT_PLAYER_COUNT, clampDurationSec,
   normalizeImageUrl, driveFallbackUrl, preloadWindow, safeAllCategories,
   isLegacyEmojiSampleTopic, purgeEmptyAndDefaultTopics, invalidateEngineCategoriesCache,
-} from './engine.js?v=iosfix15';
-import { Sfx } from './audio.js?v=iosfix15';
-import { initBgm } from './bgm.js?v=bgm1';
-import { Fireworks } from './fx.js?v=iosfix15';
-import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js?v=iosfix15';
+} from './engine.js?v=2026v1';
+import { Sfx } from './audio.js?v=2026v1';
+import { initBgm } from './bgm.js?v=2026v1';
+import { Fireworks } from './fx.js?v=2026v1';
+import { preloadImages, pruneCache, getCached, getProgress, onPreloadProgress, toCdnUrl } from './preload.js?v=2026v1';
 
 const $ = (id) => document.getElementById(id);
 
@@ -281,7 +281,7 @@ async function initSharedTopics(fbCfg) {
         ownerFolderId: normalizeFolderId(t?.ownerFolderId),
         driveFolderId: normalizeFolderId(t?.driveFolderId),
         fileIds: extractTopicDriveFileIds(t),
-        items: Array.isArray(t?.items) ? t.items : [],
+        items: asArr(t?.items).filter(Boolean),
       }));
       try {
         localStorage.setItem(TOPICS_KEY, JSON.stringify(sharedCustomTopics));
@@ -418,14 +418,12 @@ function onSnapshot(remote) {
   }
 }
 
-/** Firebase bỏ mảng/object rỗng — khôi phục các trường bắt buộc & chuẩn hóa trạng thái phòng chờ. */
+/** Firebase bỏ mảng/object rỗng hoặc biến mảng thành Object {0:...,1:...} — chuẩn hóa an toàn mọi mảng bằng asArr(). */
 function normalize(raw) {
   const fallback = buildDefaultState();
   const s = (raw && typeof raw === 'object') ? raw : fallback;
 
-  const validPlayers = Array.isArray(s.players)
-    ? s.players.filter((p) => p && typeof p === 'object' && p.id)
-    : [];
+  const validPlayers = asArr(s.players).filter((p) => p && typeof p === 'object' && p.id);
   const basePlayers = validPlayers.length >= 2 ? validPlayers : fallback.players;
   const availCats = getCategories100();
   s.players = basePlayers.slice(0, 6).map((p, idx) => {
@@ -446,7 +444,7 @@ function normalize(raw) {
 
   const validIds = new Set(s.players.map((p) => p.id));
   const cellTotal = Math.max(2, s.players.length);
-  const rawFloor = Array.isArray(s.floor) ? s.floor : [];
+  const rawFloor = asArr(s.floor);
   s.floor = Array.from({ length: cellTotal }, (_, i) => {
     const owner = rawFloor[i];
     return (owner && validIds.has(owner)) ? owner : s.players[i % s.players.length].id;
@@ -456,13 +454,11 @@ function normalize(raw) {
   s.setup = (s.setup && typeof s.setup === 'object') ? s.setup : {};
   s.setup.mode = s.setup.mode === 'multi' ? 'multi' : '1v1';
   s.setup.multiRule = s.setup.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
-  s.setup.multiIds = Array.isArray(s.setup.multiIds)
-    ? [...new Set(s.setup.multiIds.filter((id) => validIds.has(id)))]
-    : [];
+  s.setup.multiIds = [...new Set(asArr(s.setup.multiIds).filter((id) => validIds.has(id)))];
   s.setup.multiDurationSec = s.setup.multiDurationSec
     ? clampDurationSec(s.setup.multiDurationSec)
     : clampDurationSec(s.players[0]?.durationSec);
-  s.setup.preloadUrls = (Array.isArray(s.setup.preloadUrls) ? s.setup.preloadUrls : [])
+  s.setup.preloadUrls = asArr(s.setup.preloadUrls)
     .map((u) => normalizeImageUrl(u) || u)
     .filter(Boolean);
   s.setup.victoryAudioUrl = s.setup.victoryAudioUrl || '';
@@ -477,16 +473,18 @@ function normalize(raw) {
   }
 
   if (s.duel && typeof s.duel === 'object') {
+    s.duel.duelId = Number(s.duel.duelId) || 0;
     s.duel.mode = s.duel.mode === 'multi' ? 'multi' : '1v1';
-    s.duel.queue = Array.isArray(s.duel.queue) ? s.duel.queue : [];
-    s.duel.items = (Array.isArray(s.duel.items) ? s.duel.items : []).map((it) => {
+    s.duel.queue = asArr(s.duel.queue);
+    s.duel.items = asArr(s.duel.items).map((it) => {
       if (!it || typeof it !== 'object') return null;
+      const aliases = asArr(it.aliases).filter(Boolean);
       if (it.type === 'img' && it.src) {
-        return { ...it, src: normalizeImageUrl(it.src) || it.src, aliases: Array.isArray(it.aliases) ? it.aliases : [] };
+        return { ...it, src: normalizeImageUrl(it.src) || it.src, aliases };
       }
-      return { ...it, aliases: Array.isArray(it.aliases) ? it.aliases : [] };
+      return { ...it, aliases };
     }).filter(Boolean);
-    s.duel.changed = Array.isArray(s.duel.changed) ? s.duel.changed : [];
+    s.duel.changed = asArr(s.duel.changed);
     s.duel.totalA = s.duel.totalA || DUEL_MS;
     s.duel.totalB = s.duel.totalB || DUEL_MS;
     s.duel.passUntil = s.duel.passUntil || 0;
@@ -501,7 +499,7 @@ function normalize(raw) {
     s.duel.onlineAudioVolume = clampVolume01(s.duel.onlineAudioVolume, 1.0);
     if (s.duel.mode === 'multi') {
       s.duel.multiRule = s.duel.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
-      const rawParts = Array.isArray(s.duel.participants) ? s.duel.participants : [];
+      const rawParts = asArr(s.duel.participants);
       s.duel.participants = rawParts
         .filter((p) => p && typeof p === 'object' && p.id && validIds.has(p.id))
         .map((p) => {
@@ -519,7 +517,7 @@ function normalize(raw) {
             score: Math.max(0, Number(p.score) || 0),
           };
         });
-      const rawWinners = Array.isArray(s.duel.winners) ? s.duel.winners : [];
+      const rawWinners = asArr(s.duel.winners);
       s.duel.winners = rawWinners
         .filter((w) => w && typeof w === 'object' && w.id && validIds.has(w.id))
         .map((w) => {
@@ -1124,21 +1122,23 @@ function renderFloor(s) {
     const champ = playerById(s, s.championId);
     if ($('floorHint')) {
       if (champ) {
-        $('floorHint').textContent = `🏆 ${playerDisplayName(s, champ)} vô địch The Floor!`;
+        $('floorHint').innerHTML = `🏆 <span class="floor-hint-text">${esc(playerDisplayName(s, champ))} vô địch The Floor!</span>`;
       } else if (isMultiMode) {
-        $('floorHint').textContent = (role === 'host' || controller)
+        const txt = (role === 'host' || controller)
           ? `Xoay vòng · ${multiSet.size} người tham gia (Chạm ô để thêm/bớt)`
           : `Chế độ xoay vòng · ${multiSet.size} người chơi`;
+        $('floorHint').innerHTML = `<span class="floor-hint-text">${esc(txt)}</span>`;
+      } else if (chal && def) {
+        $('floorHint').innerHTML = `<span class="floor-hint-text">${esc(playerDisplayName(s, chal))}</span>  ⚔️  <span class="floor-hint-text">${esc(playerDisplayName(s, def))}</span>`;
       } else {
-        $('floorHint').textContent = chal && def
-          ? `${playerDisplayName(s, chal)}  ⚔️  ${playerDisplayName(s, def)}`
-          : chal
-            ? `${playerDisplayName(s, chal)} đang chọn đối thủ…`
-            : def
-              ? `Chờ chọn người thách đấu vs ${playerDisplayName(s, def)}`
-              : (role === 'host' || controller)
-                ? 'Chạm 2 ô trên sàn để chọn cặp đấu'
-                : 'Chờ trận đấu kế tiếp';
+        const txt = chal
+          ? `${playerDisplayName(s, chal)} đang chọn đối thủ…`
+          : def
+            ? `Chờ chọn người thách đấu vs ${playerDisplayName(s, def)}`
+            : (role === 'host' || controller)
+              ? 'Chạm 2 ô trên sàn để chọn cặp đấu'
+              : 'Chờ trận đấu kế tiếp';
+        $('floorHint').innerHTML = `<span class="floor-hint-text">${esc(txt)}</span>`;
       }
     }
   } catch (err) {

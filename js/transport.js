@@ -84,6 +84,7 @@ export const THEME_PRESET_DEFAULTS = {
     accentStyle: { mode: 'solid', c1: '#B91C2C', c2: '#D8B979', angle: 135 },
     effect: 'snow',
     effectEmojis: '❄️ 🎄 ⭐',
+    bgmList: [],
   },
   default: {
     preset: 'default',
@@ -101,6 +102,7 @@ export const THEME_PRESET_DEFAULTS = {
     accentStyle: { mode: 'solid', c1: '#0071E3', c2: '#2997FF', angle: 135 },
     effect: 'none',
     effectEmojis: '❄️ 🎄 ⭐',
+    bgmList: [],
   },
 };
 
@@ -128,6 +130,7 @@ export const BUILTIN_THEMES = {
     accentStyle: { mode: 'solid', c1: '#B91C2C', c2: '#D8B979', angle: 135 },
     effect: 'snow',
     effectEmojis: '❄️ 🎄 ⭐',
+    bgmList: [],
     ownerScriptUrl: '',
     ownerFolderId: '',
     updatedAt: 0,
@@ -155,6 +158,7 @@ export const BUILTIN_THEMES = {
     accentStyle: { mode: 'solid', c1: '#0071E3', c2: '#2997FF', angle: 135 },
     effect: 'none',
     effectEmojis: '❄️ 🎄 ⭐',
+    bgmList: [],
     ownerScriptUrl: '',
     ownerFolderId: '',
     updatedAt: 0,
@@ -228,6 +232,17 @@ export function sanitizeThemeProfile(raw, fallbackId = '') {
   const name = String((raw && raw.name) || (builtInTemplate ? builtInTemplate.name : 'Theme mới')).trim().slice(0, 60)
     || (builtInTemplate ? builtInTemplate.name : 'Theme mới');
 
+  const bgmSeen = new Set();
+  const bgmList = [];
+  for (const tr of asArr(raw && raw.bgmList)) {
+    if (bgmList.length >= 20) break;
+    const cleanTr = sanitizeCloudBgm(tr);
+    if (cleanTr && !bgmSeen.has(cleanTr.id)) {
+      bgmSeen.add(cleanTr.id);
+      bgmList.push(cleanTr);
+    }
+  }
+
   return {
     id: rawId,
     name,
@@ -252,6 +267,7 @@ export function sanitizeThemeProfile(raw, fallbackId = '') {
     accentStyle,
     effect,
     effectEmojis,
+    bgmList,
     ownerScriptUrl: normalizeScriptUrl(raw && raw.ownerScriptUrl).slice(0, MAX_INLINE_STR_LEN),
     ownerFolderId: normalizeFolderId(raw && raw.ownerFolderId).slice(0, 128),
     updatedAt: Number(raw && raw.updatedAt) || 0,
@@ -267,8 +283,12 @@ export function extractThemeDriveFileIds(theme) {
   };
   ['bg1FileId', 'bg2FileId', 'bg3FileId', 'bgMobileFileId'].forEach((k) => addId(theme[k]));
   ['bg1Url', 'bg2Url', 'bg3Url', 'bgMobileUrl'].forEach((k) => addId(theme[k]));
-  const stickers = Array.isArray(theme.stickers) ? theme.stickers : [];
-  stickers.forEach((st) => {
+  asArr(theme.bgmList).forEach((tr) => {
+    if (!tr || typeof tr !== 'object') return;
+    addId(tr.fileId);
+    if (tr.type === 'drive') addId(tr.url);
+  });
+  asArr(theme.stickers).forEach((st) => {
     if (!st || typeof st !== 'object') return;
     addId(st.fileId);
     addId(st.url);
@@ -546,30 +566,32 @@ export function extractDriveId(raw) {
   return '';
 }
 
+export function asArr(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') return Object.values(v);
+  return [];
+}
+
 /**
  * Trích xuất toàn bộ danh sách Google Drive File ID duy nhất từ coverUrl, items và fileIds của chủ đề.
  */
 export function extractTopicDriveFileIds(topic) {
   if (!topic || typeof topic !== 'object') return [];
   const ids = new Set();
-  if (Array.isArray(topic.fileIds)) {
-    topic.fileIds.forEach((fid) => {
-      const clean = extractDriveId(String(fid || ''));
-      if (clean) ids.add(clean);
-    });
-  }
+  asArr(topic.fileIds).forEach((fid) => {
+    const clean = extractDriveId(String(fid || ''));
+    if (clean) ids.add(clean);
+  });
   if (typeof topic.coverUrl === 'string' && topic.coverUrl.trim()) {
     const coverId = extractDriveId(topic.coverUrl);
     if (coverId) ids.add(coverId);
   }
-  if (Array.isArray(topic.items)) {
-    topic.items.forEach((it) => {
-      if (it && typeof it === 'object' && it.type !== 'emoji' && typeof it.src === 'string') {
-        const fid = extractDriveId(it.src);
-        if (fid) ids.add(fid);
-      }
-    });
-  }
+  asArr(topic.items).forEach((it) => {
+    if (it && typeof it === 'object' && it.type !== 'emoji' && typeof it.src === 'string') {
+      const fid = extractDriveId(it.src);
+      if (fid) ids.add(fid);
+    }
+  });
   return [...ids];
 }
 
@@ -639,24 +661,23 @@ export function sanitizeCloudTopic(raw, maxImages = MAX_CLOUD_IMAGES) {
   if (!id || !name) return null;
 
   const items = [];
-  if (Array.isArray(raw.items)) {
-    for (const it of raw.items) {
-      if (items.length >= maxImages) break;
-      if (!it || typeof it !== 'object') continue;
-      const answer = String(it.answer || '').trim().slice(0, 120);
-      if (!answer) continue;
-      const aliases = Array.isArray(it.aliases)
-        ? it.aliases.map((a) => String(a || '').trim().slice(0, 80)).filter(Boolean).slice(0, 12)
-        : [];
-      if (it.type === 'emoji' && it.emoji) {
-        items.push({ type: 'emoji', emoji: String(it.emoji).slice(0, 8), answer, aliases });
-      } else if (it.src && typeof it.src === 'string') {
-        const src = it.src.trim();
-        // Lọc bỏ chuỗi Base64 thô hoặc URL quá dài gây nghẽn Firebase
-        if (/^data:/i.test(src) || src.length > MAX_INLINE_STR_LEN) continue;
-        if (!/^https?:\/\//i.test(src)) continue;
-        items.push({ type: 'img', src, answer, aliases });
-      }
+  for (const it of asArr(raw.items)) {
+    if (items.length >= maxImages) break;
+    if (!it || typeof it !== 'object') continue;
+    const answer = String(it.answer || '').trim().slice(0, 120);
+    if (!answer) continue;
+    const aliases = asArr(it.aliases)
+      .map((a) => String(a || '').trim().slice(0, 80))
+      .filter(Boolean)
+      .slice(0, 12);
+    if (it.type === 'emoji' && it.emoji) {
+      items.push({ type: 'emoji', emoji: String(it.emoji).slice(0, 8), answer, aliases });
+    } else if (it.src && typeof it.src === 'string') {
+      const src = it.src.trim();
+      // Lọc bỏ chuỗi Base64 thô hoặc URL quá dài gây nghẽn Firebase
+      if (/^data:/i.test(src) || src.length > MAX_INLINE_STR_LEN) continue;
+      if (!/^https?:\/\//i.test(src)) continue;
+      items.push({ type: 'img', src, answer, aliases });
     }
   }
 
@@ -831,6 +852,7 @@ function stripHeavyRoomFields(rawState) {
 function diffPaths(prev, next, base, out) {
   const sameDuelSession = base === 'duel'
     && prev && next
+    && (prev.duelId || 0) === (next.duelId || 0)
     && (prev.mode || '1v1') === (next.mode || '1v1')
     && prev.categoryId === next.categoryId
     && prev.aId === next.aId
@@ -1409,7 +1431,7 @@ export function readThemeLibraryCache() {
   return createDefaultThemeLibrary();
 }
 
-export function writeThemeLibraryCache(libRaw) {
+export function writeThemeLibraryCache(libRaw, { emitBroadcast = true } = {}) {
   const clean = sanitizeThemeLibrary(libRaw);
   try {
     localStorage.setItem(THEMES_LIBRARY_KEY, JSON.stringify(clean));
@@ -1420,13 +1442,15 @@ export function writeThemeLibraryCache(libRaw) {
       localStorage.setItem(THEME_CONFIG_KEY, JSON.stringify(sanitizeCloudThemeConfig(active)));
     } catch { /* ignore */ }
   }
-  try {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel('thefloor:shared_themes');
-      bc.postMessage(clean);
-      bc.close();
-    }
-  } catch { /* ignore */ }
+  if (emitBroadcast) {
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        const bc = new BroadcastChannel('thefloor:shared_themes');
+        bc.postMessage(clean);
+        bc.close();
+      }
+    } catch { /* ignore */ }
+  }
   return clean;
 }
 
@@ -1525,7 +1549,7 @@ async function firebaseSharedThemeLibrary(config) {
         let nextLib = localCached;
         if (val && typeof val === 'object') {
           const remoteClean = sanitizeThemeLibrary(val);
-          nextLib = writeThemeLibraryCache(mergeThemeLibraries(localCached, remoteClean));
+          nextLib = writeThemeLibraryCache(mergeThemeLibraries(localCached, remoteClean), { emitBroadcast: false });
         }
         emitStatus({ state: 'synced', message: 'Đã đồng bộ Thư viện Theme Cloud' });
         try { cb(nextLib, val || nextLib); } catch (e) { console.error(e); }
@@ -1640,208 +1664,7 @@ export function writeThemeConfigCache(cfg) {
   try {
     localStorage.setItem(THEME_CONFIG_KEY, JSON.stringify(clean));
   } catch { /* ignore */ }
-  try {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel('thefloor:shared_theme');
-      bc.postMessage(clean);
-      bc.close();
-    }
-  } catch { /* ignore */ }
   return clean;
-}
-
-export async function createSharedThemeSync(config) {
-  if (config && config.databaseURL) {
-    try {
-      return await firebaseSharedTheme(config);
-    } catch (err) {
-      console.error('Không kết nối được shared_theme trên Firebase, chuyển sang chế độ cục bộ:', err);
-      const local = localSharedTheme();
-      local.fallbackReason = err.message || String(err);
-      return local;
-    }
-  }
-  return localSharedTheme();
-}
-
-async function firebaseSharedTheme(config) {
-  const { appMod, db } = await loadSdk();
-  const app = getOrInitApp(appMod, config);
-  const database = db.getDatabase(app);
-  const themeRef = db.ref(database, SHARED_THEME_PATH);
-
-  const statusListeners = [];
-  let currentStatus = { state: 'syncing', message: 'Đang kết nối cấu hình giao diện…' };
-  const emitStatus = (st) => {
-    currentStatus = st;
-    statusListeners.forEach((cb) => {
-      try { cb(st); } catch (e) { console.error(e); }
-    });
-  };
-
-  let themeUnsub = null;
-  let connUnsub = null;
-  let channel = null;
-  let storageHandler = null;
-  let disposed = false;
-
-  try {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      channel = new BroadcastChannel('thefloor:shared_theme');
-    }
-  } catch { /* ignore */ }
-
-  connUnsub = subscribeConnected(db, database, (connected) => {
-    if (connected) {
-      emitStatus({ state: 'synced', message: 'Đã đồng bộ Giao diện Cloud' });
-    } else {
-      emitStatus({ state: 'offline', message: 'Mất kết nối — dùng giao diện lưu trên máy' });
-    }
-  });
-
-  const dispose = () => {
-    if (disposed) return;
-    disposed = true;
-    if (themeUnsub) { try { themeUnsub(); } catch { /* ignore */ } themeUnsub = null; }
-    if (connUnsub) { try { connUnsub(); } catch { /* ignore */ } connUnsub = null; }
-    if (storageHandler) {
-      window.removeEventListener('storage', storageHandler);
-      storageHandler = null;
-    }
-    if (channel) { try { channel.close(); } catch { /* ignore */ } channel = null; }
-  };
-  window.addEventListener('pagehide', dispose);
-
-  return {
-    mode: 'firebase',
-    onStatus(cb) {
-      statusListeners.push(cb);
-      try { cb(currentStatus); } catch { /* ignore */ }
-    },
-    subscribe(cb) {
-      if (themeUnsub) { try { themeUnsub(); } catch { /* ignore */ } themeUnsub = null; }
-      emitStatus({ state: 'syncing', message: 'Đang đồng bộ giao diện…' });
-      const emitLocal = () => {
-        const cached = readThemeConfigCache();
-        try { cb(cached, cached); } catch (e) { console.error(e); }
-      };
-      if (channel) channel.onmessage = emitLocal;
-      if (!storageHandler) {
-        storageHandler = (e) => {
-          if (e.key === THEME_CONFIG_KEY) emitLocal();
-        };
-        window.addEventListener('storage', storageHandler);
-      }
-      themeUnsub = db.onValue(themeRef, (snap) => {
-        const val = snap.val();
-        const localCached = readThemeConfigCache();
-        let cfg = localCached;
-        if (val && typeof val === 'object') {
-          const remoteClean = sanitizeCloudThemeConfig(val);
-          // Ưu tiên bản có updatedAt mới hơn giữa Cloud và Local
-          if (!localCached.updatedAt || (remoteClean.updatedAt || 0) >= (localCached.updatedAt || 0)) {
-            cfg = writeThemeConfigCache(remoteClean);
-          }
-        }
-        emitStatus({ state: 'synced', message: 'Đã đồng bộ Giao diện Cloud' });
-        try { cb(cfg, val || cfg); } catch (e) { console.error(e); }
-      }, (err) => {
-        emitStatus({ state: 'error', message: `Đang dùng cấu hình trên máy (${err.message})` });
-        emitLocal();
-      });
-    },
-    async fetchTheme() {
-      try {
-        const snap = await db.get(themeRef);
-        const val = snap.val();
-        return val ? writeThemeConfigCache(val) : readThemeConfigCache();
-      } catch {
-        return readThemeConfigCache();
-      }
-    },
-    async putTheme(rawCfg, identity = null) {
-      const clean = sanitizeCloudThemeConfig(rawCfg);
-      if (identity && !canIdentityModifyTheme(clean, identity)) {
-        emitStatus({ state: 'error', message: 'Từ chối ghi: Không khớp quyền Drive.' });
-        return false;
-      }
-      if (identity) {
-        clean.ownerScriptUrl = normalizeScriptUrl(identity.scriptUrl);
-        clean.ownerFolderId = normalizeFolderId(identity.folderId);
-      }
-      clean.updatedAt = Date.now();
-      writeThemeConfigCache(clean);
-      emitStatus({ state: 'syncing', message: 'Đang lưu giao diện lên Cloud…' });
-      try {
-        await db.set(themeRef, clean);
-        emitStatus({ state: 'synced', message: 'Đã đồng bộ Giao diện Cloud' });
-        return true;
-      } catch (err) {
-        emitStatus({ state: 'local', message: `Đã lưu trên máy (Cloud: ${err.message})` });
-        return true;
-      }
-    },
-    dispose,
-  };
-}
-
-function localSharedTheme() {
-  let channel = null;
-  try {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      channel = new BroadcastChannel('thefloor:shared_theme');
-    }
-  } catch { /* ignore */ }
-  const statusListeners = [];
-  const dataListeners = new Set();
-  const currentStatus = { state: 'local', message: 'Chế độ cục bộ' };
-  const emitAll = () => {
-    const cfg = readThemeConfigCache();
-    dataListeners.forEach((cb) => {
-      try { cb(cfg, cfg); } catch (e) { console.error(e); }
-    });
-  };
-  let storageHandler = null;
-  return {
-    mode: 'local',
-    onStatus(cb) {
-      statusListeners.push(cb);
-      try { cb(currentStatus); } catch { /* ignore */ }
-    },
-    subscribe(cb) {
-      dataListeners.add(cb);
-      if (channel) channel.onmessage = emitAll;
-      if (!storageHandler) {
-        storageHandler = (e) => {
-          if (e.key === THEME_CONFIG_KEY) emitAll();
-        };
-        window.addEventListener('storage', storageHandler);
-      }
-      setTimeout(emitAll, 0);
-    },
-    async fetchTheme() {
-      return readThemeConfigCache();
-    },
-    async putTheme(rawCfg, identity = null) {
-      const clean = sanitizeCloudThemeConfig(rawCfg);
-      if (!identity || !canIdentityModifyTheme(clean, identity)) return false;
-      clean.ownerScriptUrl = normalizeScriptUrl(identity.scriptUrl);
-      clean.ownerFolderId = normalizeFolderId(identity.folderId);
-      clean.updatedAt = Date.now();
-      writeThemeConfigCache(clean);
-      if (channel) channel.postMessage(1);
-      emitAll();
-      return true;
-    },
-    dispose() {
-      dataListeners.clear();
-      if (storageHandler) {
-        window.removeEventListener('storage', storageHandler);
-        storageHandler = null;
-      }
-      if (channel) channel.close();
-    },
-  };
 }
 
 /**

@@ -390,6 +390,38 @@
               </div>
             </div>
 
+            <!-- KHỐI 4: NHẠC NỀN RIÊNG CỦA THEME NÀY -->
+            <div class="ts-block">
+              <div class="ts-block-head">
+                <span class="eyebrow">4. 🎵 Nhạc nền riêng của Theme này</span>
+                <span id="themeBgmCountBadge" class="chip text-[11px]">0 bài (dùng nhạc chung)</span>
+              </div>
+              <p class="t-2 text-xs leading-relaxed">
+                Khi kích hoạt Theme này, Trang 1 &amp; Trang 2 sẽ tự động phát ngẫu nhiên trong danh sách nhạc dưới đây (tối đa 20 bài) và tự động tạm dừng ở Đấu trường &amp; Trang soạn chủ đề. Nếu để trống sẽ phát kho nhạc chung <code>shared_bgm</code>.
+              </p>
+
+              <div id="themeBgmAddGrid" class="ts-bgm-add-grid">
+                <div class="ts-bgm-add-card">
+                  <span class="eyebrow">Tải file nhạc lên Drive (.mp3, .m4a, .wav, .ogg)</span>
+                  <input id="themeBgmDriveTitle" class="input ts-ctrl" maxlength="120" placeholder="Tên bài hát (tùy chọn, để trống lấy tên file)…" />
+                  <button id="btnThemeBgmPickAudio" type="button" class="btn btn-ok ts-ctrl w-full">⬆ Chọn file nhạc từ máy</button>
+                  <input id="fileThemeBgmAudio" type="file" accept=".mp3,.m4a,.wav,.ogg,audio/*" class="hidden" />
+                </div>
+
+                <div class="ts-bgm-add-card">
+                  <span class="eyebrow">Hoặc thêm link YouTube</span>
+                  <input id="themeBgmYtUrl" class="input ts-ctrl" placeholder="Dán link YouTube (watch?v=, youtu.be/, shorts/)…" />
+                  <div class="flex items-center gap-2">
+                    <input id="themeBgmYtTitle" class="input ts-ctrl flex-1" maxlength="120" placeholder="Tên bài hát (tùy chọn)…" />
+                    <button id="btnThemeBgmAddYoutube" type="button" class="btn btn-gold ts-ctrl shrink-0">Thêm</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="themeBgmNotice" class="text-xs t-2 hidden"></div>
+              <div id="themeBgmList" class="ts-bgm-list"></div>
+            </div>
+
           </div>
         </details>
 
@@ -533,8 +565,8 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script type="module" src="js/theme.js?v=lib2"></script>
-  <script type="module" src="js/cms.js?v=lib2"></script>
+  <script type="module" src="js/theme.js?v=2026v1"></script>
+  <script type="module" src="js/cms.js?v=2026v1"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')

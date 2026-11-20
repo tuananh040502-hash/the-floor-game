@@ -1,6 +1,7 @@
-import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
+import { loadFirebaseConfig } from './firebase-config.js?v=2026v1';
 import {
-  createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl, toThumbUrl400,
+  asArr, createSharedTopicsSync, sanitizeCloudTopic, sanitizeCloudBgm, extractYouTubeId,
+  getTopicCoverThumb, normalizeCoverUrl, toThumbUrl400,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, extractDriveId,
   canIdentityModifyTopic, getDeletedTopicIds, markTopicDeleted,
   THEME_PRESET_DEFAULTS, BUILTIN_THEMES, sanitizeThemeProfile, sanitizeThemeLibrary,
@@ -8,18 +9,18 @@ import {
   extractThemeDriveFileIds, mergeThemeLibraries, markThemeDeleted,
   readThemeLibraryCache, writeThemeLibraryCache, createSharedThemeLibrarySync,
   canIdentityModifyThemeProfile, normalizeThemeAssetUrl,
-} from './transport.js?v=bgm1';
-import { applyThemeLibrary } from './theme.js?v=lib2';
+} from './transport.js?v=2026v1';
+import { applyThemeLibrary, previewThemeColorsLive } from './theme.js?v=2026v1';
 import {
   TOPICS_KEY, loadCustom, newId, loadDrive, saveDrive,
   deleteTopicAudioIDB,
   sanitizeItem, sanitizeTopic, exportPayload, parseImport,
-} from './topics.js?v=iosfix15';
+} from './topics.js?v=2026v1';
 import {
   normalizeImageUrl, driveFallbackUrl, isLegacyEmojiSampleTopic,
   purgeEmptyAndDefaultTopics,
-} from './engine.js?v=iosfix15';
-import { initBgm } from './bgm.js?v=bgm1';
+} from './engine.js?v=2026v1';
+import { initBgm, uploadDriveAudioFile, fetchYouTubeTitle } from './bgm.js?v=2026v1';
 
 export const MAX_TOPIC_IMAGES = 100;
 
@@ -1211,6 +1212,8 @@ function renderColorControls(theme, editable) {
   });
 }
 
+let colorLivePreviewRaf = null;
+
 function updateActiveColorStyle(patch, commit = false) {
   if (!activeColorKey || !COLOR_STYLE_KEYS.includes(activeColorKey)) return;
   const curTheme = getSelectedTheme();
@@ -1228,9 +1231,368 @@ function updateActiveColorStyle(patch, commit = false) {
   renderColorControls(curTheme, true);
 
   if (commit) {
+    if (colorLivePreviewRaf !== null) {
+      cancelAnimationFrame(colorLivePreviewRaf);
+      colorLivePreviewRaf = null;
+    }
     saveSelectedThemeEdits('🎨 Đã lưu bảng màu theme lên Drive & Cloud ✓');
-  } else if (themeLibrary.activeThemeId === curTheme.id) {
-    applyThemeLibrary(themeLibrary, { switchActiveTheme: false });
+  } else if (themeLibrary.activeThemeId === curTheme.id && colorLivePreviewRaf === null) {
+    // Chỉ cập nhật biến CSS trên DOM trong 1 rAF (0 localStorage / 0 BroadcastChannel ở 120Hz)
+    colorLivePreviewRaf = requestAnimationFrame(() => {
+      colorLivePreviewRaf = null;
+      previewThemeColorsLive(curTheme);
+    });
+  }
+}
+
+// ---------- List nhạc nền riêng theo từng Theme ----------
+let themePreviewAudio = null;
+let themePreviewTrackId = '';
+let themePreviewType = '';
+
+function setThemeBgmNotice(msg = '', isError = false) {
+  const el = $('themeBgmNotice');
+  if (!el) return;
+  if (!msg) {
+    el.textContent = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : '';
+  el.classList.remove('hidden');
+}
+
+function syncThemeBgmPreviewRows() {
+  const listEl = $('themeBgmList');
+  if (!listEl) return;
+  listEl.querySelectorAll('.ts-bgm-row').forEach((row) => {
+    const isThis = Boolean(themePreviewTrackId) && row.dataset.thbgmId === themePreviewTrackId;
+    row.classList.toggle('is-previewing', isThis);
+    const btn = row.querySelector('[data-thbgm-act="play"]');
+    if (btn) {
+      btn.textContent = isThis ? '⏹' : '▶';
+      btn.title = isThis ? 'Dừng nghe thử' : 'Nghe thử bài này';
+    }
+  });
+}
+
+function stopThemeBgmPreview() {
+  if (themePreviewAudio) {
+    try {
+      themePreviewAudio.pause();
+      themePreviewAudio.removeAttribute('src');
+      themePreviewAudio.load();
+    } catch { /* ignore */ }
+    themePreviewAudio = null;
+  }
+  if (themePreviewType === 'youtube' && bgm && typeof bgm.pausePreview === 'function') {
+    try { bgm.pausePreview(); } catch { /* ignore */ }
+  }
+  themePreviewTrackId = '';
+  themePreviewType = '';
+  syncThemeBgmPreviewRows();
+}
+
+function toggleThemeBgmPreview(track) {
+  if (!track || !track.id) return;
+  if (themePreviewTrackId === track.id) {
+    stopThemeBgmPreview();
+    setThemeBgmNotice('');
+    return;
+  }
+  stopThemeBgmPreview();
+  themePreviewTrackId = track.id;
+  themePreviewType = track.type === 'youtube' ? 'youtube' : 'drive';
+
+  if (themePreviewType === 'youtube') {
+    if (bgm && typeof bgm.previewTrack === 'function') {
+      bgm.previewTrack(track);
+      syncThemeBgmPreviewRows();
+      setThemeBgmNotice(`▶ Đang nghe thử YouTube: “${track.title}” (bấm ⏹ để dừng).`);
+    } else {
+      themePreviewTrackId = '';
+      themePreviewType = '';
+      setThemeBgmNotice('Trình phát YouTube chưa sẵn sàng.', true);
+    }
+    return;
+  }
+
+  const fid = extractDriveId(track.fileId || track.url || '');
+  const primaryUrl = fid
+    ? `https://drive.google.com/uc?export=open&id=${fid}`
+    : String(track.url || '').trim();
+  const fallbackUrl = fid
+    ? `https://drive.google.com/uc?export=download&id=${fid}`
+    : '';
+  if (!primaryUrl) {
+    themePreviewTrackId = '';
+    themePreviewType = '';
+    setThemeBgmNotice('Không tìm thấy liên kết âm thanh hợp lệ.', true);
+    return;
+  }
+
+  const audio = new Audio();
+  audio.preload = 'auto';
+  audio.volume = 0.65;
+  let triedFallback = false;
+  audio.addEventListener('ended', () => {
+    if (themePreviewAudio === audio) {
+      stopThemeBgmPreview();
+      setThemeBgmNotice('');
+    }
+  });
+  audio.addEventListener('error', () => {
+    if (themePreviewAudio !== audio) return;
+    if (!triedFallback && fallbackUrl && audio.src !== fallbackUrl) {
+      triedFallback = true;
+      audio.src = fallbackUrl;
+      audio.play().catch(() => {
+        if (themePreviewAudio === audio) {
+          stopThemeBgmPreview();
+          setThemeBgmNotice(`❌ Không phát được “${track.title}” — kiểm tra quyền chia sẻ công khai trên Drive.`, true);
+        }
+      });
+      return;
+    }
+    stopThemeBgmPreview();
+    setThemeBgmNotice(`❌ Không phát được “${track.title}”.`, true);
+  });
+
+  themePreviewAudio = audio;
+  audio.src = primaryUrl;
+  syncThemeBgmPreviewRows();
+  setThemeBgmNotice(`▶ Đang nghe thử: “${track.title}” (bấm ⏹ để dừng).`);
+  audio.play().catch(() => {
+    if (themePreviewAudio !== audio) return;
+    if (!triedFallback && fallbackUrl) {
+      triedFallback = true;
+      audio.src = fallbackUrl;
+      audio.play().catch(() => {
+        if (themePreviewAudio === audio) {
+          stopThemeBgmPreview();
+          setThemeBgmNotice('❌ Trình duyệt chặn phát thử hoặc file Drive chưa chia sẻ công khai.', true);
+        }
+      });
+    } else {
+      stopThemeBgmPreview();
+    }
+  });
+}
+
+function renderThemeBgm(theme, editable) {
+  const curTheme = theme || getSelectedTheme();
+  if (!curTheme) return;
+  const bgmList = asArr(curTheme.bgmList).map(sanitizeCloudBgm).filter(Boolean).slice(0, 20);
+  curTheme.bgmList = bgmList;
+
+  const badge = $('themeBgmCountBadge');
+  if (badge) {
+    badge.textContent = bgmList.length
+      ? `${bgmList.length} bài riêng`
+      : '0 bài (dùng nhạc chung)';
+  }
+  if ($('themeBgmAddGrid')) {
+    $('themeBgmAddGrid').classList.toggle('hidden', !editable);
+  }
+  [
+    'themeBgmDriveTitle',
+    'btnThemeBgmPickAudio',
+    'themeBgmYtUrl',
+    'themeBgmYtTitle',
+    'btnThemeBgmAddYoutube',
+  ].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = !editable;
+  });
+
+  const listEl = $('themeBgmList');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  if (!bgmList.length) {
+    listEl.innerHTML = '<div class="t-3 text-xs py-2">Chưa có bài nhạc riêng nào — Theme này sẽ phát tự động từ kho nhạc chung (<code>shared_bgm</code>).</div>';
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  bgmList.forEach((tr) => {
+    const isPlaying = themePreviewTrackId === tr.id;
+    const row = document.createElement('div');
+    row.className = `ts-bgm-row${isPlaying ? ' is-previewing' : ''}`;
+    row.dataset.thbgmId = tr.id;
+    row.innerHTML = `
+      <button type="button" data-thbgm-act="play" class="bgm-row-play" title="${isPlaying ? 'Dừng nghe thử' : 'Nghe thử bài này'}">${isPlaying ? '⏹' : '▶'}</button>
+      <div class="bgm-row-info min-w-0 flex-1">
+        <div class="bgm-row-title truncate">${esc(tr.title)}</div>
+        <div class="bgm-row-meta">
+          <span class="bgm-type-pill">${tr.type === 'youtube' ? 'YouTube' : 'Drive Audio'}</span>
+        </div>
+      </div>
+      ${editable
+        ? '<button type="button" data-thbgm-act="delete" class="btn btn-pass btn-sm bgm-del-btn" title="Xóa bài này khỏi Theme">✕</button>'
+        : '<span class="bgm-lock-tag" title="Cần đúng Drive Key để chỉnh sửa nhạc Theme">🔒</span>'}`;
+    frag.appendChild(row);
+  });
+  listEl.appendChild(frag);
+}
+
+async function handleThemeBgmDriveUpload(file) {
+  const curTheme = getSelectedTheme();
+  if (!curTheme || !file || uploading) return;
+  if (!canEditSelectedTheme(curTheme)) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    setThemeBgmNotice('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để tải nhạc cho Theme.', true);
+    return;
+  }
+  const identity = getCurrentDriveIdentity();
+  if (!hasValidDriveIdentity()) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    setThemeBgmNotice('Vui lòng nhập Apps Script Web App URL và Folder ID hợp lệ trước khi tải nhạc lên Drive.', true);
+    return;
+  }
+  if (asArr(curTheme.bgmList).length >= 20) {
+    setThemeBgmNotice('Mỗi Theme chỉ hỗ trợ tối đa 20 bài nhạc nền riêng.', true);
+    return;
+  }
+
+  const pickBtn = $('btnThemeBgmPickAudio');
+  const titleInp = $('themeBgmDriveTitle');
+  const customTitle = titleInp ? titleInp.value.trim() : '';
+
+  uploading = true;
+  if (pickBtn) {
+    pickBtn.disabled = true;
+    pickBtn.textContent = '⏳ Đang tải nhạc lên Drive…';
+  }
+  setThemeBgmNotice(`Đang tải “${file.name}” lên Google Drive…`);
+  try {
+    const track = await uploadDriveAudioFile(identity, file, {
+      prefix: `thbgm_${curTheme.id}`,
+      customTitle,
+    });
+    const draft = collectSelectedThemeDraft();
+    draft.bgmList = [...asArr(draft.bgmList), track].slice(0, 20);
+    if (titleInp) titleInp.value = '';
+    const nextLib = {
+      ...themeLibrary,
+      themes: { ...themeLibrary.themes, [draft.id]: draft },
+    };
+    await persistThemeLibrary(nextLib, {
+      switchActive: themeLibrary.activeThemeId === draft.id,
+      msg: `🎵 Đã thêm “${track.title}” vào nhạc nền của Theme “${draft.name}”.`,
+    });
+    setThemeBgmNotice(`✅ Đã thêm “${track.title}” & đồng bộ lên Drive + Cloud.`);
+  } catch (err) {
+    setThemeBgmNotice(`❌ Lỗi tải nhạc: ${err && err.message ? err.message : err}`, true);
+  } finally {
+    uploading = false;
+    if (pickBtn) {
+      pickBtn.disabled = false;
+      pickBtn.textContent = '⬆ Chọn file nhạc từ máy';
+    }
+  }
+}
+
+async function handleThemeBgmAddYoutube() {
+  const curTheme = getSelectedTheme();
+  if (!curTheme) return;
+  if (!canEditSelectedTheme(curTheme)) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    setThemeBgmNotice('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để thêm nhạc cho Theme.', true);
+    return;
+  }
+  if (asArr(curTheme.bgmList).length >= 20) {
+    setThemeBgmNotice('Mỗi Theme chỉ hỗ trợ tối đa 20 bài nhạc nền riêng.', true);
+    return;
+  }
+  const urlInp = $('themeBgmYtUrl');
+  const titleInp = $('themeBgmYtTitle');
+  const addBtn = $('btnThemeBgmAddYoutube');
+  const rawUrl = urlInp ? urlInp.value.trim() : '';
+  const ytId = extractYouTubeId(rawUrl);
+  if (!ytId) {
+    setThemeBgmNotice('Link YouTube không hợp lệ (hỗ trợ watch?v=, youtu.be/, shorts/).', true);
+    return;
+  }
+  if (addBtn) {
+    addBtn.disabled = true;
+    addBtn.textContent = 'Đang thêm…';
+  }
+  try {
+    let title = titleInp ? titleInp.value.trim() : '';
+    if (!title) {
+      title = (await fetchYouTubeTitle(ytId)) || `YouTube (${ytId})`;
+    }
+    const identity = getCurrentDriveIdentity();
+    const track = sanitizeCloudBgm({
+      id: `thbgm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      type: 'youtube',
+      url: `https://www.youtube.com/watch?v=${ytId}`,
+      fileId: '',
+      youtubeId: ytId,
+      ownerScriptUrl: identity.scriptUrl,
+      ownerFolderId: identity.folderId,
+      createdAt: Date.now(),
+    });
+    if (!track) throw new Error('Dữ liệu bài nhạc YouTube không hợp lệ.');
+    const draft = collectSelectedThemeDraft();
+    draft.bgmList = [...asArr(draft.bgmList), track].slice(0, 20);
+    if (urlInp) urlInp.value = '';
+    if (titleInp) titleInp.value = '';
+    const nextLib = {
+      ...themeLibrary,
+      themes: { ...themeLibrary.themes, [draft.id]: draft },
+    };
+    await persistThemeLibrary(nextLib, {
+      switchActive: themeLibrary.activeThemeId === draft.id,
+      msg: `🎵 Đã thêm “${track.title}” vào nhạc nền của Theme “${draft.name}”.`,
+    });
+    setThemeBgmNotice(`✅ Đã thêm “${track.title}” & đồng bộ lên Drive + Cloud.`);
+  } catch (err) {
+    setThemeBgmNotice(`❌ ${err && err.message ? err.message : err}`, true);
+  } finally {
+    if (addBtn) {
+      addBtn.disabled = false;
+      addBtn.textContent = 'Thêm';
+    }
+  }
+}
+
+async function handleThemeBgmDelete(trackId) {
+  const curTheme = getSelectedTheme();
+  if (!curTheme || !trackId) return;
+  if (!canEditSelectedTheme(curTheme)) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Vui lòng nhập đúng Drive Key để xóa nhạc của Theme này.', true);
+    return;
+  }
+  const list = asArr(curTheme.bgmList);
+  const removed = list.find((x) => x && x.id === trackId);
+  if (!removed) return;
+  if (themePreviewTrackId === trackId) {
+    stopThemeBgmPreview();
+  }
+  const draft = collectSelectedThemeDraft();
+  draft.bgmList = list.filter((x) => x && x.id !== trackId);
+  const nextLib = {
+    ...themeLibrary,
+    themes: { ...themeLibrary.themes, [draft.id]: draft },
+  };
+  await persistThemeLibrary(nextLib, {
+    switchActive: themeLibrary.activeThemeId === draft.id,
+    msg: `Đã xóa “${removed.title}” khỏi nhạc nền của “${draft.name}”.`,
+  });
+  setThemeBgmNotice(`Đã xóa “${removed.title}” khỏi Theme.`);
+
+  if (removed.type === 'drive' && removed.fileId && hasValidDriveIdentity()) {
+    const fid = extractDriveId(removed.fileId);
+    if (fid) {
+      const unused = collectUnusedDriveFileIds([fid]);
+      if (unused.length) {
+        trashDriveFilesSafe(unused).catch(() => {});
+      }
+    }
   }
 }
 
@@ -1338,6 +1700,8 @@ function renderThemeStudio() {
   document.querySelectorAll('.ts-emoji-preset-btn').forEach((b) => {
     b.disabled = !editable;
   });
+
+  renderThemeBgm(theme, editable);
 }
 
 function collectSelectedThemeDraft() {
@@ -1386,6 +1750,7 @@ function collectSelectedThemeDraft() {
     accentColor: (current.accentStyle && current.accentStyle.c1) || current.accentColor,
     effect: rawEff,
     effectEmojis: rawEmojis || '❄️ 🎄 ⭐',
+    bgmList: asArr(current.bgmList).map(sanitizeCloudBgm).filter(Boolean).slice(0, 20),
     ownerScriptUrl: current.ownerScriptUrl || identity.scriptUrl,
     ownerFolderId: current.ownerFolderId || identity.folderId,
     updatedAt: Date.now(),
@@ -1473,13 +1838,20 @@ async function initThemeStudioSync() {
       const el = $('themeStudioStatus');
       if (el && st && st.message) el.textContent = `☁️ ${st.message}`;
     });
-    themeLibrarySync.subscribe((cloudLib) => {
-      if (cloudLib) {
-        themeLibrary = sanitizeThemeLibrary(cloudLib);
-        applyThemeLibrary(themeLibrary);
-      }
-      renderThemeStudio();
-    });
+    // Nếu đang nằm trong #appViewportFrame thì window.top đã subscribe shared_themes và phát BroadcastChannel xuống; chỉ subscribe trực tiếp khi mở độc lập
+    let isChildFrame = false;
+    try { isChildFrame = window.self !== window.top; } catch { isChildFrame = true; }
+    if (!isChildFrame) {
+      themeLibrarySync.subscribe((cloudLib) => {
+        if (cloudLib) {
+          themeLibrary = sanitizeThemeLibrary(cloudLib);
+          applyThemeLibrary(themeLibrary);
+        }
+        renderThemeStudio();
+      });
+    } else if ($('themeStudioStatus')) {
+      $('themeStudioStatus').textContent = '☁️ Đã liên kết đồng bộ Theme với Shell';
+    }
     if (hasValidDriveIdentity()) {
       await loadThemesFromDrive();
     }
@@ -2133,6 +2505,10 @@ function bind() {
       if (!btn) return;
       const pickId = btn.dataset.themePickId;
       if (!pickId || !themeLibrary.themes[pickId]) return;
+      if (selectedThemeId !== pickId) {
+        stopThemeBgmPreview();
+        setThemeBgmNotice('');
+      }
       selectedThemeId = pickId;
       renderThemeStudio();
     });
@@ -2264,6 +2640,7 @@ function bind() {
       const curTheme = getSelectedTheme();
       if (!curTheme.isBuiltIn || !canEditSelectedTheme(curTheme)) return;
       if (!confirm(`Khôi phục “${curTheme.name}” về thông số mặc định ban đầu?`)) return;
+      stopThemeBgmPreview();
       const factory = BUILTIN_THEMES[curTheme.id];
       if (!factory) return;
       const resetProfile = sanitizeThemeProfile({
@@ -2294,9 +2671,10 @@ function bind() {
         return;
       }
       const themeFiles = extractThemeDriveFileIds(curTheme);
-      if (!confirm(`Xóa vĩnh viễn theme “${curTheme.name}”${themeFiles.length ? ` và dọn ${themeFiles.length} file ảnh/GIF trên Google Drive` : ''}?`)) {
+      if (!confirm(`Xóa vĩnh viễn theme “${curTheme.name}”${themeFiles.length ? ` và dọn ${themeFiles.length} file ảnh/nhạc trên Google Drive` : ''}?`)) {
         return;
       }
+      stopThemeBgmPreview();
       const filesToDelete = collectUnusedDriveFileIds(themeFiles, curTheme.id);
       if (filesToDelete.length) {
         toast(`Đang dọn ${filesToDelete.length} file của theme trên Google Drive…`);
@@ -2558,6 +2936,66 @@ function bind() {
     if (e && e.detail) {
       themeLibrary = sanitizeThemeLibrary(e.detail);
       renderThemeStudio();
+    }
+  });
+
+  // Gắn sự kiện List nhạc nền riêng theo từng Theme
+  if ($('btnThemeBgmPickAudio') && $('fileThemeBgmAudio')) {
+    $('btnThemeBgmPickAudio').addEventListener('click', () => {
+      const curTheme = getSelectedTheme();
+      if (!curTheme || !canEditSelectedTheme(curTheme)) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        setThemeBgmNotice('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để tải nhạc cho Theme.', true);
+        return;
+      }
+      if (!hasValidDriveIdentity()) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        setThemeBgmNotice('Vui lòng nhập Apps Script Web App URL và Folder ID hợp lệ trước khi tải nhạc.', true);
+        return;
+      }
+      $('fileThemeBgmAudio').click();
+    });
+    $('fileThemeBgmAudio').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (file) handleThemeBgmDriveUpload(file);
+    });
+  }
+  if ($('btnThemeBgmAddYoutube')) {
+    $('btnThemeBgmAddYoutube').addEventListener('click', () => handleThemeBgmAddYoutube());
+  }
+  if ($('themeBgmYtUrl')) {
+    $('themeBgmYtUrl').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleThemeBgmAddYoutube();
+      }
+    });
+  }
+  if ($('themeBgmList')) {
+    $('themeBgmList').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-thbgm-act]');
+      if (!btn) return;
+      const row = btn.closest('[data-thbgm-id]');
+      if (!row) return;
+      const id = row.dataset.thbgmId;
+      const curTheme = getSelectedTheme();
+      if (!curTheme) return;
+      const track = asArr(curTheme.bgmList).find((x) => x && x.id === id);
+      if (!track) return;
+      if (btn.dataset.thbgmAct === 'play') {
+        toggleThemeBgmPreview(track);
+      } else if (btn.dataset.thbgmAct === 'delete') {
+        handleThemeBgmDelete(id);
+      }
+    });
+  }
+
+  window.addEventListener('pagehide', () => {
+    stopThemeBgmPreview();
+    if (themeLibrarySync && typeof themeLibrarySync.dispose === 'function') {
+      try { themeLibrarySync.dispose(); } catch { /* ignore */ }
+      themeLibrarySync = null;
     }
   });
 

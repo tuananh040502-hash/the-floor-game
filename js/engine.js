@@ -3,7 +3,7 @@
  * Đồng hồ dùng mô hình: remA/remB (ms còn lại tại thời điểm tStamp) + running/turn,
  * nhờ vậy mọi màn hình tự tính đồng hồ mượt mà từ cùng một trạng thái.
  */
-import { TOPICS_KEY, clampVolume01 } from './topics.js?v=iosfix15';
+import { TOPICS_KEY, clampVolume01 } from './topics.js?v=2026v1';
 
 export const DUEL_MS = 60000;
 export const DEFAULT_DURATION_SEC = 60;
@@ -848,6 +848,7 @@ export function reduce(s, type, arg = {}, now) {
         });
         const multiRule = s.setup.multiRule === 'last_standing' ? 'last_standing' : 'first_out';
         s.duel = {
+          duelId: now || Date.now(),
           mode: 'multi',
           multiRule,
           winners: [],
@@ -892,6 +893,7 @@ export function reduce(s, type, arg = {}, now) {
       const durA = clampDurationSec(pA?.durationSec) * 1000;
       const durB = clampDurationSec(pB?.durationSec) * 1000;
       s.duel = {
+        duelId: now || Date.now(),
         mode: '1v1',
         items: compactItems,
         catName: cat.name,
@@ -1102,13 +1104,29 @@ export function reduce(s, type, arg = {}, now) {
       s.players.forEach((p) => { p.durationSec = sec; });
       return null;
     }
-    case 'shuffleFloor':
+    case 'shuffleFloor': {
       if (s.phase !== 'floor') return false;
+      const prevSetup = s.setup || {};
       s.floor = dealFloor(s.players);
-      s.setup = {};
+      s.setup = {
+        mode: prevSetup.mode === 'multi' ? 'multi' : '1v1',
+        multiRule: prevSetup.multiRule === 'last_standing' ? 'last_standing' : 'first_out',
+        ...(prevSetup.multiDurationSec ? { multiDurationSec: clampDurationSec(prevSetup.multiDurationSec) } : {}),
+        ...(prevSetup.mode === 'multi' ? { multiIds: s.players.map((p) => p.id) } : {}),
+        ...(prevSetup.catId ? {
+          catId: prevSetup.catId,
+          preloadUrls: Array.isArray(prevSetup.preloadUrls) ? prevSetup.preloadUrls : [],
+          victoryAudioUrl: prevSetup.victoryAudioUrl || '',
+          victoryVoiceData: '',
+          victoryVoiceName: prevSetup.victoryVoiceName || '',
+          localAudioVolume: clampVolume01(prevSetup.localAudioVolume, 1.0),
+          onlineAudioVolume: clampVolume01(prevSetup.onlineAudioVolume, 1.0),
+        } : {}),
+      };
       s.duel = null;
       s.championId = '';
       return 'click';
+    }
     case 'setPlayerCount': {
       if (s.phase !== 'floor') return false;
       const n = clampPlayerCount(arg.count);
@@ -1134,6 +1152,15 @@ export function reduce(s, type, arg = {}, now) {
     }
     case 'resetAll': {
       const fresh = createInitialState(s.pin, s.players.length);
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const savedDur = localStorage.getItem('thefloor:defaultDurationSec');
+          if (savedDur) {
+            const sec = clampDurationSec(savedDur);
+            fresh.players.forEach((p) => { p.durationSec = sec; });
+          }
+        }
+      } catch { /* ignore */ }
       Object.keys(s).forEach((k) => delete s[k]);
       Object.assign(s, fresh);
       return 'click';

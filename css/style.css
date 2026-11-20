@@ -951,8 +951,8 @@ html[data-theme='light'] .cell {
   border-color: color-mix(in srgb, var(--c) 65%, var(--t1));
 }
 .cell.is-sel {
-  border-color: var(--blue);
-  box-shadow: inset 0 0 0 2px var(--blue);
+  border-color: var(--blue) !important;
+  box-shadow: inset 0 0 0 2px var(--blue) !important;
   z-index: 2;
 }
 
@@ -1249,6 +1249,12 @@ html[data-theme='light'] .topic-modal-card {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
   color: var(--t1);
 }
+html[data-theme='christmas'] .topic-modal-card {
+  background: #FBF6EC;
+  border-color: rgba(216, 185, 121, 0.85);
+  box-shadow: 0 24px 60px rgba(44, 30, 20, 0.28);
+  color: #2C1E14;
+}
 .topic-modal-head {
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border);
@@ -1261,6 +1267,10 @@ html[data-theme='light'] .topic-modal-card {
 html[data-theme='light'] .topic-modal-head {
   background: #ffffff;
   border-bottom-color: #d2d2d7;
+}
+html[data-theme='christmas'] .topic-modal-head {
+  background: #FBF6EC;
+  border-bottom-color: rgba(216, 185, 121, 0.65);
 }
 .topic-modal-title-row {
   display: flex;
@@ -4903,11 +4913,10 @@ html[data-custom-text='solid'] body:not([data-page='topics']) .multi-hud-card .m
 html[data-custom-text='gradient'] body:not([data-page='topics']) .lobby-card .eyebrow,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .hero-eyebrow,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .hero-sub,
-html[data-custom-text='gradient'] body:not([data-page='topics']) #floorHint,
+html[data-custom-text='gradient'] body:not([data-page='topics']) #floorHint .floor-hint-text,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .floor-header .eyebrow,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .setup-card .eyebrow,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .setup-card .pair-name-text,
-html[data-custom-text='gradient'] body:not([data-page='topics']) .setup-card .pair-player-name,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .cell .cell-name,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .cell .cell-topic,
 html[data-custom-text='gradient'] body:not([data-page='topics']) .side-card.hud-card .side-name,
@@ -4963,11 +4972,62 @@ html[data-custom-accent='solid'] body:not([data-page='topics']) #setupPreloadBar
 html[data-custom-accent='solid'] body:not([data-page='topics']) #cdLoadBar,
 html[data-custom-accent='solid'] body:not([data-page='topics']) .cd-bar-fill,
 html[data-custom-accent='solid'] body:not([data-page='topics']) .cd-dot,
+html[data-custom-accent='solid'] body:not([data-page='topics']) .topic-card-selected-pill,
 html[data-custom-accent='gradient'] body:not([data-page='topics']) #setupPreloadBar,
 html[data-custom-accent='gradient'] body:not([data-page='topics']) #cdLoadBar,
 html[data-custom-accent='gradient'] body:not([data-page='topics']) .cd-bar-fill,
-html[data-custom-accent='gradient'] body:not([data-page='topics']) .cd-dot {
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .cd-dot,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .topic-card-selected-pill {
   background: var(--tf-accent-fill);
+}
+html[data-custom-accent='solid'] body:not([data-page='topics']) .topic-card.is-selected,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .topic-card.is-selected {
+  border-color: var(--tf-accent-c1);
+  box-shadow: 0 0 0 1px var(--tf-accent-c1);
+}
+
+/* ---------- Khối 4: Nhạc nền riêng của từng Theme (#themeBgmList) ---------- */
+.ts-bgm-add-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ts-bgm-add-card {
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+html[data-theme='christmas'] .ts-bgm-add-card,
+html[data-theme='christmas'] .ts-bgm-row {
+  background: rgba(251, 246, 236, 0.85);
+  border-color: rgba(216, 185, 121, 0.55);
+}
+.ts-bgm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ts-bgm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+.ts-bgm-row.is-previewing {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface-raised));
+}
+@media (max-width: 720px) {
+  .ts-bgm-add-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* =====================================================================

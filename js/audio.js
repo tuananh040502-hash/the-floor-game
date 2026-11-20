@@ -10,7 +10,7 @@
  *  - Cả 2 nguồn đều được nạp sẵn (pre-buffer) ngay từ lúc chọn chủ đề / đếm ngược để phát tức thì 0ms,
  *    và hỗ trợ kéo thanh trượt chỉnh âm lượng trực tiếp (on-the-fly) ngay khi đang phát.
  */
-import { parseVictoryAudio, loadTopicAudioIDB, clampVolume01 } from './topics.js';
+import { parseVictoryAudio, loadTopicAudioIDB, clampVolume01 } from './topics.js?v=2026v1';
 
 let ctx = null;
 let master = null;

@@ -1,20 +1,23 @@
-import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
-import { loadDrive } from './topics.js?v=iosfix15';
+import { loadFirebaseConfig } from './firebase-config.js?v=2026v1';
+import { loadDrive } from './topics.js?v=2026v1';
 import {
   BGM_CACHE_KEY,
+  asArr,
   createSharedBgmSync,
   parseCloudBgmSnapshot,
+  sanitizeCloudBgm,
+  readThemeLibraryCache,
   normalizeScriptUrl,
   normalizeFolderId,
   extractYouTubeId,
   canIdentityModifyBgm,
-} from './transport.js?v=bgm1';
+} from './transport.js?v=2026v1';
 
 const SCRIPT_URL_RE = /^https:\/\/script\.google\.com\/(macros\/s\/|a\/)/;
 const BGM_MUTE_KEY = 'thefloor:bgmMuted';
 const BGM_VOL_KEY = 'thefloor:bgmVolume';
-const AUDIO_EXT_RE = /\.(mp3|m4a|wav|ogg)$/i;
-const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024; // 25MB an toàn cho Apps Script doPost
+export const AUDIO_EXT_RE = /\.(mp3|m4a|wav|ogg)$/i;
+export const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024; // 25MB an toàn cho Apps Script doPost
 
 const MIME_BY_EXT = {
   mp3: 'audio/mpeg',
@@ -51,7 +54,7 @@ function clamp01(v, fallback = 0.45) {
   return Math.max(0, Math.min(1, n));
 }
 
-function cleanAudioTitle(filename) {
+export function cleanAudioTitle(filename) {
   return String(filename || '')
     .replace(/\.[a-z0-9]{2,5}$/i, '')
     .replace(/[_-]+/g, ' ')
@@ -60,7 +63,7 @@ function cleanAudioTitle(filename) {
     .slice(0, 120) || 'Nhạc nền Drive';
 }
 
-function inferAudioMime(file) {
+export function inferAudioMime(file) {
   const rawType = String(file && file.type || '').trim();
   if (rawType && rawType.startsWith('audio/')) return rawType;
   const m = /\.([a-z0-9]{2,5})$/i.exec(String(file && file.name || ''));
@@ -86,7 +89,51 @@ function readBase64(blob) {
   });
 }
 
-async function fetchYouTubeTitle(youtubeId) {
+/** Helper dùng chung để tải file âm thanh (.mp3/.m4a/.wav/.ogg) lên Google Drive qua Apps Script. */
+export async function uploadDriveAudioFile(identity, file, { prefix = 'bgm', customTitle = '' } = {}) {
+  const scriptUrl = normalizeScriptUrl(identity && identity.scriptUrl);
+  const folderId = normalizeFolderId(identity && identity.folderId);
+  if (!scriptUrl || !folderId || !SCRIPT_URL_RE.test(scriptUrl)) {
+    throw new Error('Chưa có Apps Script Web App URL và Folder ID hợp lệ.');
+  }
+  const mime = inferAudioMime(file);
+  if (!AUDIO_EXT_RE.test((file && file.name) || '') && !String((file && file.type) || '').startsWith('audio/')) {
+    throw new Error('Chỉ hỗ trợ file âm thanh .mp3, .m4a, .wav, .ogg.');
+  }
+  if ((file && file.size) > MAX_AUDIO_UPLOAD_BYTES) {
+    throw new Error('File quá lớn (> 25MB). Vui lòng nén nhỏ hơn hoặc dùng link YouTube.');
+  }
+  const data = await readBase64(file);
+  const res = await fetch(scriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      folderId,
+      name: `${prefix}_${Date.now()}_${file.name}`,
+      mime,
+      data,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || !json.ok || !json.id) {
+    throw new Error((json && json.error) || 'Apps Script từ chối tải file lên.');
+  }
+  const fileId = String(json.id).trim();
+  return {
+    id: `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+    title: String(customTitle || '').trim() || cleanAudioTitle(file.name),
+    type: 'drive',
+    url: `https://drive.google.com/uc?export=open&id=${fileId}`,
+    fileId,
+    youtubeId: '',
+    ownerScriptUrl: scriptUrl,
+    ownerFolderId: folderId,
+    createdAt: Date.now(),
+  };
+}
+
+export async function fetchYouTubeTitle(youtubeId) {
   if (typeof fetch !== 'function' || !youtubeId) return '';
   let timer = null;
   try {
@@ -139,13 +186,17 @@ export function initBgm(options = {}) {
   } catch { /* cross-origin */ }
 
   if (topBgm) {
-    if (options.autoPlay !== false && typeof topBgm.setAutoPlayAllowed === 'function') {
+    const initialScene = options.scene || (options.page === 'topics' ? 'topics' : 'lobby');
+    if (typeof topBgm.setScene === 'function') {
+      topBgm.setScene(initialScene);
+    }
+    if (initialScene === 'lobby' && options.autoPlay !== false && typeof topBgm.setAutoPlayAllowed === 'function') {
       topBgm.setAutoPlayAllowed(true);
     }
     const syncProxyButtons = () => {
       const snap = typeof topBgm.getUiSnapshot === 'function'
         ? topBgm.getUiSnapshot()
-        : { muted: Boolean(topBgm.isMuted && topBgm.isMuted()), isPlaying: false, arenaPaused: false, count: 0 };
+        : { muted: Boolean(topBgm.isMuted && topBgm.isMuted()), isPlaying: false, arenaPaused: false, scene: 'lobby', count: 0 };
       document.querySelectorAll('#btnBgmMute, [data-bgm-mute]').forEach((btn) => {
         btn.textContent = snap.muted ? '🔇' : '🎵';
         btn.title = snap.muted
@@ -153,7 +204,7 @@ export function initBgm(options = {}) {
           : (snap.isPlaying ? 'Đang phát nhạc nền — Bấm để tắt tiếng' : 'Bật / tắt tiếng nhạc nền');
         btn.setAttribute('aria-pressed', String(!snap.muted));
         btn.classList.toggle('is-muted', snap.muted);
-        btn.classList.toggle('is-playing', !snap.muted && snap.isPlaying && !snap.arenaPaused);
+        btn.classList.toggle('is-playing', !snap.muted && snap.isPlaying && snap.scene === 'lobby');
       });
       const countEl = document.getElementById('bgmCountChip');
       if (countEl) countEl.textContent = `${snap.count || 0} bài`;
@@ -177,14 +228,30 @@ export function initBgm(options = {}) {
     syncProxyButtons();
 
     const proxyApi = {
+      setScene: (nextScene) => {
+        if (typeof topBgm.setScene === 'function') topBgm.setScene(nextScene);
+      },
+      getScene: () => (typeof topBgm.getScene === 'function' ? topBgm.getScene() : 'lobby'),
       setArenaPaused: (inDuel) => topBgm.setArenaPaused(inDuel),
+      setThemePlaylist: (themeId, bgmList) => {
+        if (typeof topBgm.setThemePlaylist === 'function') topBgm.setThemePlaylist(themeId, bgmList);
+      },
+      getActivePlaylistInfo: () => (typeof topBgm.getActivePlaylistInfo === 'function' ? topBgm.getActivePlaylistInfo() : null),
+      previewTrack: (track) => {
+        if (typeof topBgm.previewTrack === 'function') topBgm.previewTrack(track);
+      },
       pausePreview: () => topBgm.pausePreview(),
       refreshDriveIdentity: () => topBgm.refreshDriveIdentity(),
       openModal: () => topBgm.openModal(),
       closeModal: () => topBgm.closeModal(),
       setMuted: (m) => { topBgm.setMuted(m); syncProxyButtons(); },
       isMuted: () => topBgm.isMuted(),
-      dispose: () => { try { unsub(); } catch { /* ignore */ } },
+      dispose: () => {
+        if (options.page === 'topics') {
+          try { topBgm.pausePreview(); } catch { /* ignore */ }
+        }
+        try { unsub(); } catch { /* ignore */ }
+      },
     };
     window.addEventListener('pagehide', proxyApi.dispose);
     window.__theFloorBgmController = proxyApi;
@@ -197,12 +264,31 @@ export function initBgm(options = {}) {
     ? options.getDriveIdentity
     : null;
 
-  let tracks = readCachedTracks();
+  let scene = options.scene === 'arena' || options.scene === 'topics'
+    ? options.scene
+    : (options.page === 'topics' ? 'topics' : 'lobby');
+  let globalTracks = readCachedTracks();
+  let themePlaylistId = '';
+  let themeTracks = [];
+  let themePlaylistSig = '';
+  try {
+    const cachedLib = readThemeLibraryCache();
+    const activeTh = cachedLib && cachedLib.themes
+      ? (cachedLib.themes[cachedLib.activeThemeId] || cachedLib.themes.builtin_christmas)
+      : null;
+    if (activeTh && Array.isArray(activeTh.bgmList) && activeTh.bgmList.length) {
+      themePlaylistId = activeTh.id || '';
+      themeTracks = activeTh.bgmList.map(sanitizeCloudBgm).filter(Boolean).slice(0, 20);
+      themePlaylistSig = `${themePlaylistId}|${themeTracks.map((t) => t.id).join(',')}`;
+    }
+  } catch { /* ignore */ }
+  let tracks = themeTracks.length ? themeTracks.slice() : globalTracks.slice();
+  let previewAdHocTrack = null;
   let currentId = '';
   let lastPlayedId = '';
   let muted = safeGetLocal(BGM_MUTE_KEY, '0') === '1';
   let volume = clamp01(safeGetLocal(BGM_VOL_KEY, '0.45'), 0.45);
-  let arenaPaused = false;
+  let arenaPaused = scene === 'arena';
   let manualPreviewing = false;
   let unlocked = false;
   let isPlaying = false;
@@ -231,17 +317,31 @@ export function initBgm(options = {}) {
   function getDriveIdentity() {
     if (externalGetIdentity) {
       const ext = externalGetIdentity() || {};
-      return {
-        scriptUrl: normalizeScriptUrl(ext.scriptUrl),
-        folderId: normalizeFolderId(ext.folderId),
-      };
+      const su = normalizeScriptUrl(ext.scriptUrl);
+      const fi = normalizeFolderId(ext.folderId);
+      if (su || fi) return { scriptUrl: su, folderId: fi };
     }
-    const cfg = loadDrive();
     const inpUrl = document.getElementById('driveUrl');
     const inpFolder = document.getElementById('driveFolder');
+    let domUrl = (inpUrl && inpUrl.value) || '';
+    let domFolder = (inpFolder && inpFolder.value) || '';
+    // Nếu đang mở topics.html bên trong #appViewportFrame, ưu tiên đọc input Drive Key đang gõ trong iframe
+    if (!domUrl || !domFolder) {
+      try {
+        const frame = document.getElementById('appViewportFrame');
+        const fDoc = frame && frame.contentDocument;
+        if (fDoc) {
+          const fUrl = fDoc.getElementById('driveUrl');
+          const fFolder = fDoc.getElementById('driveFolder');
+          if (!domUrl && fUrl && fUrl.value) domUrl = fUrl.value;
+          if (!domFolder && fFolder && fFolder.value) domFolder = fFolder.value;
+        }
+      } catch { /* ignore */ }
+    }
+    const cfg = loadDrive();
     return {
-      scriptUrl: normalizeScriptUrl((inpUrl && inpUrl.value) || cfg.url),
-      folderId: normalizeFolderId((inpFolder && inpFolder.value) || cfg.folderId),
+      scriptUrl: normalizeScriptUrl(domUrl || cfg.url),
+      folderId: normalizeFolderId(domFolder || cfg.folderId),
     };
   }
 
@@ -251,11 +351,17 @@ export function initBgm(options = {}) {
   }
 
   function currentTrack() {
+    if (previewAdHocTrack && previewAdHocTrack.id === currentId) return previewAdHocTrack;
     return tracks.find((t) => t.id === currentId) || null;
   }
 
   function shouldPlay() {
-    if (disposed || muted || arenaPaused || !tracks.length) return false;
+    if (disposed || muted) return false;
+    if (scene === 'arena') return false;
+    if (scene === 'topics') {
+      return Boolean(manualPreviewing && (previewAdHocTrack || tracks.length));
+    }
+    if (!tracks.length) return false;
     return manualPreviewing || autoPlayAllowed;
   }
 
@@ -1080,9 +1186,13 @@ export function initBgm(options = {}) {
 
     const modeEl = modalEl.querySelector('#bgmSyncModeText');
     if (modeEl) {
-      modeEl.textContent = syncStatus.state === 'synced'
-        ? '☁️ Đồng bộ shared_bgm'
-        : (syncStatus.message || '');
+      if (themeTracks.length > 0) {
+        modeEl.textContent = `🎨 Đang phát nhạc riêng của Theme (${themeTracks.length} bài)`;
+      } else {
+        modeEl.textContent = syncStatus.state === 'synced'
+          ? '☁️ Đồng bộ shared_bgm'
+          : (syncStatus.message || '');
+      }
     }
 
     const cur = currentTrack();
@@ -1246,13 +1356,15 @@ export function initBgm(options = {}) {
     });
   }
 
-  function applyTracks(nextList) {
-    tracks = Array.isArray(nextList) ? nextList : [];
-    safeSetLocal(BGM_CACHE_KEY, JSON.stringify(tracks));
+  function rebuildEffectiveTracks({ forceSwitchIfMismatch = true } = {}) {
+    tracks = themeTracks.length ? themeTracks.slice() : globalTracks.slice();
     maybeLazyLoadYouTube();
 
-    const stillExists = currentId && tracks.some((t) => t.id === currentId);
-    if (!stillExists) {
+    const stillExists = currentId && (
+      (previewAdHocTrack && previewAdHocTrack.id === currentId)
+      || tracks.some((t) => t.id === currentId)
+    );
+    if (!stillExists && forceSwitchIfMismatch) {
       if (isPlaying) pauseAllInternal();
       currentId = '';
       if (tracks.length) {
@@ -1264,10 +1376,68 @@ export function initBgm(options = {}) {
           }
         }
       }
-    } else if (shouldPlay() && unlocked && !isPlaying && autoPlayAllowed) {
+    } else if (stillExists && shouldPlay() && unlocked && !isPlaying && autoPlayAllowed) {
       resumeOrStartRandom();
     }
     updateUiState();
+  }
+
+  function applyTracks(nextList) {
+    globalTracks = Array.isArray(nextList) ? nextList : [];
+    safeSetLocal(BGM_CACHE_KEY, JSON.stringify(globalTracks));
+    rebuildEffectiveTracks({ forceSwitchIfMismatch: true });
+  }
+
+  function setThemePlaylist(themeId, rawList) {
+    const cleanId = String(themeId || '').trim();
+    const cleanList = asArr(rawList).map(sanitizeCloudBgm).filter(Boolean).slice(0, 20);
+    const nextSig = `${cleanId}|${cleanList.map((t) => t.id).join(',')}`;
+    if (nextSig === themePlaylistSig) return;
+    themePlaylistSig = nextSig;
+    themePlaylistId = cleanId;
+    themeTracks = cleanList;
+    if (!manualPreviewing) previewAdHocTrack = null;
+    rebuildEffectiveTracks({ forceSwitchIfMismatch: true });
+  }
+
+  function setScene(nextScene) {
+    const normalized = nextScene === 'arena'
+      ? 'arena'
+      : nextScene === 'topics'
+        ? 'topics'
+        : 'lobby';
+    if (normalized === scene) return;
+    scene = normalized;
+    arenaPaused = scene === 'arena';
+    if (scene === 'arena' || scene === 'topics') {
+      manualPreviewing = false;
+      previewAdHocTrack = null;
+      pauseAllInternal();
+    } else {
+      previewAdHocTrack = null;
+      if (shouldPlay()) {
+        resumeOrStartRandom();
+      } else {
+        updateUiState();
+      }
+    }
+  }
+
+  function previewTrack(rawTrack) {
+    const clean = sanitizeCloudBgm(rawTrack);
+    if (!clean) return;
+    unlocked = true;
+    if (scene === 'arena') return;
+    if (currentId === clean.id && isPlaying) {
+      manualPreviewing = false;
+      previewAdHocTrack = null;
+      pauseAllInternal();
+      return;
+    }
+    if (muted) setMuted(false);
+    previewAdHocTrack = clean;
+    manualPreviewing = true;
+    playTrack(clean, { resetStreak: true });
   }
 
   // Khởi tạo đồng bộ Firebase `shared_bgm`
@@ -1316,12 +1486,25 @@ export function initBgm(options = {}) {
     }
   }
 
+  function onBgmMessage(ev) {
+    if (!ev || !ev.data || typeof ev.data !== 'object') return;
+    if (window.location.origin !== 'null' && ev.origin && ev.origin !== 'null' && ev.origin !== window.location.origin) {
+      return;
+    }
+    if (ev.data.type === 'THEFLOOR_BGM_THEME') {
+      setThemePlaylist(ev.data.themeId || '', ev.data.bgmList || []);
+    } else if (ev.data.type === 'THEFLOOR_BGM_SCENE' && ev.data.scene) {
+      setScene(ev.data.scene);
+    }
+  }
+
   function dispose() {
     if (disposed) return;
     disposed = true;
     pauseAllInternal();
     window.removeEventListener('storage', onStorage);
     window.removeEventListener('keydown', onKeydown);
+    window.removeEventListener('message', onBgmMessage);
     window.removeEventListener('pagehide', dispose);
     if (bgmSync && typeof bgmSync.dispose === 'function') {
       bgmSync.dispose();
@@ -1334,36 +1517,46 @@ export function initBgm(options = {}) {
   bindTriggers();
   window.addEventListener('storage', onStorage);
   window.addEventListener('keydown', onKeydown);
+  window.addEventListener('message', onBgmMessage);
   window.addEventListener('pagehide', dispose);
 
   // Nạp trước cache cục bộ ngay lập tức (0ms)
   if (tracks.length) {
-    applyTracks(tracks);
+    rebuildEffectiveTracks({ forceSwitchIfMismatch: true });
   } else {
     updateUiState();
   }
   connectSync();
 
   const api = {
+    setScene,
+    getScene: () => scene,
     /**
      * Điều khiển tạm dừng / tiếp tục theo trạng thái Đấu trường (Trang 2 vs Trang 3).
-     * Khi `inDuel === true` -> dừng hẳn (`pause`) nhạc nền ngay lập tức.
-     * Khi `inDuel === false` -> tự động phát tiếp nếu không bị tắt tiếng.
+     * Khi `inDuel === true` -> chuyển sang scene 'arena' (tạm dừng ngay lập tức).
+     * Khi `inDuel === false` -> nếu đang ở 'arena' thì quay về 'lobby' (không ghi đè scene 'topics').
      */
     setArenaPaused(inDuel) {
-      const nextPaused = Boolean(inDuel);
-      if (nextPaused === arenaPaused) return;
-      arenaPaused = nextPaused;
-      if (arenaPaused) {
-        pauseAllInternal();
-      } else if (shouldPlay()) {
-        resumeOrStartRandom();
-      } else {
-        updateUiState();
+      if (inDuel) {
+        setScene('arena');
+      } else if (scene === 'arena') {
+        setScene('lobby');
       }
+    },
+    setThemePlaylist,
+    previewTrack,
+    getActivePlaylistInfo() {
+      return {
+        themeId: themePlaylistId,
+        usingThemePlaylist: themeTracks.length > 0,
+        scene,
+        count: tracks.length,
+        trackIds: tracks.map((t) => t.id),
+      };
     },
     pausePreview() {
       manualPreviewing = false;
+      previewAdHocTrack = null;
       pauseAllInternal();
     },
     refreshDriveIdentity() {
@@ -1376,7 +1569,7 @@ export function initBgm(options = {}) {
       }
     },
     getUiSnapshot() {
-      return { muted, isPlaying, arenaPaused, count: tracks.length };
+      return { muted, isPlaying, arenaPaused, scene, count: tracks.length };
     },
     onUiChange(cb) {
       if (typeof cb !== 'function') return () => {};
