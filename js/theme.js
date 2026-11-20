@@ -1,19 +1,22 @@
 /**
- * Hệ thống Giao diện Lễ Hội Động (Seasonal Theme Studio: Giáng Sinh - Noel / Tết Nguyên Đán / Apple Sáng - Tối).
- * - Mặc định kích hoạt giao diện 'christmas' (Noel) hoặc preset đang cấu hình trên nhánh `shared_theme` (Firebase).
- * - Đồng bộ thời gian thực qua `shared_theme`, `BroadcastChannel` và `localStorage['thefloor:themeConfig']`.
- * - Quản lý lớp nền động `#seasonalBgLayer` (Trang 1: bg1Url, Trang 2 Sàn đấu: bg2Url, Trang 3 Đấu trường: bg3Url)
- *   cùng lớp tuyết rơi 60fps `#seasonalSnowLayer` (rõ nét trên nền kem sáng, tự ẩn ở Trang 3 Đấu trường).
+ * Hệ thống Thư viện Giao diện Lễ Hội Động (Multi-Theme Library: Giáng Sinh / Mặc định / Tự tạo).
+ * - Lưu trữ nhiều hồ sơ theme độc lập trong `shared_themes` (Firebase), `thefloor_themes.json` (Google Drive) và `localStorage['thefloor:themeLibrary']`.
+ * - Hỗ trợ 4 nhóm màu Đơn sắc / Chuyển sắc (cardStyle, borderStyle, textStyle, titleStyle) và hiệu ứng Tuyết / Emoji rơi tối ưu GPU.
+ * - Quản lý lớp nền chuẩn Retina `#seasonalBgLayer` (`=w2560`) và lớp rơi tối ưu GPU `#seasonalSnowLayer`.
  */
 import { loadFirebaseConfig } from './firebase-config.js?v=iosfix15';
 import {
   THEME_CONFIG_KEY,
+  THEMES_LIBRARY_KEY,
   THEME_PRESET_DEFAULTS,
+  BUILTIN_THEMES,
+  sanitizeColorStyle,
+  colorStyleToCss,
   normalizeThemeAssetUrl,
-  sanitizeCloudThemeConfig,
-  readThemeConfigCache,
-  writeThemeConfigCache,
-  createSharedThemeSync,
+  sanitizeThemeLibrary,
+  readThemeLibraryCache,
+  writeThemeLibraryCache,
+  createSharedThemeLibrarySync,
 } from './transport.js?v=bgm1';
 
 const KEY = 'thefloor:theme';
@@ -21,15 +24,35 @@ const SEASON_INIT_KEY = 'thefloor:themeSeasonInit';
 const SEASON_INIT_VER = 'xmas2026';
 const DEFAULT_MOBILE_BG = THEME_PRESET_DEFAULTS.christmas.bgMobileUrl;
 
-let activeConfig = readThemeConfigCache();
-let themeSync = null;
-let lastSyncedUpdatedAt = activeConfig.updatedAt || 0;
+let activeLibrary = readThemeLibraryCache();
+let themeLibSync = null;
+let lastSyncedUpdatedAt = activeLibrary.updatedAt || 0;
+let lastSyncedActiveId = activeLibrary.activeThemeId || 'builtin_christmas';
+let lastSnowSig = '';
+
+export function getThemeLibrary() {
+  return activeLibrary;
+}
+
+export function getActiveTheme() {
+  if (!activeLibrary || !activeLibrary.themes) {
+    activeLibrary = readThemeLibraryCache();
+  }
+  return activeLibrary.themes[activeLibrary.activeThemeId]
+    || activeLibrary.themes.builtin_christmas
+    || BUILTIN_THEMES.builtin_christmas;
+}
+
+export function getThemeConfig() {
+  return getActiveTheme();
+}
 
 function ensureDefaultSeasonInit() {
   try {
     if (localStorage.getItem(SEASON_INIT_KEY) !== SEASON_INIT_VER) {
       localStorage.setItem(SEASON_INIT_KEY, SEASON_INIT_VER);
-      const preset = activeConfig && activeConfig.preset !== 'default' ? activeConfig.preset : 'christmas';
+      const active = getActiveTheme();
+      const preset = active && active.basePreset !== 'default' ? active.basePreset : 'christmas';
       localStorage.setItem(KEY, preset);
     }
   } catch { /* ignore */ }
@@ -40,28 +63,22 @@ ensureDefaultSeasonInit();
 function stored() {
   try {
     const v = localStorage.getItem(KEY);
-    if (v === 'christmas' || v === 'tet' || v === 'light' || v === 'dark') return v;
+    if (v === 'christmas' || v === 'light' || v === 'dark') return v;
+    if (v === 'tet') return 'christmas';
   } catch { /* ignore */ }
   return null;
 }
 
 export function getSeasonalPreset() {
-  if (activeConfig && (activeConfig.preset === 'christmas' || activeConfig.preset === 'tet')) {
-    return activeConfig.preset;
-  }
   return 'christmas';
 }
 
 export function currentTheme() {
   const s = stored();
   if (s) return s;
-  if (activeConfig && activeConfig.preset === 'tet') return 'tet';
-  if (activeConfig && activeConfig.preset === 'default') return 'dark';
+  const active = getActiveTheme();
+  if (active && active.basePreset === 'default') return 'dark';
   return 'christmas';
-}
-
-export function getThemeConfig() {
-  return activeConfig;
 }
 
 function detectPageSlot() {
@@ -82,10 +99,119 @@ function isPortraitMobileViewport() {
   return window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
 }
 
+function isTopicsPage() {
+  return Boolean(document.body && document.body.dataset && document.body.dataset.page === 'topics');
+}
+
+export function syncSnowMotionState() {
+  const paused = Boolean(
+    document.hidden
+    || document.visibilityState === 'hidden'
+    || document.documentElement.classList.contains('shell-frame-active')
+    || (document.body && document.body.classList.contains('in-arena'))
+    || isTopicsPage(),
+  );
+  document.documentElement.classList.toggle('snow-paused', paused);
+  const snowLayer = document.getElementById('seasonalSnowLayer');
+  if (snowLayer) {
+    snowLayer.classList.toggle('is-paused', paused);
+  }
+}
+
+function splitEmojiGraphemes(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return ['❄️', '🎄', '⭐'];
+  let parts = [];
+  try {
+    if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+      const seg = new Intl.Segmenter('vi', { granularity: 'grapheme' });
+      parts = [...seg.segment(str)].map((s) => s.segment.trim()).filter(Boolean);
+    } else {
+      parts = Array.from(str).map((ch) => ch.trim()).filter(Boolean);
+    }
+  } catch {
+    parts = Array.from(str).map((ch) => ch.trim()).filter(Boolean);
+  }
+  return parts.length ? parts.slice(0, 24) : ['❄️', '🎄', '⭐'];
+}
+
+function isSameColorStyle(a, b) {
+  if (!a || !b) return false;
+  if (a.mode !== b.mode || a.c1 !== b.c1) return false;
+  if (a.mode === 'gradient') {
+    return a.c2 === b.c2 && Number(a.angle) === Number(b.angle);
+  }
+  return true;
+}
+
+function syncSnowParticles(effect, emojiStr) {
+  if (!document.body || isTopicsPage()) {
+    const old = document.getElementById('seasonalSnowLayer');
+    if (old) old.remove();
+    lastSnowSig = '';
+    return;
+  }
+  const snowLayer = document.getElementById('seasonalSnowLayer');
+  if (!snowLayer) return;
+
+  const sig = effect === 'emoji' ? `emoji|${emojiStr}` : effect;
+  if (sig === lastSnowSig) return;
+  lastSnowSig = sig;
+  snowLayer.innerHTML = '';
+
+  if (effect !== 'snow' && effect !== 'emoji') return;
+
+  const frag = document.createDocumentFragment();
+  if (effect === 'emoji') {
+    const emojis = splitEmojiGraphemes(emojiStr);
+    const count = 14;
+    for (let i = 0; i < count; i++) {
+      const el = document.createElement('span');
+      el.className = 'snow-flake snow-emoji';
+      el.textContent = emojis[i % emojis.length];
+      const x = Math.round(((i * 6.9) + 3 + (i % 3) * 1.9) % 92) + 3;
+      const size = 16 + ((i * 3) % 11); // 16px – 26px
+      const dur = (10.5 + (i % 6) * 1.35).toFixed(2);
+      const delay = (-((i * 1.73) % 15)).toFixed(2);
+      const drift = ((i % 2 === 0 ? 1 : -1) * (18 + (i % 5) * 8));
+      const op = (0.78 + (i % 3) * 0.08).toFixed(2);
+      el.style.setProperty('--snow-x', `${x}vw`);
+      el.style.setProperty('--snow-size', `${size}px`);
+      el.style.setProperty('--snow-dur', `${dur}s`);
+      el.style.setProperty('--snow-delay', `${delay}s`);
+      el.style.setProperty('--snow-drift', `${drift}px`);
+      el.style.setProperty('--snow-op', op);
+      frag.appendChild(el);
+    }
+  } else {
+    const count = 12;
+    for (let i = 0; i < count; i++) {
+      const flake = document.createElement('i');
+      flake.className = 'snow-flake';
+      const x = Math.round(((i * 8.1) + 4 + (i % 3) * 1.8) % 94) + 3;
+      const size = 4 + (i % 4);
+      const dur = (10 + (i % 6) * 1.4).toFixed(2);
+      const delay = (-((i * 1.85) % 14)).toFixed(2);
+      const drift = ((i % 2 === 0 ? 1 : -1) * (16 + (i % 4) * 7));
+      const op = (0.72 + (i % 3) * 0.09).toFixed(2);
+      flake.style.setProperty('--snow-x', `${x}vw`);
+      flake.style.setProperty('--snow-size', `${size}px`);
+      flake.style.setProperty('--snow-dur', `${dur}s`);
+      flake.style.setProperty('--snow-delay', `${delay}s`);
+      flake.style.setProperty('--snow-drift', `${drift}px`);
+      flake.style.setProperty('--snow-op', op);
+      frag.appendChild(flake);
+    }
+  }
+  snowLayer.appendChild(frag);
+}
+
 export function ensureSeasonalLayers() {
   if (!document.body) return;
   const oldFx = document.getElementById('seasonalFxLayer');
   if (oldFx) oldFx.remove();
+  const oldStickers = document.getElementById('seasonalStickerLayer');
+  if (oldStickers) oldStickers.remove();
 
   let bgLayer = document.getElementById('seasonalBgLayer');
   if (!bgLayer) {
@@ -96,67 +222,115 @@ export function ensureSeasonalLayers() {
   }
 
   let snowLayer = document.getElementById('seasonalSnowLayer');
+  if (isTopicsPage()) {
+    if (snowLayer) snowLayer.remove();
+    return;
+  }
   if (!snowLayer) {
     snowLayer = document.createElement('div');
     snowLayer.id = 'seasonalSnowLayer';
     snowLayer.className = 'seasonal-snow-layer';
     snowLayer.setAttribute('aria-hidden', 'true');
-    const frag = document.createDocumentFragment();
-    const count = 32;
-    for (let i = 0; i < count; i++) {
-      const flake = document.createElement('i');
-      flake.className = 'snow-flake';
-      const x = ((i * 29 + 11) % 98) + 1;
-      const size = 4 + (i % 5); // 4px - 8px
-      const dur = (8.5 + (i % 8) * 1.15).toFixed(2);
-      const delay = (-((i * 1.37) % 15)).toFixed(2);
-      const drift = ((i % 2 === 0 ? 1 : -1) * (18 + (i % 6) * 7));
-      const op = (0.72 + (i % 4) * 0.08).toFixed(2);
-      flake.style.setProperty('--snow-x', `${x}vw`);
-      flake.style.setProperty('--snow-size', `${size}px`);
-      flake.style.setProperty('--snow-dur', `${dur}s`);
-      flake.style.setProperty('--snow-delay', `${delay}s`);
-      flake.style.setProperty('--snow-drift', `${drift}px`);
-      flake.style.setProperty('--snow-op', op);
-      frag.appendChild(flake);
-    }
-    snowLayer.appendChild(frag);
     bgLayer.after(snowLayer);
   }
 }
 
 export function upgradeDriveBgToS0(rawUrl) {
   if (typeof rawUrl !== 'string' || !rawUrl.trim()) return '';
-  return rawUrl.trim().replace(/(https:\/\/lh3\.googleusercontent\.com\/d\/[a-zA-Z0-9_-]+)=(?:w\d+|s\d+)/i, '$1=s0');
+  const trimmed = rawUrl.trim();
+  if (/^https:\/\/lh3\.googleusercontent\.com\/d\/[a-zA-Z0-9_-]+=(?:w\d+|s\d+)/i.test(trimmed)) {
+    return trimmed.replace(/(https:\/\/lh3\.googleusercontent\.com\/d\/[a-zA-Z0-9_-]+)=(?:w\d+|s\d+)/i, '$1=w2560');
+  }
+  if (/^https:\/\/lh3\.googleusercontent\.com\/d\/[a-zA-Z0-9_-]+$/i.test(trimmed)) {
+    return `${trimmed}=w2560`;
+  }
+  return trimmed;
 }
 
 export function updateSeasonalBackground() {
   ensureSeasonalLayers();
   const root = document.documentElement;
   const t = currentTheme();
-  const cfg = sanitizeCloudThemeConfig(activeConfig);
-  const isSeasonal = t === 'christmas' || t === 'tet';
-  const defXmas = THEME_PRESET_DEFAULTS.christmas;
+  const active = getActiveTheme();
+  const factory = BUILTIN_THEMES[active.id]
+    || THEME_PRESET_DEFAULTS[active.basePreset]
+    || THEME_PRESET_DEFAULTS.default;
 
-  const bg1 = upgradeDriveBgToS0(normalizeThemeAssetUrl(cfg.bg1Url, t === 'christmas' ? defXmas.bg1Url : ''));
-  const bg2 = upgradeDriveBgToS0(normalizeThemeAssetUrl(cfg.bg2Url, t === 'christmas' ? defXmas.bg2Url : bg1));
-  const bg3 = upgradeDriveBgToS0(normalizeThemeAssetUrl(cfg.bg3Url, t === 'christmas' ? defXmas.bg3Url : bg1));
-  const bgMob = upgradeDriveBgToS0(normalizeThemeAssetUrl(cfg.bgMobileUrl, ''));
+  const cardStyle = sanitizeColorStyle(active.cardStyle || active.cardBg, factory.cardStyle);
+  const borderStyle = sanitizeColorStyle(active.borderStyle || active.borderColor, factory.borderStyle);
+  const textStyle = sanitizeColorStyle(active.textStyle, factory.textStyle);
+  const titleStyle = sanitizeColorStyle(active.titleStyle, factory.titleStyle);
+  const accentStyle = sanitizeColorStyle(active.accentStyle || active.accentColor, factory.accentStyle);
 
-  if (cfg.cardBg) root.style.setProperty('--seasonal-card-bg', cfg.cardBg);
-  if (cfg.borderColor) root.style.setProperty('--seasonal-border', cfg.borderColor);
-  if (cfg.accentColor) root.style.setProperty('--seasonal-accent', cfg.accentColor);
+  const isSeasonal = t === 'christmas';
+  const isCustomProfile = !active.isBuiltIn;
+  const hasCustomBg = Boolean(active.bg1Url || active.bg2Url || active.bg3Url || active.bgMobileUrl);
+  const hasCustomColor = !isSameColorStyle(cardStyle, factory.cardStyle)
+    || !isSameColorStyle(borderStyle, factory.borderStyle)
+    || !isSameColorStyle(textStyle, factory.textStyle)
+    || !isSameColorStyle(titleStyle, factory.titleStyle)
+    || !isSameColorStyle(accentStyle, factory.accentStyle);
+  const matchesActiveThemeBase = (active.basePreset === 'default' && (t === 'dark' || t === 'light')) || isSeasonal;
+  const showCustomAssets = isSeasonal || (matchesActiveThemeBase && (isCustomProfile || hasCustomBg || hasCustomColor || active.effect === 'snow' || active.effect === 'emoji'));
 
-  root.dataset.borderStyle = isSeasonal ? (cfg.borderStyle || 'solid') : 'solid';
-  root.dataset.effect = isSeasonal ? (cfg.effect || (t === 'tet' ? 'blossom' : 'snow')) : 'none';
+  const bg1 = upgradeDriveBgToS0(normalizeThemeAssetUrl(active.bg1Url, ''));
+  const bg2 = upgradeDriveBgToS0(normalizeThemeAssetUrl(active.bg2Url, bg1));
+  const bg3 = upgradeDriveBgToS0(normalizeThemeAssetUrl(active.bg3Url, bg1));
+  const bgMob = upgradeDriveBgToS0(normalizeThemeAssetUrl(active.bgMobileUrl, ''));
 
+  root.style.setProperty('--seasonal-card-bg', cardStyle.c1);
+  root.style.setProperty('--seasonal-border', borderStyle.c1);
+  root.style.setProperty('--seasonal-accent', accentStyle.c1);
+
+  // Xuất biến CSS cho 5 nhóm màu Đơn sắc / Chuyển sắc
+  const cardFill = colorStyleToCss(cardStyle, factory.cardStyle.c1);
+  const cardLayer = cardStyle.mode === 'gradient'
+    ? cardFill
+    : `linear-gradient(0deg, ${cardStyle.c1}, ${cardStyle.c1})`;
+  root.style.setProperty('--tf-card-fill', cardFill);
+  root.style.setProperty('--tf-card-layer', cardLayer);
+  root.style.setProperty('--tf-border-color', borderStyle.c1);
+  root.style.setProperty('--tf-border-grad', colorStyleToCss(borderStyle, factory.borderStyle.c1));
+  root.style.setProperty('--tf-text-color', textStyle.c1);
+  root.style.setProperty('--tf-text-grad', colorStyleToCss(textStyle, factory.textStyle.c1));
+  root.style.setProperty('--tf-title-color', titleStyle.c1);
+  root.style.setProperty('--tf-title-grad', colorStyleToCss(titleStyle, factory.titleStyle.c1));
+  root.style.setProperty('--tf-accent-c1', accentStyle.c1);
+  root.style.setProperty('--tf-accent-fill', colorStyleToCss(accentStyle, factory.accentStyle.c1));
+
+  if (showCustomAssets) {
+    const applyCard = isCustomProfile || !isSameColorStyle(cardStyle, factory.cardStyle);
+    const applyBorder = isCustomProfile || !isSameColorStyle(borderStyle, factory.borderStyle);
+    const applyText = isCustomProfile || !isSameColorStyle(textStyle, factory.textStyle);
+    const applyTitle = isCustomProfile || !isSameColorStyle(titleStyle, factory.titleStyle);
+    const applyAccent = isCustomProfile || !isSameColorStyle(accentStyle, factory.accentStyle);
+    root.dataset.customCard = applyCard ? cardStyle.mode : 'none';
+    root.dataset.customBorder = applyBorder ? borderStyle.mode : 'none';
+    root.dataset.customText = applyText ? textStyle.mode : 'none';
+    root.dataset.customTitle = applyTitle ? titleStyle.mode : 'none';
+    root.dataset.customAccent = applyAccent ? accentStyle.mode : 'none';
+  } else {
+    root.dataset.customCard = 'none';
+    root.dataset.customBorder = 'none';
+    root.dataset.customText = 'none';
+    root.dataset.customTitle = 'none';
+    root.dataset.customAccent = 'none';
+  }
+
+  const resolvedEffect = showCustomAssets
+    ? (active.effect === 'snow' || active.effect === 'emoji' ? active.effect : 'none')
+    : 'none';
+  root.dataset.effect = resolvedEffect;
+  root.dataset.activeThemeId = active.id || 'builtin_christmas';
+
+  const slot = detectPageSlot();
   const bgLayer = document.getElementById('seasonalBgLayer');
+  let chosenUrl = '';
   if (bgLayer) {
-    if (!isSeasonal) {
+    if (!showCustomAssets) {
       bgLayer.style.backgroundImage = 'none';
     } else {
-      const slot = detectPageSlot();
-      let chosenUrl = slot === 'bg3' ? bg3 : slot === 'bg2' ? bg2 : bg1;
+      chosenUrl = slot === 'bg3' ? bg3 : slot === 'bg2' ? bg2 : bg1;
       const isCustomSlotUrl = chosenUrl && !chosenUrl.startsWith('assets/christmas/bg-');
       const isCustomMobileUrl = bgMob && bgMob !== DEFAULT_MOBILE_BG;
       if (isPortraitMobileViewport() && bgMob && (isCustomMobileUrl || !isCustomSlotUrl)) {
@@ -166,6 +340,10 @@ export function updateSeasonalBackground() {
       bgLayer.style.backgroundImage = chosenUrl ? `url("${chosenUrl}")` : 'none';
     }
   }
+  root.dataset.hasCustomBg = chosenUrl ? '1' : '0';
+
+  syncSnowParticles(resolvedEffect, active.effectEmojis || '❄️ 🎄 ⭐');
+  syncSnowMotionState();
 }
 
 function paint() {
@@ -175,10 +353,7 @@ function paint() {
   document.querySelectorAll('[data-theme-toggle]').forEach((b) => {
     if (t === 'christmas') {
       b.textContent = '★';
-      b.title = 'Giao diện Giáng Sinh (Bấm để chuyển Sáng / Tối / Lễ hội)';
-    } else if (t === 'tet') {
-      b.textContent = '🧧';
-      b.title = 'Giao diện Tết Nguyên Đán (Bấm để chuyển Sáng / Tối / Lễ hội)';
+      b.title = 'Giao diện Lễ hội / Tùy chỉnh (Bấm để chuyển Sáng / Tối / Lễ hội)';
     } else if (t === 'light') {
       b.textContent = '☀︎';
       b.title = 'Giao diện Sáng (Bấm để chuyển Tối / Lễ hội)';
@@ -189,74 +364,352 @@ function paint() {
   });
 }
 
-export function applyThemeConfig(newCfg, { switchActiveTheme = false } = {}) {
-  activeConfig = writeThemeConfigCache(newCfg);
+export function applyThemeLibrary(newLib, { switchActiveTheme = false } = {}) {
+  activeLibrary = writeThemeLibraryCache(newLib);
+  lastSyncedUpdatedAt = activeLibrary.updatedAt || Date.now();
+  lastSyncedActiveId = activeLibrary.activeThemeId || 'builtin_christmas';
   if (switchActiveTheme) {
-    const nextTheme = activeConfig.preset === 'default' ? 'dark' : activeConfig.preset;
+    const active = getActiveTheme();
+    const nextTheme = active.basePreset === 'default' ? 'dark' : active.basePreset;
     try { localStorage.setItem(KEY, nextTheme); } catch { /* ignore */ }
   }
   paint();
 }
 
-function isFullscreenActive() {
-  return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+export function applyThemeConfig(newCfg, { switchActiveTheme = false } = {}) {
+  const nextLib = sanitizeThemeLibrary(activeLibrary);
+  const targetId = (newCfg && newCfg.id && nextLib.themes[newCfg.id])
+    ? newCfg.id
+    : nextLib.activeThemeId;
+  nextLib.themes[targetId] = {
+    ...nextLib.themes[targetId],
+    ...newCfg,
+    id: targetId,
+    updatedAt: Date.now(),
+  };
+  nextLib.activeThemeId = targetId;
+  nextLib.updatedAt = Date.now();
+  applyThemeLibrary(nextLib, { switchActiveTheme });
 }
 
-function toggleFullscreen() {
-  const docEl = document.documentElement;
-  if (isFullscreenActive()) {
-    if (typeof document.exitFullscreen === 'function') {
-      document.exitFullscreen().catch(() => {});
-    } else if (typeof document.webkitExitFullscreen === 'function') {
-      try { document.webkitExitFullscreen(); } catch { /* ignore */ }
-    }
-  } else if (docEl) {
-    if (typeof docEl.requestFullscreen === 'function') {
-      docEl.requestFullscreen().catch(() => {});
-    } else if (typeof docEl.webkitRequestFullscreen === 'function') {
-      try { docEl.webkitRequestFullscreen(); } catch { /* ignore */ }
-    }
+const WANT_FS_KEY = 'thefloor:wantFs';
+let lastKnownFsState = false;
+let shellRootUrl = '';
+let shellInitialized = false;
+
+function getTopWinSafe() {
+  try {
+    if (window.top && window.top.document) return window.top;
+  } catch { /* cross-origin */ }
+  return window;
+}
+
+function isInChildFrame() {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
   }
 }
 
-function syncFullscreenButtons() {
-  const full = isFullscreenActive();
+function safeSetWantFs(want) {
+  try { sessionStorage.setItem(WANT_FS_KEY, want ? '1' : '0'); } catch { /* ignore */ }
+}
+
+function safeGetWantFs() {
+  try { return sessionStorage.getItem(WANT_FS_KEY) === '1'; } catch { return false; }
+}
+
+export function isFullscreenActive() {
+  const topWin = getTopWinSafe();
+  const topDoc = topWin.document;
+  return Boolean(
+    (topDoc && (topDoc.fullscreenElement || topDoc.webkitFullscreenElement))
+    || document.fullscreenElement
+    || document.webkitFullscreenElement,
+  );
+}
+
+export function enterFullscreen() {
+  safeSetWantFs(true);
+  const topWin = getTopWinSafe();
+  const docEl = topWin.document && topWin.document.documentElement;
+  if (!docEl) return;
+  try {
+    if (typeof docEl.requestFullscreen === 'function') {
+      const p = docEl.requestFullscreen();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } else if (typeof docEl.webkitRequestFullscreen === 'function') {
+      docEl.webkitRequestFullscreen();
+    }
+  } catch { /* ignore */ }
+}
+
+export function exitFullscreen() {
+  safeSetWantFs(false);
+  const topWin = getTopWinSafe();
+  const topDoc = topWin.document;
+  if (!topDoc) return;
+  try {
+    if (typeof topDoc.exitFullscreen === 'function') {
+      const p = topDoc.exitFullscreen();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } else if (typeof topDoc.webkitExitFullscreen === 'function') {
+      topDoc.webkitExitFullscreen();
+    }
+  } catch { /* ignore */ }
+}
+
+export function toggleFullscreen() {
+  if (isFullscreenActive()) exitFullscreen();
+  else enterFullscreen();
+}
+
+function broadcastFsSyncToFrame(active) {
+  const frame = document.getElementById('appViewportFrame');
+  if (frame && frame.contentWindow) {
+    try {
+      frame.contentWindow.postMessage({ type: 'THEFLOOR_FS_SYNC', active: Boolean(active) }, '*');
+    } catch { /* ignore */ }
+  }
+}
+
+function syncFullscreenButtons(forcedState) {
+  const full = typeof forcedState === 'boolean' ? forcedState : isFullscreenActive();
+  // Nếu người dùng thoát Fullscreen bằng phím Esc (true -> false), cập nhật wantFs = '0'
+  if (!isInChildFrame() && lastKnownFsState && !full) {
+    safeSetWantFs(false);
+  }
+  lastKnownFsState = full;
+
   ['btnFullscreenHome', 'btnFull'].forEach((id) => {
     const btn = document.getElementById(id);
     if (!btn) return;
     btn.textContent = full ? '🗗' : '⛶';
     btn.title = full ? 'Thoát toàn màn hình (Esc)' : 'Toàn màn hình';
     btn.setAttribute('aria-pressed', full ? 'true' : 'false');
+    btn.classList.toggle('is-fs-active', full);
   });
+  document.querySelectorAll('[data-fullscreen-toggle]').forEach((btn) => {
+    btn.textContent = full ? '🗗' : '⛶';
+    btn.title = full ? 'Thoát toàn màn hình (Esc)' : 'Toàn màn hình';
+    btn.setAttribute('aria-pressed', full ? 'true' : 'false');
+    btn.classList.toggle('is-fs-active', full);
+  });
+
+  if (!isInChildFrame()) {
+    broadcastFsSyncToFrame(full);
+  }
 }
 
-function initFullscreenHome() {
-  const btnHome = document.getElementById('btnFullscreenHome');
-  if (btnHome && !btnHome.dataset.fsBound) {
-    btnHome.dataset.fsBound = '1';
-    btnHome.addEventListener('click', toggleFullscreen);
+function resolveInternalUrl(rawUrl) {
+  if (!rawUrl) return null;
+  try {
+    const resolved = new URL(rawUrl, window.location.href);
+    if (window.location.origin !== 'null' && resolved.origin !== window.location.origin) {
+      return null;
+    }
+    return resolved.pathname + resolved.search + resolved.hash;
+  } catch {
+    return null;
   }
-  document.addEventListener('fullscreenchange', syncFullscreenButtons);
-  document.addEventListener('webkitfullscreenchange', syncFullscreenButtons);
+}
+
+function getPageName(urlStr) {
+  try {
+    const u = new URL(urlStr, window.location.href);
+    const seg = (u.pathname || '').split('/').pop() || '';
+    return seg.toLowerCase() || 'index.html';
+  } catch {
+    return 'index.html';
+  }
+}
+
+function setShellFrameActive(active) {
+  document.documentElement.classList.toggle('shell-frame-active', Boolean(active));
+  if (document.body) {
+    document.body.classList.toggle('shell-frame-active', Boolean(active));
+    if (!active) document.body.classList.remove('page-exiting');
+  }
+  syncSnowMotionState();
+}
+
+function closeViewportFrame() {
+  const frame = document.getElementById('appViewportFrame');
+  if (frame) {
+    try { frame.src = 'about:blank'; } catch { /* ignore */ }
+    frame.remove();
+  }
+  setShellFrameActive(false);
+  try {
+    if (window.__theFloorBgmController && typeof window.__theFloorBgmController.setArenaPaused === 'function') {
+      window.__theFloorBgmController.setArenaPaused(false);
+    }
+  } catch { /* ignore */ }
+  paint();
+}
+
+function openInViewportFrame(relUrl) {
+  let frame = document.getElementById('appViewportFrame');
+  if (!frame) {
+    frame = document.createElement('iframe');
+    frame.id = 'appViewportFrame';
+    frame.className = 'app-viewport-frame';
+    frame.setAttribute('allow', 'autoplay; fullscreen');
+    frame.setAttribute('allowfullscreen', '');
+    frame.addEventListener('load', () => {
+      broadcastFsSyncToFrame(isFullscreenActive());
+    });
+    document.body.appendChild(frame);
+  }
+  setShellFrameActive(true);
+  // Khi mở topics.html hoặc index.html từ shell, nhả trạng thái tạm dừng nhạc nền của đấu trường nếu có
+  const targetPage = getPageName(relUrl);
+  try {
+    if (window.__theFloorBgmController) {
+      if (targetPage === 'topics.html' || targetPage === 'index.html') {
+        window.__theFloorBgmController.setArenaPaused(false);
+      }
+      if ((targetPage === 'game.html' || targetPage === 'index.html') && typeof window.__theFloorBgmController.setAutoPlayAllowed === 'function') {
+        window.__theFloorBgmController.setAutoPlayAllowed(true);
+      }
+    }
+  } catch { /* ignore */ }
+  frame.src = relUrl;
+}
+
+export function navigateApp(targetUrl, { pushHistory = true } = {}) {
+  if (!targetUrl) return;
+  const relUrl = resolveInternalUrl(targetUrl);
+  if (!relUrl) {
+    window.location.href = targetUrl;
+    return;
+  }
+
+  // Nếu đang chạy bên trong #appViewportFrame -> gửi yêu cầu về window.top để không thoát Fullscreen
+  if (isInChildFrame()) {
+    try {
+      window.top.postMessage({ type: 'THEFLOOR_NAVIGATE', url: relUrl }, '*');
+      return;
+    } catch {
+      window.location.href = relUrl;
+      return;
+    }
+  }
+
+  // Đang ở window.top: kiểm tra xem có quay về đúng trang gốc không
+  const rootPage = getPageName(shellRootUrl || window.location.href);
+  const destPage = getPageName(relUrl);
+  const isReturningToRoot = (destPage === rootPage)
+    && (destPage === 'index.html' || relUrl === shellRootUrl);
+
+  if (isReturningToRoot) {
+    closeViewportFrame();
+    if (pushHistory) {
+      try {
+        window.history.pushState({ shellUrl: relUrl, isRoot: true }, '', relUrl);
+      } catch { /* ignore */ }
+    }
+    return;
+  }
+
+  openInViewportFrame(relUrl);
+  if (pushHistory) {
+    try {
+      window.history.pushState({ shellUrl: relUrl, isRoot: false }, '', relUrl);
+    } catch { /* ignore */ }
+  }
+}
+
+function initNavigationAndFullscreenShell() {
+  if (shellInitialized) return;
+  shellInitialized = true;
+  shellRootUrl = window.location.pathname + window.location.search + window.location.hash;
+
+  window.__theFloorNavigate = navigateApp;
+  window.__theFloorToggleFullscreen = toggleFullscreen;
+
+  const bindFsBtn = (btn) => {
+    if (!btn || btn.dataset.fsBound) return;
+    btn.dataset.fsBound = '1';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFullscreen();
+    });
+  };
+  bindFsBtn(document.getElementById('btnFullscreenHome'));
+  bindFsBtn(document.getElementById('btnFull'));
+  document.querySelectorAll('[data-fullscreen-toggle]').forEach(bindFsBtn);
+
+  const topWin = getTopWinSafe();
+  const topDoc = topWin.document || document;
+  lastKnownFsState = isFullscreenActive();
+
+  topDoc.addEventListener('fullscreenchange', () => syncFullscreenButtons());
+  topDoc.addEventListener('webkitfullscreenchange', () => syncFullscreenButtons());
+  if (topDoc !== document) {
+    document.addEventListener('fullscreenchange', () => syncFullscreenButtons());
+    document.addEventListener('webkitfullscreenchange', () => syncFullscreenButtons());
+  }
   syncFullscreenButtons();
+
+  // Nhận thông điệp đồng bộ Fullscreen & điều hướng không reload giữa window.top và #appViewportFrame
+  window.addEventListener('message', (ev) => {
+    if (!ev || !ev.data || typeof ev.data !== 'object') return;
+    if (window.location.origin !== 'null' && ev.origin && ev.origin !== 'null' && ev.origin !== window.location.origin) {
+      return;
+    }
+    if (ev.data.type === 'THEFLOOR_FS_SYNC') {
+      syncFullscreenButtons(Boolean(ev.data.active));
+    } else if (!isInChildFrame() && ev.data.type === 'THEFLOOR_NAVIGATE' && ev.data.url) {
+      navigateApp(ev.data.url, { pushHistory: true });
+    } else if (!isInChildFrame() && ev.data.type === 'THEFLOOR_FS_TOGGLE') {
+      toggleFullscreen();
+    }
+  });
+
+  if (!isInChildFrame()) {
+    try {
+      window.history.replaceState({ shellUrl: shellRootUrl, isRoot: true }, '', shellRootUrl);
+    } catch { /* ignore */ }
+
+    window.addEventListener('popstate', (ev) => {
+      const target = (ev && ev.state && ev.state.shellUrl)
+        || (window.location.pathname + window.location.search + window.location.hash);
+      navigateApp(target, { pushHistory: false });
+    });
+
+    // Dự phòng khôi phục nhanh sau khi F5 / Cmd+R nếu trước đó người dùng đang bật Fullscreen
+    if (safeGetWantFs() && !isFullscreenActive()) {
+      const restoreFsOnFirstTap = (e) => {
+        if (!safeGetWantFs() || isFullscreenActive()) return;
+        const t = e && e.target;
+        if (t && typeof t.closest === 'function' && t.closest('#btnFullscreenHome, #btnFull, [data-fullscreen-toggle]')) {
+          return;
+        }
+        enterFullscreen();
+      };
+      document.addEventListener('pointerdown', restoreFsOnFirstTap, { once: true, capture: true });
+    }
+  }
 }
 
 export function initTheme() {
-  activeConfig = readThemeConfigCache();
+  activeLibrary = readThemeLibraryCache();
   ensureSeasonalLayers();
   paint();
-  initFullscreenHome();
+  initNavigationAndFullscreenShell();
 
   document.querySelectorAll('[data-theme-toggle]').forEach((b) => {
     if (b.dataset.themeBound) return;
     b.dataset.themeBound = '1';
     b.addEventListener('click', () => {
       const cur = currentTheme();
-      const seasonal = getSeasonalPreset();
-      let next = seasonal;
-      if (cur === seasonal || cur === 'christmas' || cur === 'tet') next = 'light';
+      let next = 'christmas';
+      if (cur === 'christmas') next = 'light';
       else if (cur === 'light') next = 'dark';
-      else next = seasonal;
+      else next = 'christmas';
       try { localStorage.setItem(KEY, next); } catch { /* ignore */ }
       paint();
     });
@@ -273,23 +726,26 @@ export function initTheme() {
     updateSeasonalBackground();
   }, { passive: true });
 
+  document.addEventListener('visibilitychange', syncSnowMotionState);
+  syncSnowMotionState();
+
   window.addEventListener('pageshow', () => {
-    activeConfig = readThemeConfigCache();
+    activeLibrary = readThemeLibraryCache();
     paint();
   });
 
   window.addEventListener('storage', (e) => {
-    if (!e.key || e.key === THEME_CONFIG_KEY || e.key === KEY) {
-      activeConfig = readThemeConfigCache();
+    if (!e.key || e.key === THEMES_LIBRARY_KEY || e.key === THEME_CONFIG_KEY || e.key === KEY) {
+      activeLibrary = readThemeLibraryCache();
       paint();
     }
   });
 
   try {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel('thefloor:shared_theme');
+      const bc = new BroadcastChannel('thefloor:shared_themes');
       bc.onmessage = (ev) => {
-        activeConfig = ev && ev.data ? sanitizeCloudThemeConfig(ev.data) : readThemeConfigCache();
+        activeLibrary = ev && ev.data ? sanitizeThemeLibrary(ev.data) : readThemeLibraryCache();
         paint();
       };
     }
@@ -297,20 +753,23 @@ export function initTheme() {
 
   try {
     const fbCfg = loadFirebaseConfig();
-    createSharedThemeSync(fbCfg).then((sync) => {
-      themeSync = sync;
-      sync.subscribe((cloudCfg, rawVal) => {
-        if (!cloudCfg) return;
-        const clean = sanitizeCloudThemeConfig(cloudCfg);
-        const changedPreset = clean.updatedAt && clean.updatedAt !== lastSyncedUpdatedAt && clean.preset !== activeConfig.preset;
+    createSharedThemeLibrarySync(fbCfg).then((sync) => {
+      themeLibSync = sync;
+      sync.subscribe((cloudLib) => {
+        if (!cloudLib) return;
+        const clean = sanitizeThemeLibrary(cloudLib);
+        const switched = clean.activeThemeId !== lastSyncedActiveId
+          && clean.updatedAt && clean.updatedAt !== lastSyncedUpdatedAt;
         lastSyncedUpdatedAt = clean.updatedAt || 0;
-        activeConfig = clean;
-        if (changedPreset) {
-          const nextTheme = clean.preset === 'default' ? 'dark' : clean.preset;
+        lastSyncedActiveId = clean.activeThemeId || 'builtin_christmas';
+        activeLibrary = clean;
+        if (switched) {
+          const active = getActiveTheme();
+          const nextTheme = active.basePreset === 'default' ? 'dark' : active.basePreset;
           try { localStorage.setItem(KEY, nextTheme); } catch { /* ignore */ }
         }
         paint();
-        window.dispatchEvent(new CustomEvent('thefloor:theme-config-updated', { detail: clean }));
+        window.dispatchEvent(new CustomEvent('thefloor:theme-library-updated', { detail: clean }));
       });
     }).catch(() => {});
   } catch { /* ignore */ }

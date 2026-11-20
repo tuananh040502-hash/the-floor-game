@@ -9,7 +9,7 @@
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" />
   <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=xmas6" />
+  <link rel="stylesheet" href="css/style.css?v=xmas9" />
 </head>
 <body data-page="topics">
   <div id="seasonalBgLayer" data-slot="bg2" aria-hidden="true"></div>
@@ -23,6 +23,7 @@
           <div class="traffic"><i></i><i></i><i></i></div>
           <div class="flex items-center gap-2">
             <button data-theme-toggle class="btn btn-ghost btn-sm btn-icon" title="Giao diện sáng / tối">☾</button>
+            <button id="btnFull" type="button" class="btn btn-ghost btn-sm btn-icon" title="Toàn màn hình">⛶</button>
             <a id="backLink" href="index.html" class="btn btn-ghost btn-sm">← Về game</a>
           </div>
         </div>
@@ -94,100 +95,13 @@
           </div>
         </details>
 
-        <!-- Bảng điều khiển Giao diện & Mùa lễ hội (Seasonal Theme Studio: Noel / Tết / Mặc định) -->
-        <details id="themeStudioPanel" class="group">
-          <summary>🎨 Giao diện &amp; Mùa lễ hội</summary>
-          <div class="group-pad pt-0 space-y-3 text-sm">
-            <div id="themeStudioLockNotice" class="topic-readonly-notice hidden" style="font-size:11.5px;padding:9px 11px">
-              🔒 Nhập Apps Script Web App URL &amp; Folder ID ở mục Google Drive để mở khóa chỉnh sửa giao diện lễ hội.
-            </div>
-
-            <label class="field-label"><span class="eyebrow">Chế độ Mùa lễ hội (Preset)</span>
-              <select id="themePresetSelect" class="input">
-                <option value="christmas">🎄 Giáng Sinh - Noel</option>
-                <option value="tet">🧧 Tết Nguyên Đán - Tết</option>
-                <option value="default">🍎 Mặc định (Apple Sáng / Tối)</option>
-              </select>
-            </label>
-
-            <div class="space-y-2">
-              <div class="eyebrow">Ảnh nền 3 trang (Tải lên Drive hoặc dán URL)</div>
-              <div class="space-y-1.5">
-                <span class="text-xs t-2 font-medium block">1. Trang 1 — Sảnh lập phòng (index.html)</span>
-                <div class="flex gap-1.5">
-                  <input id="themeBg1Url" class="input flex-1 text-xs" placeholder="assets/christmas/bg-1.webp hoặc URL Drive" />
-                  <button id="btnUploadBg1" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền Trang 1 lên Google Drive">⬆ Ảnh</button>
-                  <input id="fileBg1" type="file" accept="image/*" class="hidden" />
-                </div>
-              </div>
-              <div class="space-y-1.5">
-                <span class="text-xs t-2 font-medium block">2. Trang 2 — Sàn đấu (game.html)</span>
-                <div class="flex gap-1.5">
-                  <input id="themeBg2Url" class="input flex-1 text-xs" placeholder="assets/christmas/bg-2.webp hoặc URL Drive" />
-                  <button id="btnUploadBg2" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền Trang 2 lên Google Drive">⬆ Ảnh</button>
-                  <input id="fileBg2" type="file" accept="image/*" class="hidden" />
-                </div>
-              </div>
-              <div class="space-y-1.5">
-                <span class="text-xs t-2 font-medium block">3. Trang 3 — Đấu trường (game.html Arena)</span>
-                <div class="flex gap-1.5">
-                  <input id="themeBg3Url" class="input flex-1 text-xs" placeholder="assets/christmas/bg-3.webp hoặc URL Drive" />
-                  <button id="btnUploadBg3" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền Trang 3 lên Google Drive">⬆ Ảnh</button>
-                  <input id="fileBg3" type="file" accept="image/*" class="hidden" />
-                </div>
-              </div>
-              <div class="space-y-1.5">
-                <span class="text-xs t-2 font-medium block">4. Màn hình dọc iPad/iPhone (Tùy chọn)</span>
-                <div class="flex gap-1.5">
-                  <input id="themeBgMobileUrl" class="input flex-1 text-xs" placeholder="assets/christmas/bg-mobile.webp" />
-                  <button id="btnUploadBgMobile" type="button" class="btn btn-ghost btn-sm shrink-0 !px-2.5" title="Tải ảnh nền màn hình dọc lên Google Drive">⬆ Ảnh</button>
-                  <input id="fileBgMobile" type="file" accept="image/*" class="hidden" />
-                </div>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2">
-              <label class="field-label"><span class="eyebrow">Kiểu viền</span>
-                <select id="themeBorderStyle" class="input text-xs">
-                  <option value="candy">🍬 Kẹo gậy Noel</option>
-                  <option value="gold">✨ Vàng lễ hội / Tết</option>
-                  <option value="solid">▬ Viền đơn chuẩn</option>
-                </select>
-              </label>
-              <label class="field-label"><span class="eyebrow">Hiệu ứng rơi</span>
-                <select id="themeEffect" class="input text-xs">
-                  <option value="snow">❄️ Tuyết rơi nhẹ</option>
-                  <option value="blossom">🌸 Hoa mai / đào</option>
-                  <option value="none">✕ Tắt hiệu ứng</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="space-y-1.5">
-              <span class="eyebrow block">Bảng màu Khung · Viền · Nút chính</span>
-              <div class="flex items-center justify-between gap-2 surface-sub rounded-xl p-2">
-                <label class="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                  <input id="themeCardBg" type="color" value="#FAF3E3" />
-                  <span>Nền thẻ</span>
-                </label>
-                <label class="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                  <input id="themeBorderColor" type="color" value="#D8B979" />
-                  <span>Viền</span>
-                </label>
-                <label class="flex items-center gap-1.5 text-xs font-medium cursor-pointer">
-                  <input id="themeAccentColor" type="color" value="#C81E2B" />
-                  <span>Nút đỏ</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="flex gap-2 pt-1">
-              <button id="btnSaveThemeStudio" type="button" class="btn btn-ok btn-sm flex-1">💾 Lưu &amp; Đồng bộ</button>
-              <button id="btnResetThemePreset" type="button" class="btn btn-ghost btn-sm" title="Khôi phục thông số gốc của preset đang chọn">Mặc định</button>
-            </div>
-            <div id="themeStudioStatus" class="t-3 text-[11px] leading-relaxed">Đồng bộ trực tiếp qua nhánh <code>shared_theme</code> (Firebase).</div>
-          </div>
-        </details>
+        <button id="btnOpenThemeStudio" type="button" class="btn btn-ghost btn-sm w-full justify-between ts-sidebar-toggle" aria-expanded="false">
+          <span class="flex items-center gap-1.5">
+            <span id="themeSideArrow" class="ts-toggle-arrow" aria-hidden="true">▸</span>
+            <span>🎨 Giao diện &amp; Mùa lễ hội</span>
+          </span>
+          <span id="themeSideActiveBadge" class="chip">Noel</span>
+        </button>
 
         <button id="btnBgmModal" type="button" class="btn btn-ghost btn-sm w-full justify-between">
           <span>🎵 Nhạc nền</span>
@@ -211,6 +125,273 @@
             <button id="btnSyncCloudTop" type="button" class="btn btn-ghost btn-sm">↻ Đồng bộ thủ công</button>
           </div>
         </div>
+
+        <!-- ===== STUDIO GIAO DIỆN & MÙA LỄ HỘI (4 KHỐI CÂN ĐỐI, RỘNG RÃI) ===== -->
+        <details id="themeStudioPanel" class="group theme-studio-panel mx-auto mb-6" style="max-width:980px">
+          <summary class="theme-studio-summary">
+            <span class="flex items-center gap-2">
+              <span>🎨 Giao diện &amp; Mùa lễ hội</span>
+              <span id="themeEditBadge" class="chip text-[11px]">✓ Đang áp dụng</span>
+            </span>
+            <span id="themeDriveStatus" class="text-xs font-semibold t-2">Drive: Chưa kết nối</span>
+          </summary>
+          <div class="theme-studio-body">
+            <div id="themeStudioLockNotice" class="topic-readonly-notice hidden">
+              🔒 Nhập Apps Script Web App URL &amp; Folder ID ở mục Google Drive (cột bên trái) để mở khóa chỉnh sửa Thư viện Theme.
+            </div>
+
+            <!-- KHỐI 1: THANH THƯ VIỆN THEME -->
+            <div class="ts-block">
+              <div class="ts-block-head">
+                <span class="eyebrow">1. Thư viện Theme đã lưu</span>
+                <span id="themeStudioStatus" class="text-[11px] t-3">Đồng bộ 2 chiều Google Drive &amp; Firebase</span>
+              </div>
+
+              <div id="themeLibraryList" class="theme-lib-pills"></div>
+
+              <div class="ts-toolbar-row">
+                <input id="themeNameInput" class="input ts-ctrl ts-name-input" maxlength="60" placeholder="Tên theme đang mở sửa…" />
+                <div class="ts-toolbar-actions">
+                  <button id="btnNewTheme" type="button" class="btn btn-ghost ts-ctrl">＋ Mới</button>
+                  <button id="btnCloneTheme" type="button" class="btn btn-ghost ts-ctrl" title="Nhân bản theme đang chọn">Nhân bản</button>
+                  <button id="btnApplyThemeActive" type="button" class="btn btn-gold ts-ctrl">Áp dụng</button>
+                  <button id="btnSaveThemeDrive" type="button" class="btn btn-ok ts-ctrl">💾 Lưu Drive</button>
+                  <button id="btnResetThemePreset" type="button" class="btn btn-ghost ts-ctrl" title="Khôi phục thông số gốc">↺ Khôi phục</button>
+                  <button id="btnDeleteTheme" type="button" class="btn btn-pass ts-ctrl hidden" title="Xóa theme tự tạo và dọn file Drive">🗑 Xóa</button>
+                </div>
+              </div>
+
+              <!-- Hộp tạo Theme mới (mở khi bấm ＋ Mới) -->
+              <div id="newThemeBox" class="hidden ts-new-box">
+                <input id="newThemeName" class="input ts-ctrl flex-1" maxlength="60" placeholder="Nhập tên theme mới (VD: Halloween, Gala, Noel 2027…)" />
+                <select id="newThemeBase" class="input ts-ctrl ts-new-base">
+                  <option value="blank">✨ Trống (Mặc định sạch)</option>
+                  <option value="christmas">🎄 Nền tảng Giáng Sinh</option>
+                  <option value="default">🍎 Nền tảng Apple</option>
+                </select>
+                <button id="btnConfirmNewTheme" type="button" class="btn btn-ok ts-ctrl">Tạo ngay</button>
+                <button id="btnCancelNewTheme" type="button" class="btn btn-ghost ts-ctrl">Hủy</button>
+              </div>
+            </div>
+
+            <!-- KHỐI 2: LƯỚI 4 ẢNH NỀN (2x2 ĐỀU NHAU) -->
+            <div class="ts-block">
+              <div class="ts-block-head">
+                <span class="eyebrow">2. Ảnh nền 4 màn hình (Tải lên chất lượng gốc 100% =s0)</span>
+              </div>
+              <div class="ts-bg-grid">
+                <!-- Ô 1: Trang 1 -->
+                <div class="ts-bg-card">
+                  <div id="bgPreview1" class="ts-bg-thumb">
+                    <span class="ts-bg-empty">Chưa có ảnh nền</span>
+                  </div>
+                  <div class="ts-bg-meta">
+                    <div class="ts-bg-title">Trang 1 — Sảnh lập phòng</div>
+                    <input id="themeBg1Url" class="input ts-ctrl ts-url-inp" placeholder="URL Drive hoặc assets/…" />
+                    <div class="ts-bg-actions">
+                      <button id="btnUploadBg1" type="button" class="btn btn-ok ts-ctrl flex-1">⬆ Tải ảnh gốc lên Drive</button>
+                      <button id="btnClearBg1" type="button" class="btn btn-ghost ts-ctrl">Xóa ảnh</button>
+                      <input id="fileBg1" type="file" accept="image/*" class="hidden" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Ô 2: Trang 2 -->
+                <div class="ts-bg-card">
+                  <div id="bgPreview2" class="ts-bg-thumb">
+                    <span class="ts-bg-empty">Chưa có ảnh nền</span>
+                  </div>
+                  <div class="ts-bg-meta">
+                    <div class="ts-bg-title">Trang 2 — Sàn đấu</div>
+                    <input id="themeBg2Url" class="input ts-ctrl ts-url-inp" placeholder="URL Drive hoặc assets/…" />
+                    <div class="ts-bg-actions">
+                      <button id="btnUploadBg2" type="button" class="btn btn-ok ts-ctrl flex-1">⬆ Tải ảnh gốc lên Drive</button>
+                      <button id="btnClearBg2" type="button" class="btn btn-ghost ts-ctrl">Xóa ảnh</button>
+                      <input id="fileBg2" type="file" accept="image/*" class="hidden" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Ô 3: Trang 3 -->
+                <div class="ts-bg-card">
+                  <div id="bgPreview3" class="ts-bg-thumb">
+                    <span class="ts-bg-empty">Chưa có ảnh nền</span>
+                  </div>
+                  <div class="ts-bg-meta">
+                    <div class="ts-bg-title">Trang 3 — Đấu trường</div>
+                    <input id="themeBg3Url" class="input ts-ctrl ts-url-inp" placeholder="URL Drive hoặc assets/…" />
+                    <div class="ts-bg-actions">
+                      <button id="btnUploadBg3" type="button" class="btn btn-ok ts-ctrl flex-1">⬆ Tải ảnh gốc lên Drive</button>
+                      <button id="btnClearBg3" type="button" class="btn btn-ghost ts-ctrl">Xóa ảnh</button>
+                      <input id="fileBg3" type="file" accept="image/*" class="hidden" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Ô 4: Màn hình dọc -->
+                <div class="ts-bg-card">
+                  <div id="bgPreviewMobile" class="ts-bg-thumb">
+                    <span class="ts-bg-empty">Chưa có ảnh nền dọc</span>
+                  </div>
+                  <div class="ts-bg-meta">
+                    <div class="ts-bg-title">Màn hình dọc — iPad / iPhone</div>
+                    <input id="themeBgMobileUrl" class="input ts-ctrl ts-url-inp" placeholder="URL Drive hoặc assets/…" />
+                    <div class="ts-bg-actions">
+                      <button id="btnUploadBgMobile" type="button" class="btn btn-ok ts-ctrl flex-1">⬆ Tải ảnh gốc lên Drive</button>
+                      <button id="btnClearBgMobile" type="button" class="btn btn-ghost ts-ctrl">Xóa ảnh</button>
+                      <input id="fileBgMobile" type="file" accept="image/*" class="hidden" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- KHỐI 3: MÀU SẮC / GRADIENT KIỂU PHOTOSHOP & HIỆU ỨNG RƠI -->
+            <div class="ts-block">
+              <div class="ts-block-head">
+                <span class="eyebrow">3. Màu sắc, Gradient &amp; Hiệu ứng rơi</span>
+                <span class="text-[11px] t-3">Bấm vào từng ô màu để chỉnh Đơn sắc hoặc Chuyển sắc</span>
+              </div>
+
+              <!-- 4 ô chọn màu tương ứng -->
+              <div id="tsColorCards" class="ts-color-cards">
+                <button type="button" class="ts-swatch-card" data-color-key="cardStyle">
+                  <span class="ts-swatch-chip" id="swatchPreview_cardStyle"></span>
+                  <span class="ts-swatch-meta">
+                    <span class="ts-swatch-title">Nền thẻ</span>
+                    <span class="ts-swatch-sub font-num" id="swatchSub_cardStyle">#FBF6EC</span>
+                  </span>
+                </button>
+
+                <button type="button" class="ts-swatch-card" data-color-key="borderStyle">
+                  <span class="ts-swatch-chip" id="swatchPreview_borderStyle"></span>
+                  <span class="ts-swatch-meta">
+                    <span class="ts-swatch-title">Viền khung</span>
+                    <span class="ts-swatch-sub font-num" id="swatchSub_borderStyle">#D8B979</span>
+                  </span>
+                </button>
+
+                <button type="button" class="ts-swatch-card" data-color-key="textStyle">
+                  <span class="ts-swatch-chip" id="swatchPreview_textStyle"></span>
+                  <span class="ts-swatch-meta">
+                    <span class="ts-swatch-title">Chữ nội dung</span>
+                    <span class="ts-swatch-sub font-num" id="swatchSub_textStyle">#2C1E14</span>
+                  </span>
+                </button>
+
+                <button type="button" class="ts-swatch-card" data-color-key="titleStyle">
+                  <span class="ts-swatch-chip" id="swatchPreview_titleStyle"></span>
+                  <span class="ts-swatch-meta">
+                    <span class="ts-swatch-title">Chữ “The Floor” Trang 1</span>
+                    <span class="ts-swatch-sub font-num" id="swatchSub_titleStyle">#2C1E14</span>
+                  </span>
+                </button>
+
+                <button type="button" class="ts-swatch-card" data-color-key="accentStyle">
+                  <span class="ts-swatch-chip" id="swatchPreview_accentStyle"></span>
+                  <span class="ts-swatch-meta">
+                    <span class="ts-swatch-title">Nút nổi bật</span>
+                    <span class="ts-swatch-sub font-num" id="swatchSub_accentStyle">#B91C2C</span>
+                  </span>
+                </button>
+              </div>
+
+              <!-- Bảng tinh chỉnh Màu & Gradient kiểu Photoshop (mở khi bấm vào 1 trong 4 ô trên) -->
+              <div id="tsColorInspector" class="ts-color-inspector hidden">
+                <div class="ts-ci-head">
+                  <span id="tsCiTargetTitle" class="ts-ci-title">Đang chỉnh: Nền thẻ</span>
+                  <div class="ts-ci-head-right">
+                    <div id="tsCiModeSeg" class="seg ts-ci-mode-seg" role="group" aria-label="Chế độ màu">
+                      <button type="button" data-color-mode="solid" class="active">Đơn sắc</button>
+                      <button type="button" data-color-mode="gradient">Chuyển sắc</button>
+                    </div>
+                    <button id="btnTsCiClose" type="button" class="btn btn-ghost ts-ci-close" title="Thu gọn bảng màu">✕</button>
+                  </div>
+                </div>
+
+                <!-- Chế độ Đơn sắc (Solid) -->
+                <div id="tsSolidPane" class="ts-ci-pane">
+                  <div class="ts-ci-solid-row">
+                    <label class="ts-color-box ts-ctrl ts-ci-picker-box">
+                      <input id="tsSolidColor" type="color" value="#FBF6EC" class="ts-color-swatch" />
+                      <span class="text-xs font-semibold t-2">Chọn màu</span>
+                    </label>
+                    <input id="tsSolidHex" type="text" maxlength="7" value="#FBF6EC" placeholder="#RRGGBB" class="input ts-ctrl ts-ci-hex font-num" />
+                    <div id="tsQuickSwatches" class="ts-quick-swatches" role="group" aria-label="Màu mẫu nhanh">
+                      <button type="button" class="ts-qswatch" data-qhex="#FBF6EC" style="background:#FBF6EC" title="Kem ấm #FBF6EC"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#FFFFFF" style="background:#FFFFFF" title="Trắng #FFFFFF"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#181D24" style="background:#181D24" title="Tối Apple #181D24"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#0E241E" style="background:#0E241E" title="Xanh thông #0E241E"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#B91C2C" style="background:#B91C2C" title="Đỏ lễ hội #B91C2C"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#D8B979" style="background:#D8B979" title="Vàng champagne #D8B979"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#0071E3" style="background:#0071E3" title="Xanh Apple #0071E3"></button>
+                      <button type="button" class="ts-qswatch" data-qhex="#2C1E14" style="background:#2C1E14" title="Nâu trầm #2C1E14"></button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Chế độ Chuyển sắc (Gradient) -->
+                <div id="tsGradPane" class="ts-ci-pane hidden">
+                  <div id="tsGradPreviewBar" class="ts-grad-preview-bar"></div>
+                  <div class="ts-ci-grad-stops">
+                    <div class="ts-ci-stop">
+                      <span class="ts-field-title">Màu 1</span>
+                      <div class="ts-ci-stop-inputs">
+                        <input id="tsGradC1" type="color" value="#FBF6EC" class="ts-color-swatch ts-swatch-lg" />
+                        <input id="tsGradHex1" type="text" maxlength="7" value="#FBF6EC" placeholder="#RRGGBB" class="input ts-ctrl ts-ci-hex font-num flex-1" />
+                      </div>
+                    </div>
+                    <button id="btnTsGradSwap" type="button" class="btn btn-ghost ts-ctrl ts-grad-swap" title="Đảo chiều 2 màu">⇄</button>
+                    <div class="ts-ci-stop">
+                      <span class="ts-field-title">Màu 2</span>
+                      <div class="ts-ci-stop-inputs">
+                        <input id="tsGradC2" type="color" value="#D8B979" class="ts-color-swatch ts-swatch-lg" />
+                        <input id="tsGradHex2" type="text" maxlength="7" value="#D8B979" placeholder="#RRGGBB" class="input ts-ctrl ts-ci-hex font-num flex-1" />
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ts-ci-angle-row">
+                    <span class="ts-field-title">Góc xoay</span>
+                    <input id="tsGradAngleRange" type="range" min="0" max="360" step="1" value="135" class="vol-range flex-1" />
+                    <span id="tsGradAngleVal" class="ts-ci-angle-val font-num">135°</span>
+                    <div class="ts-angle-presets">
+                      <button type="button" class="btn btn-ghost ts-ang-btn" data-qangle="0">0°</button>
+                      <button type="button" class="btn btn-ghost ts-ang-btn" data-qangle="90">90°</button>
+                      <button type="button" class="btn btn-ghost ts-ang-btn" data-qangle="135">135°</button>
+                      <button type="button" class="btn btn-ghost ts-ang-btn" data-qangle="180">180°</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Hiệu ứng rơi: Tắt | Tuyết rơi | Emoji rơi -->
+              <div class="ts-effect-row">
+                <label class="ts-color-field ts-effect-select-wrap">
+                  <span class="ts-field-title">Hiệu ứng rơi</span>
+                  <select id="themeEffect" class="input ts-ctrl">
+                    <option value="none">✕ Tắt</option>
+                    <option value="snow">❄️ Tuyết rơi</option>
+                    <option value="emoji">✨ Emoji rơi</option>
+                  </select>
+                </label>
+
+                <div id="themeEmojiBox" class="ts-emoji-box hidden">
+                  <label class="ts-color-field flex-1">
+                    <span class="ts-field-title">Nhập Emoji rơi (1 hoặc nhiều emoji bất kỳ)</span>
+                    <input id="themeEffectEmojis" type="text" maxlength="80" value="❄️ 🎄 ⭐" placeholder="VD: 🎄 ❄️ ⭐ 🎁" class="input ts-ctrl" />
+                  </label>
+                  <div class="ts-emoji-presets" role="group" aria-label="Bộ emoji mẫu nhanh">
+                    <button type="button" class="btn btn-ghost ts-emoji-preset-btn" data-emoji-preset="❄️ 🎄 ⭐ 🎁">❄️ 🎄 ⭐ 🎁</button>
+                    <button type="button" class="btn btn-ghost ts-emoji-preset-btn" data-emoji-preset="🌸 🌼 ✨ 🎀">🌸 🌼 ✨ 🎀</button>
+                    <button type="button" class="btn btn-ghost ts-emoji-preset-btn" data-emoji-preset="🎉 🎊 ⭐ 🎈">🎉 🎊 ⭐ 🎈</button>
+                    <button type="button" class="btn btn-ghost ts-emoji-preset-btn" data-emoji-preset="🍁 🍂 🎃 ⭐">🍁 🍂 🎃 ⭐</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </details>
 
         <div id="emptyState" class="text-center py-24 anim-zoom-center">
           <div class="text-6xl mb-4">🖼️</div>
@@ -352,8 +533,8 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script type="module" src="js/theme.js?v=auth17"></script>
-  <script type="module" src="js/cms.js?v=cms2"></script>
+  <script type="module" src="js/theme.js?v=lib2"></script>
+  <script type="module" src="js/cms.js?v=lib2"></script>
   <script type="module">
     const isLowPower = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2)
       || /SmartTV|Tizen|Web0S|BRAVIA|AFT|CrKey|HbbTV/i.test(navigator.userAgent || '')
@@ -400,6 +581,10 @@
 
     function navigateSmoothly(url) {
       if (!url) return;
+      if (typeof window.__theFloorNavigate === 'function') {
+        window.__theFloorNavigate(url);
+        return;
+      }
       document.body.classList.add('page-exiting');
       setTimeout(() => { window.location.href = url; }, 180);
     }

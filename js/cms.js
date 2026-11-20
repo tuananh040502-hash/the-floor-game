@@ -3,10 +3,13 @@ import {
   createSharedTopicsSync, sanitizeCloudTopic, getTopicCoverThumb, normalizeCoverUrl, toThumbUrl400,
   normalizeScriptUrl, normalizeFolderId, extractTopicDriveFileIds, extractDriveId,
   canIdentityModifyTopic, getDeletedTopicIds, markTopicDeleted,
-  THEME_PRESET_DEFAULTS, sanitizeCloudThemeConfig, readThemeConfigCache, writeThemeConfigCache,
-  createSharedThemeSync, canIdentityModifyTheme, normalizeThemeAssetUrl,
+  THEME_PRESET_DEFAULTS, BUILTIN_THEMES, sanitizeThemeProfile, sanitizeThemeLibrary,
+  sanitizeColorStyle, colorStyleToCss,
+  extractThemeDriveFileIds, mergeThemeLibraries, markThemeDeleted,
+  readThemeLibraryCache, writeThemeLibraryCache, createSharedThemeLibrarySync,
+  canIdentityModifyThemeProfile, normalizeThemeAssetUrl,
 } from './transport.js?v=bgm1';
-import { applyThemeConfig } from './theme.js?v=auth17';
+import { applyThemeLibrary } from './theme.js?v=lib2';
 import {
   TOPICS_KEY, loadCustom, newId, loadDrive, saveDrive,
   deleteTopicAudioIDB,
@@ -909,119 +912,515 @@ function saveDriveCfg() {
   }
   render();
   renderThemeStudio();
+  if (url && folderId) {
+    loadThemesFromDrive();
+  }
   if (bgm) bgm.refreshDriveIdentity();
   toast('Đã lưu cấu hình Google Drive.');
 }
 
-// ---------- Seasonal Theme Studio (Giao diện & Mùa lễ hội: Noel / Tết / Mặc định) ----------
-let themeStudioCfg = readThemeConfigCache();
-let themeStudioSync = null;
+// ---------- Thư viện Theme (Google Drive thefloor_themes.json + Firebase shared_themes) ----------
+let themeLibrary = readThemeLibraryCache();
+let selectedThemeId = themeLibrary.activeThemeId || 'builtin_christmas';
+let themeLibrarySync = null;
+let driveThemesLoadedForKey = '';
+let activeColorKey = null;
 
-function canEditThemeStudio() {
+const COLOR_STYLE_KEYS = ['cardStyle', 'borderStyle', 'textStyle', 'titleStyle', 'accentStyle'];
+const COLOR_STYLE_LABELS = {
+  cardStyle: 'Nền thẻ',
+  borderStyle: 'Viền khung',
+  textStyle: 'Chữ nội dung',
+  titleStyle: 'Chữ “The Floor” Trang 1',
+  accentStyle: 'Nút nổi bật',
+};
+
+function syncThemeStudioToggleUi() {
+  const panel = $('themeStudioPanel');
+  const btn = $('btnOpenThemeStudio');
+  if (!panel || !btn) return;
+  const isOpen = Boolean(panel.open);
+  btn.classList.toggle('is-open', isOpen);
+  btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+}
+
+function getSelectedTheme() {
+  if (!themeLibrary || !themeLibrary.themes) themeLibrary = readThemeLibraryCache();
+  if (!themeLibrary.themes[selectedThemeId]) {
+    selectedThemeId = themeLibrary.activeThemeId && themeLibrary.themes[themeLibrary.activeThemeId]
+      ? themeLibrary.activeThemeId
+      : 'builtin_christmas';
+  }
+  return themeLibrary.themes[selectedThemeId] || themeLibrary.themes.builtin_christmas;
+}
+
+function canEditSelectedTheme(theme = getSelectedTheme()) {
   if (!hasValidDriveIdentity()) return false;
-  return canIdentityModifyTheme(themeStudioCfg, getCurrentDriveIdentity());
+  return canIdentityModifyThemeProfile(theme, getCurrentDriveIdentity());
 }
 
-function renderThemeStudio() {
-  const unlocked = canEditThemeStudio();
-  const lockNotice = $('themeStudioLockNotice');
-  if (lockNotice) lockNotice.classList.toggle('hidden', unlocked);
+function setThemeDriveStatus(text, isError = false) {
+  const el = $('themeDriveStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isError ? 'var(--red)' : '';
+}
 
-  const cfg = themeStudioCfg || THEME_PRESET_DEFAULTS.christmas;
-  const setValIfNotFocused = (id, val) => {
-    const el = $(id);
-    if (el && document.activeElement !== el) el.value = val || '';
-  };
-  setValIfNotFocused('themePresetSelect', cfg.preset || 'christmas');
-  setValIfNotFocused('themeBg1Url', cfg.bg1Url || '');
-  setValIfNotFocused('themeBg2Url', cfg.bg2Url || '');
-  setValIfNotFocused('themeBg3Url', cfg.bg3Url || '');
-  setValIfNotFocused('themeBgMobileUrl', cfg.bgMobileUrl || '');
-  setValIfNotFocused('themeBorderStyle', cfg.borderStyle || 'candy');
-  setValIfNotFocused('themeEffect', cfg.effect || 'snow');
-  setValIfNotFocused('themeCardBg', cfg.cardBg || '#FAF3E3');
-  setValIfNotFocused('themeBorderColor', cfg.borderColor || '#D8B979');
-  setValIfNotFocused('themeAccentColor', cfg.accentColor || '#C81E2B');
-
-  [
-    'themePresetSelect', 'themeBg1Url', 'themeBg2Url', 'themeBg3Url', 'themeBgMobileUrl',
-    'btnUploadBg1', 'btnUploadBg2', 'btnUploadBg3', 'btnUploadBgMobile',
-    'themeBorderStyle', 'themeEffect', 'themeCardBg', 'themeBorderColor', 'themeAccentColor',
-    'btnSaveThemeStudio', 'btnResetThemePreset',
-  ].forEach((id) => {
-    const el = $(id);
-    if (el) el.disabled = !unlocked;
+function collectUnusedDriveFileIds(candidateIds, excludeThemeId = '') {
+  const stillUsed = new Set();
+  Object.values(themeLibrary.themes || {}).forEach((th) => {
+    if (!th || th.id === excludeThemeId) return;
+    extractThemeDriveFileIds(th).forEach((fid) => stillUsed.add(fid));
   });
+  return [...new Set((candidateIds || []).filter((fid) => fid && !stillUsed.has(fid)))];
 }
 
-function collectThemeStudioDraft() {
-  const preset = ($('themePresetSelect') && $('themePresetSelect').value) || 'christmas';
-  const def = THEME_PRESET_DEFAULTS[preset] || THEME_PRESET_DEFAULTS.christmas;
-  const rawBg1 = $('themeBg1Url') ? $('themeBg1Url').value.trim() : def.bg1Url;
-  const rawBg2 = $('themeBg2Url') ? $('themeBg2Url').value.trim() : def.bg2Url;
-  const rawBg3 = $('themeBg3Url') ? $('themeBg3Url').value.trim() : def.bg3Url;
-  const rawBgMob = $('themeBgMobileUrl') ? $('themeBgMobileUrl').value.trim() : def.bgMobileUrl;
-
-  const bg1Url = normalizeThemeAssetUrl(rawBg1, def.bg1Url);
-  const bg2Url = normalizeThemeAssetUrl(rawBg2, def.bg2Url);
-  const bg3Url = normalizeThemeAssetUrl(rawBg3, def.bg3Url);
-  const bgMobileUrl = normalizeThemeAssetUrl(rawBgMob, def.bgMobileUrl);
-
-  if ($('themeBg1Url') && document.activeElement !== $('themeBg1Url')) $('themeBg1Url').value = bg1Url;
-  if ($('themeBg2Url') && document.activeElement !== $('themeBg2Url')) $('themeBg2Url').value = bg2Url;
-  if ($('themeBg3Url') && document.activeElement !== $('themeBg3Url')) $('themeBg3Url').value = bg3Url;
-  if ($('themeBgMobileUrl') && document.activeElement !== $('themeBgMobileUrl')) $('themeBgMobileUrl').value = bgMobileUrl;
-
-  return sanitizeCloudThemeConfig({
-    ...themeStudioCfg,
-    preset,
-    bg1Url,
-    bg2Url,
-    bg3Url,
-    bgMobileUrl,
-    borderStyle: $('themeBorderStyle') ? $('themeBorderStyle').value : def.borderStyle,
-    effect: $('themeEffect') ? $('themeEffect').value : def.effect,
-    cardBg: $('themeCardBg') ? $('themeCardBg').value : def.cardBg,
-    borderColor: $('themeBorderColor') ? $('themeBorderColor').value : def.borderColor,
-    accentColor: $('themeAccentColor') ? $('themeAccentColor').value : def.accentColor,
-  });
+async function trashDriveFilesSafe(fileIds) {
+  if (!Array.isArray(fileIds) || !fileIds.length) return;
+  const { scriptUrl, folderId } = getCurrentDriveIdentity();
+  if (!scriptUrl || !folderId || !SCRIPT_URL_RE.test(scriptUrl)) return;
+  try {
+    await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'deleteTopicFolder', folderId, fileIds }),
+    });
+  } catch (err) {
+    console.warn('Không xóa được file thừa của theme trên Drive:', err);
+  }
 }
 
-async function saveThemeStudioToCloud(draftCfg, msg = '🎨 Đã lưu & đồng bộ Giao diện lễ hội lên Cloud.') {
-  if (!canEditThemeStudio()) {
-    if ($('drivePanel')) $('drivePanel').open = true;
-    toast('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để lưu giao diện lễ hội.', true);
-    renderThemeStudio();
+async function parseAppsScriptJson(res, actionName) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 80);
+    throw new Error(`Phản hồi không phải JSON khi gọi ${actionName}${snippet ? ` (${snippet})` : ''}`);
+  }
+}
+
+function formatDriveThemeError(prefix, err) {
+  const raw = (err && err.message) ? String(err.message).trim() : String(err || 'Lỗi không xác định');
+  const needsUpgrade = /chưa hỗ trợ|base64|invalid argument|không phải json|từ chối|unexpected token|405/i.test(raw);
+  const shortMsg = raw.length > 72 ? `${raw.slice(0, 72)}…` : raw;
+  return needsUpgrade
+    ? `${prefix}: ${shortMsg} — Dán Code.gs mới & Triển khai phiên bản mới`
+    : `${prefix}: ${shortMsg}`;
+}
+
+async function saveThemesToDrive(lib) {
+  const { scriptUrl, folderId } = getCurrentDriveIdentity();
+  if (!scriptUrl || !folderId || !SCRIPT_URL_RE.test(scriptUrl)) {
+    setThemeDriveStatus('Drive: Chưa cấu hình');
     return false;
   }
-  const identity = getCurrentDriveIdentity();
-  const clean = sanitizeCloudThemeConfig({
-    ...draftCfg,
-    ownerScriptUrl: identity.scriptUrl,
-    ownerFolderId: identity.folderId,
-    updatedAt: Date.now(),
-  });
-  themeStudioCfg = writeThemeConfigCache(clean);
-  applyThemeConfig(themeStudioCfg, { switchActiveTheme: true });
+  setThemeDriveStatus('Đang lưu lên Drive…');
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'saveThemes',
+        folderId,
+        data: JSON.stringify(sanitizeThemeLibrary(lib), null, 2),
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await parseAppsScriptJson(res, 'saveThemes');
+    if (!json || json.ok === false) {
+      throw new Error((json && json.error) || 'Apps Script từ chối saveThemes');
+    }
+    if (json.saved !== true) {
+      throw new Error('Apps Script bản cũ chưa hỗ trợ saveThemes');
+    }
+    setThemeDriveStatus('Đã lưu vào Drive ✓');
+    return true;
+  } catch (err) {
+    setThemeDriveStatus(formatDriveThemeError('Lỗi lưu Drive', err), true);
+    console.warn('saveThemesToDrive lỗi:', err);
+    return false;
+  }
+}
+
+async function loadThemesFromDrive() {
+  const { scriptUrl, folderId } = getCurrentDriveIdentity();
+  if (!scriptUrl || !folderId || !SCRIPT_URL_RE.test(scriptUrl)) {
+    setThemeDriveStatus('Drive: Chưa cấu hình');
+    return false;
+  }
+  const key = `${scriptUrl}|${folderId}`;
+  setThemeDriveStatus('Đang đọc từ Drive…');
+  try {
+    let json = null;
+    let getErr = null;
+
+    // Ưu tiên GET (?folderId=...&action=loadThemes) để phản hồi nhanh qua Apps Script
+    try {
+      const sep = scriptUrl.includes('?') ? '&' : '?';
+      const getUrl = `${scriptUrl}${sep}folderId=${encodeURIComponent(folderId)}&action=loadThemes`;
+      const resGet = await fetch(getUrl, { method: 'GET' });
+      if (!resGet.ok) throw new Error(`HTTP ${resGet.status}`);
+      const parsedGet = await parseAppsScriptJson(resGet, 'loadThemes (GET)');
+      if (!parsedGet || parsedGet.ok === false) {
+        throw new Error((parsedGet && parsedGet.error) || 'Apps Script lỗi loadThemes');
+      }
+      if ('found' in parsedGet) {
+        json = parsedGet;
+      } else {
+        getErr = new Error('Apps Script bản cũ chưa hỗ trợ action loadThemes');
+      }
+    } catch (err) {
+      getErr = err;
+    }
+
+    // Tự động fallback sang POST nếu GET chưa được hỗ trợ hoặc bị lỗi
+    if (!json) {
+      const resPost = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'loadThemes', folderId }),
+      });
+      if (!resPost.ok) throw new Error(`HTTP ${resPost.status}`);
+      const parsedPost = await parseAppsScriptJson(resPost, 'loadThemes (POST)');
+      if (!parsedPost || parsedPost.ok === false) {
+        throw new Error((parsedPost && parsedPost.error) || (getErr && getErr.message) || 'Apps Script lỗi loadThemes');
+      }
+      if (!('found' in parsedPost)) {
+        throw new Error('Apps Script bản cũ chưa hỗ trợ loadThemes');
+      }
+      json = parsedPost;
+    }
+
+    driveThemesLoadedForKey = key;
+    if (json.found && json.data) {
+      const parsed = typeof json.data === 'string' ? JSON.parse(json.data) : json.data;
+      const merged = mergeThemeLibraries(themeLibrary, parsed);
+      themeLibrary = writeThemeLibraryCache(merged);
+      applyThemeLibrary(themeLibrary);
+      if (themeLibrarySync) {
+        themeLibrarySync.putLibrary(themeLibrary).catch(() => {});
+      }
+      renderThemeStudio();
+      setThemeDriveStatus('Đã nạp từ Drive ✓');
+      return true;
+    }
+    setThemeDriveStatus('Drive sẵn sàng (chưa có file)');
+    return false;
+  } catch (err) {
+    setThemeDriveStatus(formatDriveThemeError('Chưa đồng bộ Drive', err), true);
+    console.warn('loadThemesFromDrive lỗi:', err);
+    return false;
+  }
+}
+
+async function persistThemeLibrary(nextLib, { switchActive = false, msg = '', syncDrive = true } = {}) {
+  const clean = sanitizeThemeLibrary(nextLib);
+  clean.updatedAt = Date.now();
+  themeLibrary = writeThemeLibraryCache(clean);
+  applyThemeLibrary(themeLibrary, { switchActiveTheme: switchActive });
   renderThemeStudio();
 
-  if (themeStudioSync) {
-    const ok = await themeStudioSync.putTheme(themeStudioCfg, identity);
-    if (!ok) {
-      toast('Không thể ghi cấu hình giao diện lên Cloud (kiểm tra quyền Drive).', true);
-      return false;
-    }
+  if (themeLibrarySync) {
+    await themeLibrarySync.putLibrary(themeLibrary);
   }
-  toast(msg);
+  if (syncDrive && hasValidDriveIdentity()) {
+    await saveThemesToDrive(themeLibrary);
+  }
+  if (msg) toast(msg);
   return true;
 }
 
-async function uploadThemeBgSlot(slotKey, fileInputId, urlInputId, label) {
+function renderBgThumbPreview(boxId, url, emptyText) {
+  const box = $(boxId);
+  if (!box) return;
+  const clean = (url || '').trim();
+  if (clean) {
+    box.style.backgroundImage = `url("${clean}")`;
+    box.classList.add('has-img');
+    box.innerHTML = '';
+  } else {
+    box.style.backgroundImage = 'none';
+    box.classList.remove('has-img');
+    box.innerHTML = `<span class="ts-bg-empty">${esc(emptyText)}</span>`;
+  }
+}
+
+function renderColorControls(theme, editable) {
+  const def = BUILTIN_THEMES[theme.id]
+    || THEME_PRESET_DEFAULTS[theme.basePreset]
+    || THEME_PRESET_DEFAULTS.default;
+
+  COLOR_STYLE_KEYS.forEach((key) => {
+    const st = sanitizeColorStyle(theme[key], def[key]);
+    const chip = $(`swatchPreview_${key}`);
+    const sub = $(`swatchSub_${key}`);
+    const card = document.querySelector(`#tsColorCards [data-color-key="${key}"]`);
+    if (chip) chip.style.background = colorStyleToCss(st, def[key].c1);
+    if (sub) {
+      sub.textContent = st.mode === 'gradient'
+        ? `Gradient ${st.angle}°`
+        : st.c1;
+    }
+    if (card) {
+      card.classList.toggle('is-active', activeColorKey === key);
+      card.disabled = !editable;
+    }
+  });
+
+  const insp = $('tsColorInspector');
+  if (!insp) return;
+  if (!activeColorKey || !COLOR_STYLE_KEYS.includes(activeColorKey)) {
+    insp.classList.add('hidden');
+    return;
+  }
+  insp.classList.remove('hidden');
+
+  const curStyle = sanitizeColorStyle(theme[activeColorKey], def[activeColorKey]);
+  const isGrad = curStyle.mode === 'gradient';
+  if ($('tsCiTargetTitle')) {
+    $('tsCiTargetTitle').textContent = `Đang chỉnh: ${COLOR_STYLE_LABELS[activeColorKey] || activeColorKey}`;
+  }
+  document.querySelectorAll('#tsCiModeSeg [data-color-mode]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.colorMode === curStyle.mode);
+    b.disabled = !editable;
+  });
+  if ($('tsSolidPane')) $('tsSolidPane').classList.toggle('hidden', isGrad);
+  if ($('tsGradPane')) $('tsGradPane').classList.toggle('hidden', !isGrad);
+
+  const setIfIdle = (id, val) => {
+    const el = $(id);
+    if (!el) return;
+    if (document.activeElement !== el) el.value = val;
+    el.disabled = !editable;
+  };
+  setIfIdle('tsSolidColor', curStyle.c1);
+  setIfIdle('tsSolidHex', curStyle.c1);
+  setIfIdle('tsGradC1', curStyle.c1);
+  setIfIdle('tsGradHex1', curStyle.c1);
+  setIfIdle('tsGradC2', curStyle.c2);
+  setIfIdle('tsGradHex2', curStyle.c2);
+  setIfIdle('tsGradAngleRange', String(curStyle.angle));
+  if ($('tsGradAngleVal')) $('tsGradAngleVal').textContent = `${curStyle.angle}°`;
+  if ($('tsGradPreviewBar')) {
+    $('tsGradPreviewBar').style.background = `linear-gradient(${curStyle.angle}deg, ${curStyle.c1}, ${curStyle.c2})`;
+  }
+  if ($('btnTsGradSwap')) $('btnTsGradSwap').disabled = !editable;
+  document.querySelectorAll('#tsQuickSwatches .ts-qswatch, .ts-angle-presets .ts-ang-btn').forEach((b) => {
+    b.disabled = !editable;
+  });
+}
+
+function updateActiveColorStyle(patch, commit = false) {
+  if (!activeColorKey || !COLOR_STYLE_KEYS.includes(activeColorKey)) return;
+  const curTheme = getSelectedTheme();
+  if (!curTheme || !canEditSelectedTheme(curTheme)) return;
+  const def = BUILTIN_THEMES[curTheme.id]
+    || THEME_PRESET_DEFAULTS[curTheme.basePreset]
+    || THEME_PRESET_DEFAULTS.default;
+  const prev = sanitizeColorStyle(curTheme[activeColorKey], def[activeColorKey]);
+  const nextStyle = sanitizeColorStyle({ ...prev, ...patch }, prev);
+  curTheme[activeColorKey] = nextStyle;
+  if (activeColorKey === 'cardStyle') curTheme.cardBg = nextStyle.c1;
+  if (activeColorKey === 'borderStyle') curTheme.borderColor = nextStyle.c1;
+  if (activeColorKey === 'accentStyle') curTheme.accentColor = nextStyle.c1;
+
+  renderColorControls(curTheme, true);
+
+  if (commit) {
+    saveSelectedThemeEdits('🎨 Đã lưu bảng màu theme lên Drive & Cloud ✓');
+  } else if (themeLibrary.activeThemeId === curTheme.id) {
+    applyThemeLibrary(themeLibrary, { switchActiveTheme: false });
+  }
+}
+
+function renderThemeStudio() {
+  const hasDrive = hasValidDriveIdentity();
+  const lockNotice = $('themeStudioLockNotice');
+  if (lockNotice) lockNotice.classList.toggle('hidden', hasDrive);
+
+  const theme = getSelectedTheme();
+  const activeGlobal = themeLibrary.themes[themeLibrary.activeThemeId] || theme;
+  const editable = canEditSelectedTheme(theme);
+  const isActive = themeLibrary.activeThemeId === theme.id;
+
+  if ($('themeSideActiveBadge')) {
+    $('themeSideActiveBadge').textContent = (activeGlobal && activeGlobal.name) ? activeGlobal.name.slice(0, 14) : 'Noel';
+  }
+  syncThemeStudioToggleUi();
+
+  // Render danh sách thẻ Theme đã lưu
+  const libList = $('themeLibraryList');
+  if (libList) {
+    libList.innerHTML = '';
+    const ordered = [
+      ...['builtin_christmas', 'builtin_default']
+        .map((id) => themeLibrary.themes[id])
+        .filter(Boolean),
+      ...Object.values(themeLibrary.themes)
+        .filter((t) => t && !t.isBuiltIn)
+        .sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0)),
+    ];
+    const frag = document.createDocumentFragment();
+    ordered.forEach((th) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.themePickId = th.id;
+      const activeTag = th.id === themeLibrary.activeThemeId;
+      const editingTag = th.id === theme.id;
+      btn.className = `theme-lib-pill${editingTag ? ' is-editing' : ''}${activeTag ? ' is-active-theme' : ''}`;
+      const dotBg = th.cardStyle ? colorStyleToCss(th.cardStyle, th.accentColor || '#B91C2C') : (th.accentColor || '#B91C2C');
+      const dotBorder = (th.borderStyle && th.borderStyle.c1) || th.borderColor || '#D8B979';
+      btn.innerHTML = `
+        <span class="theme-lib-dot" style="background:${esc(dotBg)};border-color:${esc(dotBorder)}"></span>
+        <span class="theme-lib-name">${esc(th.name)}</span>
+        ${activeTag ? '<span class="theme-lib-live">Đang dùng</span>' : ''}`;
+      frag.appendChild(btn);
+    });
+    libList.appendChild(frag);
+  }
+
+  if ($('themeEditBadge')) {
+    $('themeEditBadge').textContent = isActive
+      ? '✓ Đang áp dụng'
+      : (theme.isBuiltIn ? 'Theme gốc' : 'Tự tạo');
+  }
+
+  const setValIfNotFocused = (id, val) => {
+    const el = $(id);
+    if (el && document.activeElement !== el) el.value = val ?? '';
+  };
+  setValIfNotFocused('themeNameInput', theme.name || '');
+  setValIfNotFocused('themeBg1Url', theme.bg1Url || '');
+  setValIfNotFocused('themeBg2Url', theme.bg2Url || '');
+  setValIfNotFocused('themeBg3Url', theme.bg3Url || '');
+  setValIfNotFocused('themeBgMobileUrl', theme.bgMobileUrl || '');
+  const effVal = theme.effect === 'snow' || theme.effect === 'emoji' ? theme.effect : 'none';
+  setValIfNotFocused('themeEffect', effVal);
+  setValIfNotFocused('themeEffectEmojis', theme.effectEmojis || '❄️ 🎄 ⭐');
+  if ($('themeEmojiBox')) {
+    $('themeEmojiBox').classList.toggle('hidden', effVal !== 'emoji');
+  }
+
+  renderBgThumbPreview('bgPreview1', theme.bg1Url, 'Chưa có ảnh nền Trang 1');
+  renderBgThumbPreview('bgPreview2', theme.bg2Url, 'Chưa có ảnh nền Trang 2');
+  renderBgThumbPreview('bgPreview3', theme.bg3Url, 'Chưa có ảnh nền Trang 3');
+  renderBgThumbPreview('bgPreviewMobile', theme.bgMobileUrl, 'Chưa có ảnh nền dọc');
+
+  renderColorControls(theme, editable);
+
+  if ($('btnResetThemePreset')) {
+    $('btnResetThemePreset').classList.toggle('hidden', !theme.isBuiltIn);
+    $('btnResetThemePreset').disabled = !editable;
+  }
+  if ($('btnDeleteTheme')) {
+    $('btnDeleteTheme').classList.toggle('hidden', Boolean(theme.isBuiltIn));
+    $('btnDeleteTheme').disabled = !editable;
+  }
+  if ($('btnApplyThemeActive')) {
+    $('btnApplyThemeActive').disabled = !hasDrive;
+    $('btnApplyThemeActive').textContent = isActive ? '✓ Đang dùng' : 'Áp dụng';
+  }
+  if ($('btnSaveThemeDrive')) $('btnSaveThemeDrive').disabled = !editable;
+  if ($('btnNewTheme')) $('btnNewTheme').disabled = !hasDrive;
+  if ($('btnCloneTheme')) $('btnCloneTheme').disabled = !hasDrive;
+
+  [
+    'themeNameInput',
+    'themeBg1Url', 'themeBg2Url', 'themeBg3Url', 'themeBgMobileUrl',
+    'btnUploadBg1', 'btnUploadBg2', 'btnUploadBg3', 'btnUploadBgMobile',
+    'btnClearBg1', 'btnClearBg2', 'btnClearBg3', 'btnClearBgMobile',
+    'themeEffect', 'themeEffectEmojis',
+  ].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = !editable;
+  });
+  document.querySelectorAll('.ts-emoji-preset-btn').forEach((b) => {
+    b.disabled = !editable;
+  });
+}
+
+function collectSelectedThemeDraft() {
+  const current = getSelectedTheme();
+  const basePreset = current.basePreset === 'christmas' ? 'christmas' : 'default';
+  const nameVal = ($('themeNameInput') ? $('themeNameInput').value.trim() : current.name) || current.name;
+
+  const readUrlSlot = (inputId, curUrl, curFileId) => {
+    const el = $(inputId);
+    if (!el) return { url: curUrl || '', fileId: curFileId || '' };
+    const raw = el.value.trim();
+    if (!raw) return { url: '', fileId: '' };
+    const norm = normalizeThemeAssetUrl(raw, '');
+    if (!norm) return { url: curUrl || '', fileId: curFileId || '' };
+    const fid = extractDriveId(norm) || (norm === curUrl ? (curFileId || '') : '');
+    return { url: norm, fileId: fid };
+  };
+
+  const s1 = readUrlSlot('themeBg1Url', current.bg1Url, current.bg1FileId);
+  const s2 = readUrlSlot('themeBg2Url', current.bg2Url, current.bg2FileId);
+  const s3 = readUrlSlot('themeBg3Url', current.bg3Url, current.bg3FileId);
+  const sMob = readUrlSlot('themeBgMobileUrl', current.bgMobileUrl, current.bgMobileFileId);
+
+  const identity = getCurrentDriveIdentity();
+  const rawEff = $('themeEffect') ? $('themeEffect').value : current.effect;
+  const rawEmojis = $('themeEffectEmojis') ? $('themeEffectEmojis').value.trim() : (current.effectEmojis || '❄️ 🎄 ⭐');
+  return sanitizeThemeProfile({
+    ...current,
+    name: nameVal,
+    basePreset,
+    bg1Url: s1.url,
+    bg1FileId: s1.fileId,
+    bg2Url: s2.url,
+    bg2FileId: s2.fileId,
+    bg3Url: s3.url,
+    bg3FileId: s3.fileId,
+    bgMobileUrl: sMob.url,
+    bgMobileFileId: sMob.fileId,
+    cardStyle: current.cardStyle,
+    borderStyle: current.borderStyle,
+    textStyle: current.textStyle,
+    titleStyle: current.titleStyle,
+    accentStyle: current.accentStyle,
+    cardBg: (current.cardStyle && current.cardStyle.c1) || current.cardBg,
+    borderColor: (current.borderStyle && current.borderStyle.c1) || current.borderColor,
+    accentColor: (current.accentStyle && current.accentStyle.c1) || current.accentColor,
+    effect: rawEff,
+    effectEmojis: rawEmojis || '❄️ 🎄 ⭐',
+    ownerScriptUrl: current.ownerScriptUrl || identity.scriptUrl,
+    ownerFolderId: current.ownerFolderId || identity.folderId,
+    updatedAt: Date.now(),
+  }, current.id);
+}
+
+async function saveSelectedThemeEdits(msg = '🎨 Đã lưu theme & đồng bộ lên Drive + Cloud.') {
+  const curTheme = getSelectedTheme();
+  if (!canEditSelectedTheme(curTheme)) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để chỉnh sửa theme này.', true);
+    renderThemeStudio();
+    return false;
+  }
+  const updated = collectSelectedThemeDraft();
+  const nextLib = {
+    ...themeLibrary,
+    themes: {
+      ...themeLibrary.themes,
+      [updated.id]: updated,
+    },
+  };
+  return persistThemeLibrary(nextLib, {
+    switchActive: themeLibrary.activeThemeId === updated.id,
+    msg,
+  });
+}
+
+async function uploadThemeBgSlot(urlKey, fileIdKey, fileInputId, urlInputId, label) {
   const fileInp = $(fileInputId);
   const file = fileInp && fileInp.files && fileInp.files[0];
   if (fileInp) fileInp.value = '';
   if (!file || uploading) return;
-  if (!canEditThemeStudio()) {
+  const curTheme = getSelectedTheme();
+  if (!canEditSelectedTheme(curTheme)) {
     if ($('drivePanel')) $('drivePanel').open = true;
     toast('Cần nhập Apps Script Web App URL và Folder ID hợp lệ trước khi tải ảnh nền.', true);
     return;
@@ -1034,8 +1433,7 @@ async function uploadThemeBgSlot(slotKey, fileInputId, urlInputId, label) {
   try {
     uploading = true;
     toast(`Đang tải ảnh nền ${label} (100% chất lượng gốc) lên Google Drive…`);
-    // Đọc trực tiếp file gốc qua FileReader.readAsDataURL (không nén / không thu nhỏ qua canvas)
-    const origName = `theme_${slotKey}_${file.name || 'background.webp'}`;
+    const origName = `theme_${curTheme.id}_${urlKey}_${file.name || 'background.webp'}`;
     let rawId;
     try {
       rawId = await uploadToDrive(cfg, file, origName);
@@ -1044,11 +1442,23 @@ async function uploadThemeBgSlot(slotKey, fileInputId, urlInputId, label) {
     }
     const cleanId = extractDriveId(String(rawId || '')) || String(rawId || '').trim();
     const cdnUrl = normalizeThemeAssetUrl(`https://lh3.googleusercontent.com/d/${cleanId}=s0`);
+    const oldFileId = curTheme[fileIdKey] || extractDriveId(curTheme[urlKey] || '');
     if ($(urlInputId)) $(urlInputId).value = cdnUrl;
-    themeStudioCfg = { ...themeStudioCfg, [slotKey]: cdnUrl };
-    const draft = collectThemeStudioDraft();
-    draft[slotKey] = cdnUrl;
-    await saveThemeStudioToCloud(draft, `🎨 Đã tải ảnh nền ${label} (độ phân giải gốc =s0) lên Drive & đồng bộ giao diện.`);
+    const draft = collectSelectedThemeDraft();
+    draft[urlKey] = cdnUrl;
+    draft[fileIdKey] = cleanId;
+    const nextLib = {
+      ...themeLibrary,
+      themes: { ...themeLibrary.themes, [draft.id]: draft },
+    };
+    await persistThemeLibrary(nextLib, {
+      switchActive: themeLibrary.activeThemeId === draft.id,
+      msg: `🎨 Đã tải ảnh nền ${label} (=s0) cho “${draft.name}” & lưu Drive.`,
+    });
+    if (oldFileId && oldFileId !== cleanId) {
+      const unused = collectUnusedDriveFileIds([oldFileId]);
+      if (unused.length) trashDriveFilesSafe(unused);
+    }
   } catch (err) {
     toast(`Lỗi tải ảnh nền ${label}: ${err.message || err}`, true);
   } finally {
@@ -1058,18 +1468,21 @@ async function uploadThemeBgSlot(slotKey, fileInputId, urlInputId, label) {
 
 async function initThemeStudioSync() {
   try {
-    themeStudioSync = await createSharedThemeSync(loadFirebaseConfig());
-    themeStudioSync.onStatus((st) => {
+    themeLibrarySync = await createSharedThemeLibrarySync(loadFirebaseConfig());
+    themeLibrarySync.onStatus((st) => {
       const el = $('themeStudioStatus');
       if (el && st && st.message) el.textContent = `☁️ ${st.message}`;
     });
-    themeStudioSync.subscribe((cloudCfg, rawVal) => {
-      if (rawVal) {
-        themeStudioCfg = sanitizeCloudThemeConfig(cloudCfg);
-        applyThemeConfig(themeStudioCfg);
+    themeLibrarySync.subscribe((cloudLib) => {
+      if (cloudLib) {
+        themeLibrary = sanitizeThemeLibrary(cloudLib);
+        applyThemeLibrary(themeLibrary);
       }
       renderThemeStudio();
     });
+    if (hasValidDriveIdentity()) {
+      await loadThemesFromDrive();
+    }
   } catch { /* ignore */ }
 }
 
@@ -1713,49 +2126,207 @@ function bind() {
     navigator.clipboard.writeText($('scriptCode').textContent).then(() => toast('Đã sao chép mã Apps Script.'));
   });
 
-  // --- Gắn sự kiện Bảng điều khiển Giao diện & Mùa lễ hội (Seasonal Theme Studio) ---
-  if ($('themePresetSelect')) {
-    $('themePresetSelect').addEventListener('change', () => {
-      if (!canEditThemeStudio()) return renderThemeStudio();
-      const preset = $('themePresetSelect').value || 'christmas';
-      const def = THEME_PRESET_DEFAULTS[preset] || THEME_PRESET_DEFAULTS.christmas;
-      themeStudioCfg = sanitizeCloudThemeConfig({
-        ...def,
-        ownerScriptUrl: themeStudioCfg.ownerScriptUrl,
-        ownerFolderId: themeStudioCfg.ownerFolderId,
-      });
+  // --- Gắn sự kiện Thư viện Theme (Google Drive + Firebase) ---
+  if ($('themeLibraryList')) {
+    $('themeLibraryList').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-theme-pick-id]');
+      if (!btn) return;
+      const pickId = btn.dataset.themePickId;
+      if (!pickId || !themeLibrary.themes[pickId]) return;
+      selectedThemeId = pickId;
       renderThemeStudio();
-      saveThemeStudioToCloud(themeStudioCfg, `🎨 Đã chuyển giao diện sang chế độ “${preset === 'christmas' ? 'Giáng Sinh - Noel' : preset === 'tet' ? 'Tết Nguyên Đán' : 'Mặc định'}”.`);
     });
   }
-  if ($('btnSaveThemeStudio')) {
-    $('btnSaveThemeStudio').addEventListener('click', () => {
-      saveThemeStudioToCloud(collectThemeStudioDraft());
+
+  if ($('btnNewTheme') && $('newThemeBox')) {
+    $('btnNewTheme').addEventListener('click', () => {
+      if (!hasValidDriveIdentity()) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        toast('Vui lòng nhập Drive Key hợp lệ trước khi tạo theme mới.', true);
+        return;
+      }
+      $('newThemeBox').classList.toggle('hidden');
+      if (!$('newThemeBox').classList.contains('hidden') && $('newThemeName')) {
+        $('newThemeName').value = '';
+        $('newThemeName').focus();
+      }
     });
   }
+  if ($('btnCancelNewTheme') && $('newThemeBox')) {
+    $('btnCancelNewTheme').addEventListener('click', () => {
+      $('newThemeBox').classList.add('hidden');
+    });
+  }
+  if ($('btnConfirmNewTheme')) {
+    $('btnConfirmNewTheme').addEventListener('click', async () => {
+      if (!hasValidDriveIdentity()) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        toast('Vui lòng nhập Drive Key hợp lệ.', true);
+        return;
+      }
+      const name = ($('newThemeName') && $('newThemeName').value.trim()) || '';
+      if (!name) {
+        toast('Hãy nhập tên cho theme mới.', true);
+        if ($('newThemeName')) $('newThemeName').focus();
+        return;
+      }
+      const baseChoice = ($('newThemeBase') && $('newThemeBase').value) || 'blank';
+      const identity = getCurrentDriveIdentity();
+      const newThemeId = `theme_${Date.now().toString(36)}`;
+      let seed = {
+        ...BUILTIN_THEMES.builtin_default,
+        id: newThemeId,
+        name,
+        isBuiltIn: false,
+      };
+      if (baseChoice === 'christmas') {
+        seed = { ...BUILTIN_THEMES.builtin_christmas, id: newThemeId, name, isBuiltIn: false };
+      } else if (baseChoice === 'default') {
+        seed = { ...BUILTIN_THEMES.builtin_default, id: newThemeId, name, isBuiltIn: false };
+      }
+      const cleanNew = sanitizeThemeProfile({
+        ...seed,
+        ownerScriptUrl: identity.scriptUrl,
+        ownerFolderId: identity.folderId,
+        updatedAt: Date.now(),
+      }, newThemeId);
+      selectedThemeId = cleanNew.id;
+      if ($('newThemeBox')) $('newThemeBox').classList.add('hidden');
+      const nextLib = {
+        ...themeLibrary,
+        themes: { ...themeLibrary.themes, [cleanNew.id]: cleanNew },
+      };
+      await persistThemeLibrary(nextLib, {
+        switchActive: false,
+        msg: `🎨 Đã tạo theme mới “${cleanNew.name}” & lưu vào Drive.`,
+      });
+    });
+  }
+
+  if ($('btnCloneTheme')) {
+    $('btnCloneTheme').addEventListener('click', async () => {
+      if (!hasValidDriveIdentity()) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        toast('Vui lòng nhập Drive Key hợp lệ trước khi nhân bản theme.', true);
+        return;
+      }
+      const src = getSelectedTheme();
+      const identity = getCurrentDriveIdentity();
+      const cloneId = `theme_${Date.now().toString(36)}`;
+      const cloned = sanitizeThemeProfile({
+        ...src,
+        id: cloneId,
+        name: `${src.name} (Bản sao)`.slice(0, 60),
+        isBuiltIn: false,
+        ownerScriptUrl: identity.scriptUrl,
+        ownerFolderId: identity.folderId,
+        updatedAt: Date.now(),
+      }, cloneId);
+      selectedThemeId = cloned.id;
+      const nextLib = {
+        ...themeLibrary,
+        themes: { ...themeLibrary.themes, [cloned.id]: cloned },
+      };
+      await persistThemeLibrary(nextLib, {
+        switchActive: false,
+        msg: `🎨 Đã nhân bản thành “${cloned.name}” & lưu vào Drive.`,
+      });
+    });
+  }
+
+  if ($('btnApplyThemeActive')) {
+    $('btnApplyThemeActive').addEventListener('click', async () => {
+      if (!hasValidDriveIdentity()) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        toast('Vui lòng nhập Drive Key hợp lệ để áp dụng theme cho phòng chơi.', true);
+        return;
+      }
+      const curTheme = getSelectedTheme();
+      const nextLib = {
+        ...themeLibrary,
+        activeThemeId: curTheme.id,
+      };
+      await persistThemeLibrary(nextLib, {
+        switchActive: true,
+        msg: `✨ Đã áp dụng “${curTheme.name}” lên toàn bộ màn hình game!`,
+      });
+    });
+  }
+
+  if ($('btnSaveThemeDrive')) {
+    $('btnSaveThemeDrive').addEventListener('click', () => {
+      saveSelectedThemeEdits('💾 Đã lưu theme vào Google Drive & đồng bộ Cloud ✓');
+    });
+  }
+
   if ($('btnResetThemePreset')) {
-    $('btnResetThemePreset').addEventListener('click', () => {
-      if (!canEditThemeStudio()) return;
-      const preset = ($('themePresetSelect') && $('themePresetSelect').value) || 'christmas';
-      const def = THEME_PRESET_DEFAULTS[preset] || THEME_PRESET_DEFAULTS.christmas;
-      themeStudioCfg = sanitizeCloudThemeConfig({
-        ...def,
-        ownerScriptUrl: themeStudioCfg.ownerScriptUrl,
-        ownerFolderId: themeStudioCfg.ownerFolderId,
+    $('btnResetThemePreset').addEventListener('click', async () => {
+      const curTheme = getSelectedTheme();
+      if (!curTheme.isBuiltIn || !canEditSelectedTheme(curTheme)) return;
+      if (!confirm(`Khôi phục “${curTheme.name}” về thông số mặc định ban đầu?`)) return;
+      const factory = BUILTIN_THEMES[curTheme.id];
+      if (!factory) return;
+      const resetProfile = sanitizeThemeProfile({
+        ...factory,
+        updatedAt: Date.now(),
+      }, curTheme.id);
+      const nextLib = {
+        ...themeLibrary,
+        themes: { ...themeLibrary.themes, [resetProfile.id]: resetProfile },
+      };
+      await persistThemeLibrary(nextLib, {
+        switchActive: themeLibrary.activeThemeId === resetProfile.id,
+        msg: `↺ Đã khôi phục “${resetProfile.name}” về mặc định gốc.`,
       });
-      renderThemeStudio();
-      saveThemeStudioToCloud(themeStudioCfg, '🎨 Đã khôi phục thông số mẫu gốc của giao diện lễ hội.');
     });
   }
+
+  if ($('btnDeleteTheme')) {
+    $('btnDeleteTheme').addEventListener('click', async () => {
+      const curTheme = getSelectedTheme();
+      if (!curTheme || curTheme.isBuiltIn) {
+        toast('Không thể xóa theme mặc định gốc (hãy dùng Khôi phục gốc).', true);
+        return;
+      }
+      if (!canEditSelectedTheme(curTheme)) {
+        if ($('drivePanel')) $('drivePanel').open = true;
+        toast('Bạn cần đúng Drive Key đã tạo theme này để xóa.', true);
+        return;
+      }
+      const themeFiles = extractThemeDriveFileIds(curTheme);
+      if (!confirm(`Xóa vĩnh viễn theme “${curTheme.name}”${themeFiles.length ? ` và dọn ${themeFiles.length} file ảnh/GIF trên Google Drive` : ''}?`)) {
+        return;
+      }
+      const filesToDelete = collectUnusedDriveFileIds(themeFiles, curTheme.id);
+      if (filesToDelete.length) {
+        toast(`Đang dọn ${filesToDelete.length} file của theme trên Google Drive…`);
+        await trashDriveFilesSafe(filesToDelete);
+      }
+      markThemeDeleted(curTheme.id);
+      const nextThemes = { ...themeLibrary.themes };
+      delete nextThemes[curTheme.id];
+      const nextActive = themeLibrary.activeThemeId === curTheme.id ? 'builtin_christmas' : themeLibrary.activeThemeId;
+      selectedThemeId = nextActive;
+      await persistThemeLibrary({
+        ...themeLibrary,
+        activeThemeId: nextActive,
+        themes: nextThemes,
+      }, {
+        switchActive: themeLibrary.activeThemeId === curTheme.id,
+        msg: `🗑 Đã xóa theme “${curTheme.name}” và dọn sạch Drive.`,
+      });
+    });
+  }
+
   [
-    ['bg1Url', 'btnUploadBg1', 'fileBg1', 'themeBg1Url', 'Trang 1'],
-    ['bg2Url', 'btnUploadBg2', 'fileBg2', 'themeBg2Url', 'Trang 2'],
-    ['bg3Url', 'btnUploadBg3', 'fileBg3', 'themeBg3Url', 'Trang 3'],
-    ['bgMobileUrl', 'btnUploadBgMobile', 'fileBgMobile', 'themeBgMobileUrl', 'Mobile dọc'],
-  ].forEach(([slotKey, btnId, fileId, urlId, label]) => {
+    ['bg1Url', 'bg1FileId', 'btnUploadBg1', 'btnClearBg1', 'fileBg1', 'themeBg1Url', 'Trang 1'],
+    ['bg2Url', 'bg2FileId', 'btnUploadBg2', 'btnClearBg2', 'fileBg2', 'themeBg2Url', 'Trang 2'],
+    ['bg3Url', 'bg3FileId', 'btnUploadBg3', 'btnClearBg3', 'fileBg3', 'themeBg3Url', 'Trang 3'],
+    ['bgMobileUrl', 'bgMobileFileId', 'btnUploadBgMobile', 'btnClearBgMobile', 'fileBgMobile', 'themeBgMobileUrl', 'Mobile dọc'],
+  ].forEach(([urlKey, fileIdKey, btnId, clearId, fileId, urlId, label]) => {
     if ($(btnId) && $(fileId)) {
       $(btnId).addEventListener('click', () => {
-        if (!canEditThemeStudio()) {
+        if (!canEditSelectedTheme()) {
           if ($('drivePanel')) $('drivePanel').open = true;
           toast('Vui lòng nhập Apps Script Web App URL và Folder ID để tải ảnh nền.', true);
           return;
@@ -1763,32 +2334,229 @@ function bind() {
         $(fileId).click();
       });
       $(fileId).addEventListener('change', () => {
-        uploadThemeBgSlot(slotKey, fileId, urlId, label);
+        uploadThemeBgSlot(urlKey, fileIdKey, fileId, urlId, label);
+      });
+    }
+    if ($(clearId)) {
+      $(clearId).addEventListener('click', async () => {
+        const curTheme = getSelectedTheme();
+        if (!canEditSelectedTheme(curTheme)) return;
+        const oldFid = curTheme[fileIdKey] || extractDriveId(curTheme[urlKey] || '');
+        if ($(urlId)) $(urlId).value = '';
+        const draft = collectSelectedThemeDraft();
+        draft[urlKey] = '';
+        draft[fileIdKey] = '';
+        await persistThemeLibrary({
+          ...themeLibrary,
+          themes: { ...themeLibrary.themes, [draft.id]: draft },
+        }, {
+          switchActive: themeLibrary.activeThemeId === draft.id,
+          msg: `Đã xóa ảnh nền ${label} khỏi “${draft.name}”.`,
+        });
+        if (oldFid) {
+          const unused = collectUnusedDriveFileIds([oldFid]);
+          if (unused.length) trashDriveFilesSafe(unused);
+        }
       });
     }
     if ($(urlId)) {
       $(urlId).addEventListener('change', () => {
-        if (!canEditThemeStudio()) return;
-        const draft = collectThemeStudioDraft();
-        if ($(urlId)) $(urlId).value = draft[slotKey] || '';
-        saveThemeStudioToCloud(draft, `🎨 Đã cập nhật ảnh nền ${label} & đồng bộ giao diện.`);
+        if (!canEditSelectedTheme()) return;
+        saveSelectedThemeEdits(`🎨 Đã cập nhật ảnh nền ${label} & lưu vào Drive.`);
       });
     }
   });
-  ['themeBorderStyle', 'themeEffect', 'themeCardBg', 'themeBorderColor', 'themeAccentColor'].forEach((id) => {
-    if ($(id)) {
-      $(id).addEventListener('change', () => {
-        if (!canEditThemeStudio()) return;
-        saveThemeStudioToCloud(collectThemeStudioDraft());
-      });
-    }
+
+  // Nút Bật / Tắt (Toggle) Studio Giao diện từ Sidebar + đồng bộ với <details>
+  if ($('btnOpenThemeStudio') && $('themeStudioPanel')) {
+    $('btnOpenThemeStudio').addEventListener('click', () => {
+      const panel = $('themeStudioPanel');
+      const willOpen = !panel.open;
+      panel.open = willOpen;
+      syncThemeStudioToggleUi();
+      if (willOpen) {
+        requestAnimationFrame(() => {
+          try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* ignore */ }
+        });
+      }
+    });
+  }
+  if ($('themeStudioPanel')) {
+    $('themeStudioPanel').addEventListener('toggle', () => {
+      syncThemeStudioToggleUi();
+    });
+  }
+
+  // 4 ô chọn màu kiểu Photoshop -> Mở / Đóng bảng Inspector
+  if ($('tsColorCards')) {
+    $('tsColorCards').addEventListener('click', (e) => {
+      const card = e.target.closest('[data-color-key]');
+      if (!card || card.disabled) return;
+      const key = card.dataset.colorKey;
+      if (!COLOR_STYLE_KEYS.includes(key)) return;
+      activeColorKey = activeColorKey === key ? null : key;
+      renderColorControls(getSelectedTheme(), canEditSelectedTheme());
+    });
+  }
+  if ($('btnTsCiClose')) {
+    $('btnTsCiClose').addEventListener('click', () => {
+      activeColorKey = null;
+      renderColorControls(getSelectedTheme(), canEditSelectedTheme());
+    });
+  }
+  if ($('tsCiModeSeg')) {
+    $('tsCiModeSeg').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-color-mode]');
+      if (!btn || btn.disabled) return;
+      updateActiveColorStyle({ mode: btn.dataset.colorMode }, true);
+    });
+  }
+
+  // Đơn sắc (Color Picker + Hex + 8 màu mẫu nhanh)
+  const isFullHex = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || '').trim());
+  if ($('tsSolidColor')) {
+    $('tsSolidColor').addEventListener('input', (e) => {
+      const hex = String(e.target.value || '').toUpperCase();
+      if ($('tsSolidHex')) $('tsSolidHex').value = hex;
+      updateActiveColorStyle({ mode: 'solid', c1: hex }, false);
+    });
+    $('tsSolidColor').addEventListener('change', (e) => {
+      updateActiveColorStyle({ mode: 'solid', c1: String(e.target.value || '').toUpperCase() }, true);
+    });
+  }
+  if ($('tsSolidHex')) {
+    $('tsSolidHex').addEventListener('input', (e) => {
+      const raw = String(e.target.value || '').trim();
+      const normalized = raw.startsWith('#') ? raw : `#${raw}`;
+      if (isFullHex(normalized)) {
+        updateActiveColorStyle({ mode: 'solid', c1: normalized.toUpperCase() }, false);
+      }
+    });
+    $('tsSolidHex').addEventListener('change', (e) => {
+      const raw = String(e.target.value || '').trim();
+      const normalized = raw.startsWith('#') ? raw : `#${raw}`;
+      if (isFullHex(normalized)) {
+        updateActiveColorStyle({ mode: 'solid', c1: normalized.toUpperCase() }, true);
+      } else {
+        renderColorControls(getSelectedTheme(), canEditSelectedTheme());
+      }
+    });
+  }
+  if ($('tsQuickSwatches')) {
+    $('tsQuickSwatches').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-qhex]');
+      if (!btn || btn.disabled) return;
+      updateActiveColorStyle({ mode: 'solid', c1: btn.dataset.qhex }, true);
+    });
+  }
+
+  // Chuyển sắc (Màu 1 + Màu 2 + Đảo chiều + Góc xoay 0-360°)
+  if ($('tsGradC1')) {
+    $('tsGradC1').addEventListener('input', (e) => {
+      const hex = String(e.target.value || '').toUpperCase();
+      if ($('tsGradHex1')) $('tsGradHex1').value = hex;
+      updateActiveColorStyle({ mode: 'gradient', c1: hex }, false);
+    });
+    $('tsGradC1').addEventListener('change', (e) => {
+      updateActiveColorStyle({ mode: 'gradient', c1: String(e.target.value || '').toUpperCase() }, true);
+    });
+  }
+  if ($('tsGradHex1')) {
+    $('tsGradHex1').addEventListener('input', (e) => {
+      const raw = String(e.target.value || '').trim();
+      const norm = raw.startsWith('#') ? raw : `#${raw}`;
+      if (isFullHex(norm)) updateActiveColorStyle({ mode: 'gradient', c1: norm.toUpperCase() }, false);
+    });
+    $('tsGradHex1').addEventListener('change', (e) => {
+      const raw = String(e.target.value || '').trim();
+      const norm = raw.startsWith('#') ? raw : `#${raw}`;
+      if (isFullHex(norm)) updateActiveColorStyle({ mode: 'gradient', c1: norm.toUpperCase() }, true);
+      else renderColorControls(getSelectedTheme(), canEditSelectedTheme());
+    });
+  }
+  if ($('tsGradC2')) {
+    $('tsGradC2').addEventListener('input', (e) => {
+      const hex = String(e.target.value || '').toUpperCase();
+      if ($('tsGradHex2')) $('tsGradHex2').value = hex;
+      updateActiveColorStyle({ mode: 'gradient', c2: hex }, false);
+    });
+    $('tsGradC2').addEventListener('change', (e) => {
+      updateActiveColorStyle({ mode: 'gradient', c2: String(e.target.value || '').toUpperCase() }, true);
+    });
+  }
+  if ($('tsGradHex2')) {
+    $('tsGradHex2').addEventListener('input', (e) => {
+      const raw = String(e.target.value || '').trim();
+      const norm = raw.startsWith('#') ? raw : `#${raw}`;
+      if (isFullHex(norm)) updateActiveColorStyle({ mode: 'gradient', c2: norm.toUpperCase() }, false);
+    });
+    $('tsGradHex2').addEventListener('change', (e) => {
+      const raw = String(e.target.value || '').trim();
+      const norm = raw.startsWith('#') ? raw : `#${raw}`;
+      if (isFullHex(norm)) updateActiveColorStyle({ mode: 'gradient', c2: norm.toUpperCase() }, true);
+      else renderColorControls(getSelectedTheme(), canEditSelectedTheme());
+    });
+  }
+  if ($('btnTsGradSwap')) {
+    $('btnTsGradSwap').addEventListener('click', () => {
+      if (!activeColorKey) return;
+      const curTheme = getSelectedTheme();
+      const cur = sanitizeColorStyle(curTheme[activeColorKey]);
+      updateActiveColorStyle({ mode: 'gradient', c1: cur.c2, c2: cur.c1 }, true);
+    });
+  }
+  if ($('tsGradAngleRange')) {
+    $('tsGradAngleRange').addEventListener('input', (e) => {
+      updateActiveColorStyle({ mode: 'gradient', angle: Number(e.target.value) || 0 }, false);
+    });
+    $('tsGradAngleRange').addEventListener('change', (e) => {
+      updateActiveColorStyle({ mode: 'gradient', angle: Number(e.target.value) || 0 }, true);
+    });
+  }
+  document.querySelectorAll('.ts-angle-presets [data-qangle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      updateActiveColorStyle({ mode: 'gradient', angle: Number(btn.dataset.qangle) || 0 }, true);
+    });
   });
+
+  // Hiệu ứng rơi (Tắt / Tuyết rơi / Emoji rơi + 4 bộ emoji mẫu 1 chạm)
+  if ($('themeEffect')) {
+    $('themeEffect').addEventListener('change', (e) => {
+      if ($('themeEmojiBox')) {
+        $('themeEmojiBox').classList.toggle('hidden', e.target.value !== 'emoji');
+      }
+      if (!canEditSelectedTheme()) return;
+      saveSelectedThemeEdits('✨ Đã cập nhật hiệu ứng rơi & lưu vào Drive ✓');
+    });
+  }
+  if ($('themeEffectEmojis')) {
+    $('themeEffectEmojis').addEventListener('change', () => {
+      if (!canEditSelectedTheme()) return;
+      saveSelectedThemeEdits('✨ Đã cập nhật bộ Emoji rơi & lưu vào Drive ✓');
+    });
+  }
+  document.querySelectorAll('.ts-emoji-preset-btn[data-emoji-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!canEditSelectedTheme()) return;
+      if ($('themeEffect')) $('themeEffect').value = 'emoji';
+      if ($('themeEffectEmojis')) $('themeEffectEmojis').value = btn.dataset.emojiPreset;
+      if ($('themeEmojiBox')) $('themeEmojiBox').classList.remove('hidden');
+      saveSelectedThemeEdits(`✨ Đã chọn bộ emoji rơi ${btn.dataset.emojiPreset}`);
+    });
+  });
+
+  if ($('themeNameInput')) {
+    $('themeNameInput').addEventListener('change', () => {
+      if (!canEditSelectedTheme()) return;
+      saveSelectedThemeEdits('🎨 Đã đổi tên theme & lưu vào Drive ✓');
+    });
+  }
   ['driveUrl', 'driveFolder'].forEach((id) => {
     if ($(id)) $(id).addEventListener('input', () => renderThemeStudio());
   });
-  window.addEventListener('thefloor:theme-config-updated', (e) => {
+  window.addEventListener('thefloor:theme-library-updated', (e) => {
     if (e && e.detail) {
-      themeStudioCfg = sanitizeCloudThemeConfig(e.detail);
+      themeLibrary = sanitizeThemeLibrary(e.detail);
       renderThemeStudio();
     }
   });

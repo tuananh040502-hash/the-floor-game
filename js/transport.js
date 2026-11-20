@@ -13,9 +13,59 @@ export const DELETED_TOPICS_KEY = 'deleted_topic_ids';
 export const SHARED_BGM_PATH = 'shared_bgm';
 export const BGM_CACHE_KEY = 'thefloor:bgm';
 export const SHARED_THEME_PATH = 'shared_theme';
+export const SHARED_THEMES_PATH = 'shared_themes';
 export const THEME_CONFIG_KEY = 'thefloor:themeConfig';
+export const THEMES_LIBRARY_KEY = 'thefloor:themeLibrary';
+export const DELETED_THEMES_KEY = 'thefloor:deletedThemeIds';
 const MAX_CLOUD_IMAGES = 100;
 const MAX_INLINE_STR_LEN = 2048;
+
+export function sanitizeColorStyle(raw, fallback = { mode: 'solid', c1: '#181D24', c2: '#242B35', angle: 135 }) {
+  const fb = fallback || { mode: 'solid', c1: '#181D24', c2: '#242B35', angle: 135 };
+  const cleanHex = (val, defHex) => {
+    const s = String(val || '').trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toUpperCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+      return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`.toUpperCase();
+    }
+    return String(defHex || '#181D24').toUpperCase();
+  };
+  const clampAngle = (v, defA) => {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return Number.isFinite(Number(defA)) ? Number(defA) : 135;
+    return Math.max(0, Math.min(360, n));
+  };
+  if (typeof raw === 'string') {
+    const hex = cleanHex(raw, fb.c1);
+    return {
+      mode: 'solid',
+      c1: hex,
+      c2: cleanHex(fb.c2, hex),
+      angle: clampAngle(fb.angle, 135),
+    };
+  }
+  if (!raw || typeof raw !== 'object') {
+    return {
+      mode: fb.mode === 'gradient' ? 'gradient' : 'solid',
+      c1: cleanHex(fb.c1, '#181D24'),
+      c2: cleanHex(fb.c2, fb.c1 || '#242B35'),
+      angle: clampAngle(fb.angle, 135),
+    };
+  }
+  return {
+    mode: raw.mode === 'gradient' ? 'gradient' : 'solid',
+    c1: cleanHex(raw.c1, fb.c1),
+    c2: cleanHex(raw.c2, fb.c2 || fb.c1),
+    angle: clampAngle(raw.angle, fb.angle),
+  };
+}
+
+export function colorStyleToCss(st, fallbackHex = '#181D24') {
+  const s = sanitizeColorStyle(st, { mode: 'solid', c1: fallbackHex, c2: fallbackHex, angle: 135 });
+  return s.mode === 'gradient'
+    ? `linear-gradient(${s.angle}deg, ${s.c1}, ${s.c2})`
+    : s.c1;
+}
 
 export const THEME_PRESET_DEFAULTS = {
   christmas: {
@@ -27,20 +77,13 @@ export const THEME_PRESET_DEFAULTS = {
     cardBg: '#FBF6EC',
     borderColor: '#D8B979',
     accentColor: '#B91C2C',
-    borderStyle: 'solid',
+    cardStyle: { mode: 'solid', c1: '#FBF6EC', c2: '#F2E5C9', angle: 135 },
+    borderStyle: { mode: 'solid', c1: '#D8B979', c2: '#B91C2C', angle: 135 },
+    textStyle: { mode: 'solid', c1: '#2C1E14', c2: '#7A4B2A', angle: 90 },
+    titleStyle: { mode: 'solid', c1: '#2C1E14', c2: '#B91C2C', angle: 90 },
+    accentStyle: { mode: 'solid', c1: '#B91C2C', c2: '#D8B979', angle: 135 },
     effect: 'snow',
-  },
-  tet: {
-    preset: 'tet',
-    bg1Url: '',
-    bg2Url: '',
-    bg3Url: '',
-    bgMobileUrl: '',
-    cardBg: '#FFF5E1',
-    borderColor: '#E5A93C',
-    accentColor: '#B81414',
-    borderStyle: 'gold',
-    effect: 'blossom',
+    effectEmojis: '❄️ 🎄 ⭐',
   },
   default: {
     preset: 'default',
@@ -51,10 +94,294 @@ export const THEME_PRESET_DEFAULTS = {
     cardBg: '#181D24',
     borderColor: '#30353B',
     accentColor: '#0071E3',
-    borderStyle: 'solid',
+    cardStyle: { mode: 'solid', c1: '#181D24', c2: '#242B35', angle: 135 },
+    borderStyle: { mode: 'solid', c1: '#30353B', c2: '#0071E3', angle: 135 },
+    textStyle: { mode: 'solid', c1: '#F5F9FE', c2: '#9BA0A6', angle: 90 },
+    titleStyle: { mode: 'solid', c1: '#F5F9FE', c2: '#2997FF', angle: 90 },
+    accentStyle: { mode: 'solid', c1: '#0071E3', c2: '#2997FF', angle: 135 },
     effect: 'none',
+    effectEmojis: '❄️ 🎄 ⭐',
   },
 };
+
+export const BUILTIN_THEMES = {
+  builtin_christmas: {
+    id: 'builtin_christmas',
+    name: 'Giáng Sinh - Noel',
+    isBuiltIn: true,
+    basePreset: 'christmas',
+    bg1Url: 'assets/christmas/bg-1.webp',
+    bg1FileId: '',
+    bg2Url: 'assets/christmas/bg-2.webp',
+    bg2FileId: '',
+    bg3Url: 'assets/christmas/bg-3.webp',
+    bg3FileId: '',
+    bgMobileUrl: 'assets/christmas/bg-mobile.webp',
+    bgMobileFileId: '',
+    cardBg: '#FBF6EC',
+    borderColor: '#D8B979',
+    accentColor: '#B91C2C',
+    cardStyle: { mode: 'solid', c1: '#FBF6EC', c2: '#F2E5C9', angle: 135 },
+    borderStyle: { mode: 'solid', c1: '#D8B979', c2: '#B91C2C', angle: 135 },
+    textStyle: { mode: 'solid', c1: '#2C1E14', c2: '#7A4B2A', angle: 90 },
+    titleStyle: { mode: 'solid', c1: '#2C1E14', c2: '#B91C2C', angle: 90 },
+    accentStyle: { mode: 'solid', c1: '#B91C2C', c2: '#D8B979', angle: 135 },
+    effect: 'snow',
+    effectEmojis: '❄️ 🎄 ⭐',
+    ownerScriptUrl: '',
+    ownerFolderId: '',
+    updatedAt: 0,
+  },
+  builtin_default: {
+    id: 'builtin_default',
+    name: 'Mặc định (Apple)',
+    isBuiltIn: true,
+    basePreset: 'default',
+    bg1Url: '',
+    bg1FileId: '',
+    bg2Url: '',
+    bg2FileId: '',
+    bg3Url: '',
+    bg3FileId: '',
+    bgMobileUrl: '',
+    bgMobileFileId: '',
+    cardBg: '#181D24',
+    borderColor: '#30353B',
+    accentColor: '#0071E3',
+    cardStyle: { mode: 'solid', c1: '#181D24', c2: '#242B35', angle: 135 },
+    borderStyle: { mode: 'solid', c1: '#30353B', c2: '#0071E3', angle: 135 },
+    textStyle: { mode: 'solid', c1: '#F5F9FE', c2: '#9BA0A6', angle: 90 },
+    titleStyle: { mode: 'solid', c1: '#F5F9FE', c2: '#2997FF', angle: 90 },
+    accentStyle: { mode: 'solid', c1: '#0071E3', c2: '#2997FF', angle: 135 },
+    effect: 'none',
+    effectEmojis: '❄️ 🎄 ⭐',
+    ownerScriptUrl: '',
+    ownerFolderId: '',
+    updatedAt: 0,
+  },
+};
+
+export function sanitizeThemeProfile(raw, fallbackId = '') {
+  const rawId = String((raw && raw.id) || fallbackId || '').trim().replace(/[.#$/[\]]/g, '_').slice(0, 64);
+  if (!rawId || rawId === 'builtin_tet') return null;
+  const builtInTemplate = BUILTIN_THEMES[rawId] || null;
+  const isBuiltIn = Boolean(builtInTemplate || (raw && raw.isBuiltIn && BUILTIN_THEMES[rawId]));
+  const rawBase = raw && (raw.basePreset || raw.preset);
+  const basePreset = rawBase === 'christmas'
+    ? 'christmas'
+    : (rawBase === 'default' ? 'default' : (builtInTemplate ? builtInTemplate.basePreset : 'default'));
+  const def = builtInTemplate || THEME_PRESET_DEFAULTS[basePreset] || THEME_PRESET_DEFAULTS.default;
+
+  const cleanColor = (val, fb) => {
+    const s = String(val || '').trim();
+    return /^#[0-9a-fA-F]{3,8}$/.test(s) ? s.toUpperCase() : fb;
+  };
+  const resolveSlotUrl = (field) => {
+    if (raw && raw[field] !== undefined && raw[field] !== null) {
+      const s = String(raw[field]).trim();
+      if (!s) return '';
+      return normalizeThemeAssetUrl(s, '');
+    }
+    return builtInTemplate ? (builtInTemplate[field] || '') : '';
+  };
+  const resolveSlotFileId = (idField, urlVal) => {
+    const explicit = raw && typeof raw[idField] === 'string' ? raw[idField].trim().slice(0, 128) : '';
+    if (explicit) return explicit;
+    return extractDriveId(urlVal || '');
+  };
+
+  const bg1Url = resolveSlotUrl('bg1Url');
+  const bg2Url = resolveSlotUrl('bg2Url');
+  const bg3Url = resolveSlotUrl('bg3Url');
+  const bgMobileUrl = resolveSlotUrl('bgMobileUrl');
+
+  const cardStyle = sanitizeColorStyle(
+    (raw && raw.cardStyle && typeof raw.cardStyle === 'object') ? raw.cardStyle : (raw && raw.cardBg ? raw.cardBg : def.cardStyle),
+    def.cardStyle,
+  );
+  const borderStyle = sanitizeColorStyle(
+    (raw && raw.borderStyle && typeof raw.borderStyle === 'object') ? raw.borderStyle : (raw && raw.borderColor ? raw.borderColor : def.borderStyle),
+    def.borderStyle,
+  );
+  const textStyle = sanitizeColorStyle(
+    (raw && (raw.textStyle || raw.textColor)) ? (raw.textStyle || raw.textColor) : def.textStyle,
+    def.textStyle,
+  );
+  const titleStyle = sanitizeColorStyle(
+    (raw && (raw.titleStyle || raw.titleColor)) ? (raw.titleStyle || raw.titleColor) : def.titleStyle,
+    def.titleStyle,
+  );
+  const accentStyle = sanitizeColorStyle(
+    (raw && raw.accentStyle && typeof raw.accentStyle === 'object') ? raw.accentStyle : (raw && raw.accentColor ? raw.accentColor : def.accentStyle),
+    def.accentStyle,
+  );
+
+  const rawEffect = raw && raw.effect;
+  const effect = rawEffect === 'snow'
+    ? 'snow'
+    : (rawEffect === 'emoji' || rawEffect === 'blossom')
+      ? 'emoji'
+      : (rawEffect === 'none' ? 'none' : (def.effect || 'none'));
+  const rawEmojis = raw && typeof raw.effectEmojis === 'string' ? raw.effectEmojis.trim().slice(0, 80) : '';
+  const effectEmojis = rawEmojis || (rawEffect === 'blossom' ? '🌸 🌼 ✨' : (def.effectEmojis || '❄️ 🎄 ⭐'));
+
+  const name = String((raw && raw.name) || (builtInTemplate ? builtInTemplate.name : 'Theme mới')).trim().slice(0, 60)
+    || (builtInTemplate ? builtInTemplate.name : 'Theme mới');
+
+  return {
+    id: rawId,
+    name,
+    isBuiltIn,
+    basePreset,
+    preset: basePreset,
+    bg1Url,
+    bg1FileId: resolveSlotFileId('bg1FileId', bg1Url),
+    bg2Url,
+    bg2FileId: resolveSlotFileId('bg2FileId', bg2Url),
+    bg3Url,
+    bg3FileId: resolveSlotFileId('bg3FileId', bg3Url),
+    bgMobileUrl,
+    bgMobileFileId: resolveSlotFileId('bgMobileFileId', bgMobileUrl),
+    cardBg: cardStyle.c1,
+    borderColor: borderStyle.c1,
+    accentColor: accentStyle.c1,
+    cardStyle,
+    borderStyle,
+    textStyle,
+    titleStyle,
+    accentStyle,
+    effect,
+    effectEmojis,
+    ownerScriptUrl: normalizeScriptUrl(raw && raw.ownerScriptUrl).slice(0, MAX_INLINE_STR_LEN),
+    ownerFolderId: normalizeFolderId(raw && raw.ownerFolderId).slice(0, 128),
+    updatedAt: Number(raw && raw.updatedAt) || 0,
+  };
+}
+
+export function extractThemeDriveFileIds(theme) {
+  if (!theme || typeof theme !== 'object') return [];
+  const ids = new Set();
+  const addId = (raw) => {
+    const id = extractDriveId(String(raw || ''));
+    if (id) ids.add(id);
+  };
+  ['bg1FileId', 'bg2FileId', 'bg3FileId', 'bgMobileFileId'].forEach((k) => addId(theme[k]));
+  ['bg1Url', 'bg2Url', 'bg3Url', 'bgMobileUrl'].forEach((k) => addId(theme[k]));
+  const stickers = Array.isArray(theme.stickers) ? theme.stickers : [];
+  stickers.forEach((st) => {
+    if (!st || typeof st !== 'object') return;
+    addId(st.fileId);
+    addId(st.url);
+  });
+  return [...ids];
+}
+
+export function createDefaultThemeLibrary() {
+  return {
+    activeThemeId: 'builtin_christmas',
+    themes: {
+      builtin_christmas: sanitizeThemeProfile(BUILTIN_THEMES.builtin_christmas, 'builtin_christmas'),
+      builtin_default: sanitizeThemeProfile(BUILTIN_THEMES.builtin_default, 'builtin_default'),
+    },
+    updatedAt: 0,
+  };
+}
+
+export function sanitizeThemeLibrary(raw) {
+  const lib = createDefaultThemeLibrary();
+  if (!raw || typeof raw !== 'object') return lib;
+
+  // Hỗ trợ tự động chuyển đổi từ cấu trúc cũ (chỉ 1 object đơn lẻ có preset/bg1Url)
+  if (!raw.themes && (raw.preset || raw.bg1Url || raw.cardBg)) {
+    const legacy = sanitizeCloudThemeConfig(raw);
+    const targetId = legacy.preset === 'default'
+      ? 'builtin_default'
+      : 'builtin_christmas';
+    lib.themes[targetId] = sanitizeThemeProfile({
+      ...BUILTIN_THEMES[targetId],
+      ...legacy,
+      id: targetId,
+      isBuiltIn: true,
+      basePreset: legacy.preset,
+    }, targetId);
+    lib.activeThemeId = targetId;
+    lib.updatedAt = legacy.updatedAt || 0;
+    return lib;
+  }
+
+  const rawThemes = raw.themes;
+  const entries = Array.isArray(rawThemes)
+    ? rawThemes.map((t) => [t && t.id, t])
+    : (rawThemes && typeof rawThemes === 'object' ? Object.entries(rawThemes) : []);
+
+  entries.forEach(([keyId, item]) => {
+    if (!item || typeof item !== 'object' || keyId === 'builtin_tet' || item.id === 'builtin_tet') return;
+    const clean = sanitizeThemeProfile(item, keyId);
+    if (clean) lib.themes[clean.id] = clean;
+  });
+
+  const reqActive = String(raw.activeThemeId || '').trim();
+  lib.activeThemeId = (reqActive && lib.themes[reqActive]) ? reqActive : 'builtin_christmas';
+  lib.updatedAt = Number(raw.updatedAt) || 0;
+  return lib;
+}
+
+export function getDeletedThemeIds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DELETED_THEMES_KEY) || '[]');
+    if (Array.isArray(raw)) return new Set(raw.map((x) => String(x || '').trim()).filter(Boolean));
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+export function markThemeDeleted(themeId) {
+  const cleanId = String(themeId || '').trim();
+  if (!cleanId || BUILTIN_THEMES[cleanId]) return;
+  try {
+    const set = getDeletedThemeIds();
+    set.add(cleanId);
+    localStorage.setItem(DELETED_THEMES_KEY, JSON.stringify([...set]));
+  } catch { /* ignore */ }
+}
+
+export function mergeThemeLibraries(localRaw, remoteRaw, deletedIds = null) {
+  const localLib = sanitizeThemeLibrary(localRaw);
+  const remoteLib = sanitizeThemeLibrary(remoteRaw);
+  const delSet = deletedIds instanceof Set ? deletedIds : getDeletedThemeIds();
+  const merged = createDefaultThemeLibrary();
+  const allIds = new Set([...Object.keys(localLib.themes), ...Object.keys(remoteLib.themes)]);
+
+  allIds.forEach((id) => {
+    if (!BUILTIN_THEMES[id] && delSet.has(id)) return;
+    const lt = localLib.themes[id];
+    const rt = remoteLib.themes[id];
+    if (lt && rt) {
+      merged.themes[id] = (rt.updatedAt || 0) >= (lt.updatedAt || 0) ? rt : lt;
+    } else if (rt) {
+      merged.themes[id] = rt;
+    } else if (lt) {
+      merged.themes[id] = lt;
+    }
+  });
+
+  const preferRemote = (remoteLib.updatedAt || 0) >= (localLib.updatedAt || 0);
+  const candActive = preferRemote ? remoteLib.activeThemeId : localLib.activeThemeId;
+  merged.activeThemeId = merged.themes[candActive] ? candActive : 'builtin_christmas';
+  merged.updatedAt = Math.max(localLib.updatedAt || 0, remoteLib.updatedAt || 0);
+  return merged;
+}
+
+export function canIdentityModifyThemeProfile(theme, identity) {
+  const scriptUrl = normalizeScriptUrl(identity && identity.scriptUrl);
+  const folderId = normalizeFolderId(identity && identity.folderId);
+  if (!scriptUrl || !folderId) return false;
+  if (!theme || typeof theme !== 'object') return true;
+  if (theme.isBuiltIn) return true;
+  const ownerUrl = normalizeScriptUrl(theme.ownerScriptUrl);
+  const ownerFolder = normalizeFolderId(theme.ownerFolderId);
+  if (!ownerUrl || !ownerFolder) return true;
+  return scriptUrl === ownerUrl && folderId === ownerFolder;
+}
 
 export function normalizeThemeAssetUrl(rawUrl, fallback = '') {
   if (typeof rawUrl !== 'string') return fallback;
@@ -72,9 +399,7 @@ export function normalizeThemeAssetUrl(rawUrl, fallback = '') {
 }
 
 export function sanitizeCloudThemeConfig(raw) {
-  const basePreset = (raw && (raw.preset === 'christmas' || raw.preset === 'tet' || raw.preset === 'default'))
-    ? raw.preset
-    : 'christmas';
+  const basePreset = (raw && raw.preset === 'default') ? 'default' : 'christmas';
   const def = THEME_PRESET_DEFAULTS[basePreset] || THEME_PRESET_DEFAULTS.christmas;
   if (!raw || typeof raw !== 'object') {
     return {
@@ -86,21 +411,43 @@ export function sanitizeCloudThemeConfig(raw) {
   }
   const cleanColor = (val, fb) => {
     const s = String(val || '').trim();
-    return /^#[0-9a-fA-F]{3,8}$/.test(s) ? s : fb;
+    return /^#[0-9a-fA-F]{3,8}$/.test(s) ? s.toUpperCase() : fb;
   };
-  const borderStyle = ['candy', 'gold', 'solid'].includes(raw.borderStyle) ? raw.borderStyle : def.borderStyle;
-  const effect = ['snow', 'blossom', 'none'].includes(raw.effect) ? raw.effect : def.effect;
+  const cardStyle = sanitizeColorStyle(raw.cardStyle || raw.cardBg, def.cardStyle);
+  const borderStyle = sanitizeColorStyle(
+    (raw.borderStyle && typeof raw.borderStyle === 'object') ? raw.borderStyle : raw.borderColor,
+    def.borderStyle,
+  );
+  const textStyle = sanitizeColorStyle(raw.textStyle || raw.textColor, def.textStyle);
+  const titleStyle = sanitizeColorStyle(raw.titleStyle || raw.titleColor, def.titleStyle);
+  const accentStyle = sanitizeColorStyle(
+    (raw.accentStyle && typeof raw.accentStyle === 'object') ? raw.accentStyle : raw.accentColor,
+    def.accentStyle,
+  );
+  const effect = raw.effect === 'snow'
+    ? 'snow'
+    : (raw.effect === 'emoji' || raw.effect === 'blossom')
+      ? 'emoji'
+      : (raw.effect === 'none' ? 'none' : def.effect);
+  const effectEmojis = (typeof raw.effectEmojis === 'string' && raw.effectEmojis.trim())
+    ? raw.effectEmojis.trim().slice(0, 80)
+    : def.effectEmojis;
   return {
     preset: basePreset,
     bg1Url: normalizeThemeAssetUrl(raw.bg1Url, def.bg1Url),
     bg2Url: normalizeThemeAssetUrl(raw.bg2Url, def.bg2Url),
     bg3Url: normalizeThemeAssetUrl(raw.bg3Url, def.bg3Url),
     bgMobileUrl: normalizeThemeAssetUrl(raw.bgMobileUrl, def.bgMobileUrl),
-    cardBg: cleanColor(raw.cardBg, def.cardBg),
-    borderColor: cleanColor(raw.borderColor, def.borderColor),
-    accentColor: cleanColor(raw.accentColor, def.accentColor),
+    cardBg: cardStyle.c1,
+    borderColor: borderStyle.c1,
+    accentColor: accentStyle.c1,
+    cardStyle,
     borderStyle,
+    textStyle,
+    titleStyle,
+    accentStyle,
     effect,
+    effectEmojis,
     ownerScriptUrl: normalizeScriptUrl(raw.ownerScriptUrl).slice(0, MAX_INLINE_STR_LEN),
     ownerFolderId: normalizeFolderId(raw.ownerFolderId).slice(0, 128),
     updatedAt: Number(raw.updatedAt) || Date.now(),
@@ -1031,6 +1378,237 @@ function localSharedBgm() {
       const list = readBgmCache().filter((x) => x.id !== cleanId);
       writeBgmCache(list);
       if (channel) channel.postMessage(1);
+      emitAll();
+      return true;
+    },
+    dispose() {
+      dataListeners.clear();
+      if (storageHandler) {
+        window.removeEventListener('storage', storageHandler);
+        storageHandler = null;
+      }
+      if (channel) channel.close();
+    },
+  };
+}
+
+/**
+ * Thư viện nhiều Theme độc lập (`shared_themes` trên Firebase + cache `thefloor:themeLibrary`).
+ */
+export function readThemeLibraryCache() {
+  try {
+    const rawLib = JSON.parse(localStorage.getItem(THEMES_LIBRARY_KEY) || 'null');
+    if (rawLib && typeof rawLib === 'object') {
+      return sanitizeThemeLibrary(rawLib);
+    }
+    const legacy = JSON.parse(localStorage.getItem(THEME_CONFIG_KEY) || 'null');
+    if (legacy && typeof legacy === 'object') {
+      return sanitizeThemeLibrary(legacy);
+    }
+  } catch { /* ignore */ }
+  return createDefaultThemeLibrary();
+}
+
+export function writeThemeLibraryCache(libRaw) {
+  const clean = sanitizeThemeLibrary(libRaw);
+  try {
+    localStorage.setItem(THEMES_LIBRARY_KEY, JSON.stringify(clean));
+  } catch { /* ignore */ }
+  const active = clean.themes[clean.activeThemeId] || clean.themes.builtin_christmas;
+  if (active) {
+    try {
+      localStorage.setItem(THEME_CONFIG_KEY, JSON.stringify(sanitizeCloudThemeConfig(active)));
+    } catch { /* ignore */ }
+  }
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('thefloor:shared_themes');
+      bc.postMessage(clean);
+      bc.close();
+    }
+  } catch { /* ignore */ }
+  return clean;
+}
+
+export async function createSharedThemeLibrarySync(config) {
+  if (config && config.databaseURL) {
+    try {
+      return await firebaseSharedThemeLibrary(config);
+    } catch (err) {
+      console.error('Không kết nối được shared_themes trên Firebase, chuyển sang chế độ cục bộ:', err);
+      const local = localSharedThemeLibrary();
+      local.fallbackReason = err.message || String(err);
+      return local;
+    }
+  }
+  return localSharedThemeLibrary();
+}
+
+async function firebaseSharedThemeLibrary(config) {
+  const { appMod, db } = await loadSdk();
+  const app = getOrInitApp(appMod, config);
+  const database = db.getDatabase(app);
+  const libRef = db.ref(database, SHARED_THEMES_PATH);
+  const legacyRef = db.ref(database, SHARED_THEME_PATH);
+
+  const statusListeners = [];
+  let currentStatus = { state: 'syncing', message: 'Đang kết nối Thư viện Theme…' };
+  const emitStatus = (st) => {
+    currentStatus = st;
+    statusListeners.forEach((cb) => {
+      try { cb(st); } catch (e) { console.error(e); }
+    });
+  };
+
+  let unsub = null;
+  let connUnsub = null;
+  let channel = null;
+  let storageHandler = null;
+  let disposed = false;
+
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('thefloor:shared_themes');
+    }
+  } catch { /* ignore */ }
+
+  connUnsub = subscribeConnected(db, database, (connected) => {
+    if (connected) {
+      emitStatus({ state: 'synced', message: 'Đã đồng bộ Thư viện Theme Cloud' });
+    } else {
+      emitStatus({ state: 'offline', message: 'Mất kết nối — dùng Thư viện Theme trên máy' });
+    }
+  });
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    if (unsub) { try { unsub(); } catch { /* ignore */ } unsub = null; }
+    if (connUnsub) { try { connUnsub(); } catch { /* ignore */ } connUnsub = null; }
+    if (storageHandler) {
+      window.removeEventListener('storage', storageHandler);
+      storageHandler = null;
+    }
+    if (channel) { try { channel.close(); } catch { /* ignore */ } channel = null; }
+  };
+  window.addEventListener('pagehide', dispose);
+
+  return {
+    mode: 'firebase',
+    onStatus(cb) {
+      statusListeners.push(cb);
+      try { cb(currentStatus); } catch { /* ignore */ }
+    },
+    subscribe(cb) {
+      if (unsub) { try { unsub(); } catch { /* ignore */ } unsub = null; }
+      emitStatus({ state: 'syncing', message: 'Đang đồng bộ Thư viện Theme…' });
+      const emitLocal = () => {
+        const cached = readThemeLibraryCache();
+        try { cb(cached, cached); } catch (e) { console.error(e); }
+      };
+      if (channel) channel.onmessage = emitLocal;
+      if (!storageHandler) {
+        storageHandler = (e) => {
+          if (e.key === THEMES_LIBRARY_KEY) emitLocal();
+        };
+        window.addEventListener('storage', storageHandler);
+      }
+      unsub = db.onValue(libRef, async (snap) => {
+        let val = snap.val();
+        if (!val) {
+          try {
+            const legacySnap = await db.get(legacyRef);
+            if (legacySnap && legacySnap.val()) val = legacySnap.val();
+          } catch { /* ignore */ }
+        }
+        const localCached = readThemeLibraryCache();
+        let nextLib = localCached;
+        if (val && typeof val === 'object') {
+          const remoteClean = sanitizeThemeLibrary(val);
+          nextLib = writeThemeLibraryCache(mergeThemeLibraries(localCached, remoteClean));
+        }
+        emitStatus({ state: 'synced', message: 'Đã đồng bộ Thư viện Theme Cloud' });
+        try { cb(nextLib, val || nextLib); } catch (e) { console.error(e); }
+      }, (err) => {
+        emitStatus({ state: 'error', message: `Đang dùng Thư viện Theme trên máy (${err.message})` });
+        emitLocal();
+      });
+    },
+    async fetchLibrary() {
+      try {
+        const snap = await db.get(libRef);
+        const val = snap.val();
+        if (val && typeof val === 'object') {
+          return writeThemeLibraryCache(mergeThemeLibraries(readThemeLibraryCache(), val));
+        }
+        return readThemeLibraryCache();
+      } catch {
+        return readThemeLibraryCache();
+      }
+    },
+    async putLibrary(rawLib) {
+      const clean = sanitizeThemeLibrary(rawLib);
+      clean.updatedAt = Date.now();
+      writeThemeLibraryCache(clean);
+      emitStatus({ state: 'syncing', message: 'Đang đồng bộ Thư viện Theme lên Cloud…' });
+      try {
+        await db.set(libRef, clean);
+        const active = clean.themes[clean.activeThemeId] || clean.themes.builtin_christmas;
+        if (active) {
+          db.set(legacyRef, sanitizeCloudThemeConfig(active)).catch(() => {});
+        }
+        emitStatus({ state: 'synced', message: 'Đã đồng bộ Thư viện Theme Cloud' });
+        return true;
+      } catch (err) {
+        emitStatus({ state: 'local', message: `Đã lưu trên máy (Cloud: ${err.message})` });
+        return true;
+      }
+    },
+    dispose,
+  };
+}
+
+function localSharedThemeLibrary() {
+  let channel = null;
+  try {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('thefloor:shared_themes');
+    }
+  } catch { /* ignore */ }
+  const statusListeners = [];
+  const dataListeners = new Set();
+  const currentStatus = { state: 'local', message: 'Chế độ cục bộ' };
+  const emitAll = () => {
+    const lib = readThemeLibraryCache();
+    dataListeners.forEach((cb) => {
+      try { cb(lib, lib); } catch (e) { console.error(e); }
+    });
+  };
+  let storageHandler = null;
+  return {
+    mode: 'local',
+    onStatus(cb) {
+      statusListeners.push(cb);
+      try { cb(currentStatus); } catch { /* ignore */ }
+    },
+    subscribe(cb) {
+      dataListeners.add(cb);
+      if (channel) channel.onmessage = emitAll;
+      if (!storageHandler) {
+        storageHandler = (e) => {
+          if (e.key === THEMES_LIBRARY_KEY) emitAll();
+        };
+        window.addEventListener('storage', storageHandler);
+      }
+      setTimeout(emitAll, 0);
+    },
+    async fetchLibrary() {
+      return readThemeLibraryCache();
+    },
+    async putLibrary(rawLib) {
+      const clean = sanitizeThemeLibrary(rawLib);
+      clean.updatedAt = Date.now();
+      writeThemeLibraryCache(clean);
       emitAll();
       return true;
     },

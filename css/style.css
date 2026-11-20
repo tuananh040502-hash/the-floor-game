@@ -3411,6 +3411,7 @@ body.low-power-motion .anim-zoom-center {
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  contain: strict;
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
@@ -3419,19 +3420,13 @@ body.low-power-motion .anim-zoom-center {
 }
 
 html[data-theme='christmas'] #seasonalBgLayer,
-html[data-theme='tet'] #seasonalBgLayer {
+html[data-has-custom-bg='1'] #seasonalBgLayer {
   display: block;
 }
 
-html[data-theme='tet'] #seasonalBgLayer {
-  background-color: #6B0D0D;
-  background-image:
-    radial-gradient(circle at 50% 18%, rgba(255, 206, 84, 0.22) 0%, transparent 55%),
-    linear-gradient(180deg, #7C1010 0%, #580A0A 65%, #3D0606 100%);
-}
-
 @media (max-width: 900px) and (orientation: portrait) {
-  html[data-theme='christmas'] #seasonalBgLayer {
+  html[data-theme='christmas'] #seasonalBgLayer,
+  html[data-has-custom-bg='1'] #seasonalBgLayer {
     background-position: center top;
   }
 }
@@ -3461,12 +3456,12 @@ body[data-page='topics'] > div:not(#seasonalBgLayer):not(#seasonalSnowLayer):not
   visibility: visible !important;
 }
 html[data-theme='christmas'] .ambient,
-html[data-theme='tet'] .ambient {
+html[data-has-custom-bg='1'] .ambient {
   opacity: 0;
   background: transparent;
 }
 
-/* ---------- Lớp Hạt Tuyết Rơi Rõ Nét & Mượt 60fps (#seasonalSnowLayer) ---------- */
+/* ---------- Lớp Hạt Tuyết & Emoji Rơi Tối Ưu GPU (#seasonalSnowLayer) ---------- */
 #seasonalSnowLayer,
 .seasonal-snow-layer {
   position: fixed;
@@ -3477,38 +3472,50 @@ html[data-theme='tet'] .ambient {
   display: none;
 }
 
-html[data-theme='christmas']:not([data-effect='none']) #seasonalSnowLayer,
-html[data-theme='tet']:not([data-effect='none']) #seasonalSnowLayer {
+html[data-effect='snow'] #seasonalSnowLayer,
+html[data-effect='emoji'] #seasonalSnowLayer {
   display: block;
 }
 
-/* Tự động ẩn tuyết rơi khi vào Trang 3 Đấu trường hoặc thiết bị tiết kiệm chuyển động */
+/* Tự động ẩn & tạm dừng hoàn toàn tuyết/emoji rơi khi vào Đấu trường, trang soạn chủ đề, ẩn tab hoặc thiết bị tiết kiệm chuyển động */
 body.in-arena #seasonalSnowLayer,
+body[data-page='topics'] #seasonalSnowLayer,
+html.snow-paused #seasonalSnowLayer,
+#seasonalSnowLayer.is-paused,
 body.low-power-motion #seasonalSnowLayer {
   display: none !important;
+}
+body.in-arena #seasonalSnowLayer .snow-flake,
+body[data-page='topics'] #seasonalSnowLayer .snow-flake,
+html.snow-paused #seasonalSnowLayer .snow-flake,
+#seasonalSnowLayer.is-paused .snow-flake,
+body.low-power-motion #seasonalSnowLayer .snow-flake {
+  animation-play-state: paused !important;
 }
 
 .snow-flake {
   position: absolute;
-  top: -16px;
+  top: -28px;
   left: var(--snow-x, 50vw);
   width: var(--snow-size, 6px);
   height: var(--snow-size, 6px);
   border-radius: 9999px;
   background: #FFFFFF;
   border: 1px solid rgba(175, 200, 225, 0.72);
-  box-shadow: 0 0 6px rgba(160, 185, 210, 0.85);
   opacity: var(--snow-op, 0.85);
   pointer-events: none;
-  will-change: transform, opacity;
   animation: snowFall60fps var(--snow-dur, 11s) linear var(--snow-delay, 0s) infinite;
 }
 
-html[data-theme='tet'] .snow-flake,
-html[data-effect='blossom'] .snow-flake {
-  background: #FFD166;
-  border-color: rgba(212, 136, 6, 0.75);
-  box-shadow: 0 0 6px rgba(255, 190, 60, 0.85);
+.snow-flake.snow-emoji {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  font-size: var(--snow-size, 20px);
+  line-height: 1;
+  user-select: none;
 }
 
 @keyframes snowFall60fps {
@@ -3561,36 +3568,6 @@ html[data-theme='christmas'] {
   --gold: #C8962E;
   --red: #B91C2C;
   --green: #1E6B43;
-}
-
-/* =====================================================================
-   BẢNG MÀU & BIẾN GIAO DIỆN TẾT NGUYÊN ĐÁN (html[data-theme='tet'])
-   ===================================================================== */
-html[data-theme='tet'] {
-  color-scheme: light;
-  --bg: #6B0D0D;
-  --surface: rgba(255, 245, 225, 0.92);
-  --surface-raised: rgba(249, 229, 190, 0.94);
-  --surface-glass: rgba(255, 245, 225, 0.92);
-  --surface-glass-strong: rgba(255, 245, 225, 0.96);
-  --glass: rgba(255, 245, 225, 0.92);
-  --glass-strong: rgba(255, 245, 225, 0.96);
-  --glass-solid: #FFF5E1;
-  --border: rgba(229, 169, 60, 0.7);
-  --glass-border: rgba(229, 169, 60, 0.7);
-
-  --t1: #3A140B;
-  --t2: #6B2D1A;
-  --t3: #96543A;
-  --fill: rgba(212, 148, 36, 0.14);
-  --fill-hover: rgba(212, 148, 36, 0.24);
-  --stage: #3D0808;
-
-  --blue: #B81414;
-  --sapphire: #D48806;
-  --gold: #D48806;
-  --red: #B81414;
-  --green: #2B7A3E;
 }
 
 /* ---------- Các thẻ & bề mặt Kem Ấm viền mảnh 1px chuẩn Apple ---------- */
@@ -4334,5 +4311,711 @@ html[data-theme='christmas'] .multi-rule-badge {
   .result-winner-pill {
     padding: 3px 10px;
     gap: 5px;
+  }
+}
+
+/* =====================================================================
+   MULTI-THEME LIBRARY HUD (APPLE GRID)
+   ===================================================================== */
+
+/* ---------- Theme Studio Panel Container ---------- */
+.theme-studio-panel {
+  border-radius: 18px;
+  overflow: hidden;
+}
+.theme-studio-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px !important;
+}
+.theme-studio-body {
+  padding: 0 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ts-block {
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+html[data-theme='christmas'] .ts-block {
+  background: rgba(255, 252, 245, 0.92);
+  border-color: rgba(216, 185, 121, 0.55);
+}
+.ts-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Đồng bộ chiều cao 38px cho toàn bộ input / select / button */
+.ts-ctrl {
+  height: 38px !important;
+  min-height: 38px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  font-size: 13px !important;
+  box-sizing: border-box;
+}
+button.ts-ctrl {
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+/* ---------- Khối 1: Thanh Thư viện Theme ---------- */
+.theme-lib-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.theme-lib-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--t1);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 100%;
+  transition: border-color 0.16s var(--ease), background 0.16s var(--ease);
+}
+.theme-lib-pill:hover {
+  border-color: var(--sapphire);
+}
+.theme-lib-pill.is-editing {
+  border-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
+}
+.theme-lib-pill.is-active-theme {
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface-raised));
+}
+.theme-lib-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  flex-shrink: 0;
+}
+.theme-lib-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.theme-lib-live {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #FFFFFF;
+  flex-shrink: 0;
+}
+html[data-theme='christmas'] .theme-lib-pill {
+  background: rgba(251, 246, 236, 0.92);
+  border-color: rgba(216, 185, 121, 0.65);
+  color: #2C1E14;
+}
+html[data-theme='christmas'] .theme-lib-pill.is-editing {
+  border-color: #B91C2C;
+  box-shadow: inset 0 0 0 1px #B91C2C;
+}
+html[data-theme='christmas'] .theme-lib-live {
+  background: #B91C2C;
+  color: #FFFFFF;
+}
+
+.ts-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ts-name-input {
+  flex: 1 1 180px;
+  min-width: 0;
+  font-weight: 600;
+}
+.ts-preset-select {
+  width: 118px;
+  flex-shrink: 0;
+}
+.ts-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ts-new-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  border: 1px dashed var(--border);
+}
+.ts-new-base {
+  width: 190px;
+  flex-shrink: 0;
+}
+
+/* ---------- Khối 2: Lưới 4 Ảnh nền (2x2) ---------- */
+.ts-bg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.ts-bg-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+html[data-theme='christmas'] .ts-bg-card {
+  background: rgba(251, 246, 236, 0.78);
+  border-color: rgba(216, 185, 121, 0.5);
+}
+.ts-bg-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-color: rgba(15, 23, 42, 0.12);
+  background-size: cover;
+  background-position: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ts-bg-empty {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--t3);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.ts-bg-meta {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ts-bg-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--t1);
+}
+.ts-url-inp {
+  font-size: 12px !important;
+}
+.ts-bg-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- Khối 3: Bộ chọn Màu & Gradient kiểu Photoshop + Hiệu ứng rơi ---------- */
+.ts-sidebar-toggle .ts-toggle-arrow {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+  transition: transform 0.18s var(--ease);
+}
+.ts-sidebar-toggle.is-open .ts-toggle-arrow {
+  transform: rotate(90deg);
+}
+.ts-sidebar-toggle.is-open {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface-raised));
+}
+
+.ts-color-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 9px;
+}
+.ts-swatch-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.ts-swatch-card:hover:not(:disabled) {
+  border-color: var(--sapphire);
+}
+.ts-swatch-card.is-active {
+  border-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface-raised));
+}
+.ts-swatch-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+html[data-theme='christmas'] .ts-swatch-card {
+  background: rgba(255, 253, 248, 0.95);
+  border-color: rgba(216, 185, 121, 0.65);
+}
+html[data-theme='christmas'] .ts-swatch-card.is-active {
+  border-color: #B91C2C;
+  box-shadow: inset 0 0 0 1px #B91C2C;
+}
+.ts-swatch-chip {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  flex-shrink: 0;
+}
+.ts-swatch-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ts-swatch-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--t1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-swatch-sub {
+  font-size: 11px;
+  color: var(--t3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inspector kiểu Photoshop gọn nhẹ */
+.ts-color-inspector {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+html[data-theme='christmas'] .ts-color-inspector {
+  background: rgba(251, 246, 236, 0.92);
+  border-color: rgba(216, 185, 121, 0.65);
+}
+.ts-ci-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ts-ci-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--t1);
+}
+.ts-ci-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ts-ci-mode-seg {
+  display: inline-flex;
+}
+.ts-ci-mode-seg button {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ts-ci-close {
+  width: 32px;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+}
+.ts-ci-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ts-ci-solid-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ts-ci-picker-box {
+  width: auto;
+  flex-shrink: 0;
+}
+.ts-ci-hex {
+  width: 108px !important;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.ts-quick-swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ts-qswatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1.5px solid rgba(128, 128, 128, 0.45);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+.ts-qswatch:hover:not(:disabled) {
+  transform: scale(1.1);
+  border-color: var(--blue);
+}
+.ts-grad-preview-bar {
+  width: 100%;
+  height: 26px;
+  border-radius: 9px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+}
+.ts-ci-grad-stops {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  align-items: end;
+}
+.ts-ci-stop {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.ts-ci-stop-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ts-swatch-lg {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  padding: 2px;
+  background: var(--surface);
+}
+.ts-grad-swap {
+  width: 38px;
+  padding: 0 !important;
+  font-size: 16px !important;
+}
+.ts-ci-angle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ts-ci-angle-val {
+  min-width: 42px;
+  text-align: right;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--t1);
+}
+.ts-angle-presets {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ts-ang-btn {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
+  border-radius: 7px !important;
+}
+
+/* Hàng chọn Hiệu ứng rơi & Emoji */
+.ts-effect-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.ts-effect-select-wrap {
+  width: 185px;
+  flex-shrink: 0;
+}
+.ts-emoji-box {
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ts-emoji-presets {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ts-emoji-preset-btn {
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 10px !important;
+  font-size: 13px !important;
+  border-radius: 9px !important;
+}
+
+.ts-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ts-field-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--t2);
+}
+.ts-color-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px !important;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+html[data-theme='christmas'] .ts-color-box {
+  background: rgba(255, 253, 248, 0.95);
+  border-color: rgba(216, 185, 121, 0.65);
+}
+.ts-color-swatch {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* =====================================================================
+   ÁP DỤNG MÀU & GRADIENT TÙY CHỈNH LÊN TRANG 1 (index), TRANG 2 & 3 (game)
+   ===================================================================== */
+/* 1. Nền thẻ tùy chỉnh (Solid / Gradient) */
+html[data-custom-card='solid'] body:not([data-page='topics']) .lobby-card,
+html[data-custom-card='solid'] body:not([data-page='topics']) .setup-card,
+html[data-custom-card='solid'] body:not([data-page='topics']) .cell,
+html[data-custom-card='solid'] body:not([data-page='topics']) .side-card.hud-card,
+html[data-custom-card='solid'] body:not([data-page='topics']) .multi-hud-card,
+html[data-custom-card='gradient'] body:not([data-page='topics']) .lobby-card,
+html[data-custom-card='gradient'] body:not([data-page='topics']) .setup-card,
+html[data-custom-card='gradient'] body:not([data-page='topics']) .cell,
+html[data-custom-card='gradient'] body:not([data-page='topics']) .side-card.hud-card,
+html[data-custom-card='gradient'] body:not([data-page='topics']) .multi-hud-card {
+  background: var(--tf-card-fill);
+}
+
+/* 2. Viền khung tùy chỉnh — Đơn sắc */
+html[data-custom-border='solid'] body:not([data-page='topics']) .lobby-card,
+html[data-custom-border='solid'] body:not([data-page='topics']) .setup-card,
+html[data-custom-border='solid'] body:not([data-page='topics']) .cell,
+html[data-custom-border='solid'] body:not([data-page='topics']) .side-card.hud-card,
+html[data-custom-border='solid'] body:not([data-page='topics']) .multi-hud-card {
+  border-color: var(--tf-border-color);
+}
+
+/* 2b. Viền khung tùy chỉnh — Chuyển sắc (padding-box + border-box giữ nguyên border-radius mượt) */
+html[data-custom-border='gradient'] body:not([data-page='topics']) .lobby-card,
+html[data-custom-border='gradient'] body:not([data-page='topics']) .setup-card,
+html[data-custom-border='gradient'] body:not([data-page='topics']) .cell,
+html[data-custom-border='gradient'] body:not([data-page='topics']) .side-card.hud-card,
+html[data-custom-border='gradient'] body:not([data-page='topics']) .multi-hud-card {
+  background: var(--tf-card-layer) padding-box, var(--tf-border-grad) border-box;
+  border: 1.5px solid transparent;
+}
+
+/* 3. Chữ nội dung tùy chỉnh (Solid / Gradient) */
+html[data-custom-text='solid'] body:not([data-page='topics']) .lobby-card .eyebrow,
+html[data-custom-text='solid'] body:not([data-page='topics']) .lobby-card label,
+html[data-custom-text='solid'] body:not([data-page='topics']) .lobby-card #mode,
+html[data-custom-text='solid'] body:not([data-page='topics']) .hero-eyebrow,
+html[data-custom-text='solid'] body:not([data-page='topics']) .hero-sub,
+html[data-custom-text='solid'] body:not([data-page='topics']) #floorHint,
+html[data-custom-text='solid'] body:not([data-page='topics']) .floor-header .eyebrow,
+html[data-custom-text='solid'] body:not([data-page='topics']) .setup-card .eyebrow,
+html[data-custom-text='solid'] body:not([data-page='topics']) .setup-card .t-1,
+html[data-custom-text='solid'] body:not([data-page='topics']) .setup-card .t-2,
+html[data-custom-text='solid'] body:not([data-page='topics']) .setup-card .t-3,
+html[data-custom-text='solid'] body:not([data-page='topics']) .setup-card .pair-name-text,
+html[data-custom-text='solid'] body:not([data-page='topics']) .setup-card .pair-player-name,
+html[data-custom-text='solid'] body:not([data-page='topics']) .cell .cell-name,
+html[data-custom-text='solid'] body:not([data-page='topics']) .cell .cell-topic,
+html[data-custom-text='solid'] body:not([data-page='topics']) .cell .cell-territory,
+html[data-custom-text='solid'] body:not([data-page='topics']) .side-card.hud-card .side-name,
+html[data-custom-text='solid'] body:not([data-page='topics']) .side-card.hud-card .side-meta,
+html[data-custom-text='solid'] body:not([data-page='topics']) .multi-hud-card .multi-hud-name {
+  color: var(--tf-text-color);
+}
+
+html[data-custom-text='gradient'] body:not([data-page='topics']) .lobby-card .eyebrow,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .hero-eyebrow,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .hero-sub,
+html[data-custom-text='gradient'] body:not([data-page='topics']) #floorHint,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .floor-header .eyebrow,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .setup-card .eyebrow,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .setup-card .pair-name-text,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .setup-card .pair-player-name,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .cell .cell-name,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .cell .cell-topic,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .side-card.hud-card .side-name,
+html[data-custom-text='gradient'] body:not([data-page='topics']) .multi-hud-card .multi-hud-name {
+  background-image: var(--tf-text-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* 4. Chữ tiêu đề "The Floor" ở Trang 1 (index.html) */
+html[data-custom-title='solid'] body[data-page='index'] .hero-title {
+  color: var(--tf-title-color);
+  -webkit-text-fill-color: var(--tf-title-color);
+  background-image: none;
+}
+html[data-custom-title='gradient'] body[data-page='index'] .hero-title {
+  background-image: var(--tf-title-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* 5. Nút nổi bật & Trạng thái Active (accentStyle: Solid / Gradient) */
+html[data-custom-accent='solid'] body:not([data-page='topics']) .btn-ok,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #goHost,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #btnStartDuel,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #cBegin,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #cOk,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #roleLabel,
+html[data-custom-accent='solid'] body:not([data-page='topics']) .seg button.active,
+html[data-custom-accent='solid'] body:not([data-page='topics']) .topic-picker-trigger-badge,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #catBadge,
+html[data-custom-accent='solid'] body:not([data-page='topics']) .cd-status,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .btn-ok,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #goHost,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #btnStartDuel,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #cBegin,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #cOk,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #roleLabel,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .seg button.active,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .topic-picker-trigger-badge,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #catBadge,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .cd-status {
+  background: var(--tf-accent-fill);
+  border-color: var(--tf-accent-c1);
+  color: #FFFFFF;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+html[data-custom-accent='solid'] body:not([data-page='topics']) #setupPreloadBar,
+html[data-custom-accent='solid'] body:not([data-page='topics']) #cdLoadBar,
+html[data-custom-accent='solid'] body:not([data-page='topics']) .cd-bar-fill,
+html[data-custom-accent='solid'] body:not([data-page='topics']) .cd-dot,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #setupPreloadBar,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) #cdLoadBar,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .cd-bar-fill,
+html[data-custom-accent='gradient'] body:not([data-page='topics']) .cd-dot {
+  background: var(--tf-accent-fill);
+}
+
+/* =====================================================================
+   KHUNG PHỦ ĐIỀU HƯỚNG GIỮ FULLSCREEN (#appViewportFrame) & TẠM DỪNG GPU NỀN
+   ===================================================================== */
+#appViewportFrame,
+.app-viewport-frame {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  border: 0;
+  z-index: 60;
+  background: var(--bg);
+}
+html.shell-frame-active {
+  overflow: hidden;
+}
+html.shell-frame-active #seasonalBgLayer,
+html.shell-frame-active #seasonalSnowLayer,
+html.shell-frame-active .ambient {
+  display: none !important;
+}
+html.shell-frame-active #seasonalSnowLayer .snow-flake {
+  animation-play-state: paused !important;
+}
+
+@media (max-width: 1080px) {
+  .ts-color-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 680px) {
+  .ts-bg-grid,
+  .ts-color-cards {
+    grid-template-columns: 1fr;
+  }
+  .ts-ci-grad-stops {
+    grid-template-columns: 1fr;
+  }
+  .ts-effect-select-wrap {
+    width: 100%;
+  }
+  .ts-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ts-new-base {
+    width: 100%;
   }
 }

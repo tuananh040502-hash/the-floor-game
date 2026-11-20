@@ -129,7 +129,70 @@ export function initBgm(options = {}) {
     return window.__theFloorBgmController;
   }
 
-  const autoPlayAllowed = options.autoPlay !== false;
+  // Nếu đang chạy trong #appViewportFrame và window.top đã có trình phát BGM:
+  // Ủy quyền toàn bộ điều khiển về window.top để giữ nhạc liền mạch 100% và không phát trùng 2 bản.
+  let topBgm = null;
+  try {
+    if (window.self !== window.top && window.top && window.top.__theFloorBgmController) {
+      topBgm = window.top.__theFloorBgmController;
+    }
+  } catch { /* cross-origin */ }
+
+  if (topBgm) {
+    if (options.autoPlay !== false && typeof topBgm.setAutoPlayAllowed === 'function') {
+      topBgm.setAutoPlayAllowed(true);
+    }
+    const syncProxyButtons = () => {
+      const snap = typeof topBgm.getUiSnapshot === 'function'
+        ? topBgm.getUiSnapshot()
+        : { muted: Boolean(topBgm.isMuted && topBgm.isMuted()), isPlaying: false, arenaPaused: false, count: 0 };
+      document.querySelectorAll('#btnBgmMute, [data-bgm-mute]').forEach((btn) => {
+        btn.textContent = snap.muted ? '🔇' : '🎵';
+        btn.title = snap.muted
+          ? 'Đang tắt nhạc nền — Bấm để bật'
+          : (snap.isPlaying ? 'Đang phát nhạc nền — Bấm để tắt tiếng' : 'Bật / tắt tiếng nhạc nền');
+        btn.setAttribute('aria-pressed', String(!snap.muted));
+        btn.classList.toggle('is-muted', snap.muted);
+        btn.classList.toggle('is-playing', !snap.muted && snap.isPlaying && !snap.arenaPaused);
+      });
+      const countEl = document.getElementById('bgmCountChip');
+      if (countEl) countEl.textContent = `${snap.count || 0} bài`;
+    };
+    document.querySelectorAll('#btnBgmMute, [data-bgm-mute]').forEach((btn) => {
+      if (btn.dataset.bgmBound) return;
+      btn.dataset.bgmBound = '1';
+      btn.addEventListener('click', () => {
+        topBgm.setMuted(!topBgm.isMuted());
+        syncProxyButtons();
+      });
+    });
+    document.querySelectorAll('#btnBgmModal, [data-open-bgm-modal]').forEach((btn) => {
+      if (btn.dataset.bgmBound) return;
+      btn.dataset.bgmBound = '1';
+      btn.addEventListener('click', () => {
+        topBgm.openModal();
+      });
+    });
+    const unsub = typeof topBgm.onUiChange === 'function' ? topBgm.onUiChange(syncProxyButtons) : () => {};
+    syncProxyButtons();
+
+    const proxyApi = {
+      setArenaPaused: (inDuel) => topBgm.setArenaPaused(inDuel),
+      pausePreview: () => topBgm.pausePreview(),
+      refreshDriveIdentity: () => topBgm.refreshDriveIdentity(),
+      openModal: () => topBgm.openModal(),
+      closeModal: () => topBgm.closeModal(),
+      setMuted: (m) => { topBgm.setMuted(m); syncProxyButtons(); },
+      isMuted: () => topBgm.isMuted(),
+      dispose: () => { try { unsub(); } catch { /* ignore */ } },
+    };
+    window.addEventListener('pagehide', proxyApi.dispose);
+    window.__theFloorBgmController = proxyApi;
+    return proxyApi;
+  }
+
+  let autoPlayAllowed = options.autoPlay !== false;
+  const uiListeners = new Set();
   const externalGetIdentity = typeof options.getDriveIdentity === 'function'
     ? options.getDriveIdentity
     : null;
@@ -1110,6 +1173,9 @@ export function initBgm(options = {}) {
   function updateUiState() {
     updateHeaderButtons();
     renderModal();
+    uiListeners.forEach((cb) => {
+      try { cb(); } catch { /* ignore */ }
+    });
   }
 
   function setMuted(nextMuted) {
@@ -1302,6 +1368,20 @@ export function initBgm(options = {}) {
     },
     refreshDriveIdentity() {
       renderModal();
+    },
+    setAutoPlayAllowed(allowed) {
+      autoPlayAllowed = Boolean(allowed);
+      if (autoPlayAllowed && shouldPlay() && !isPlaying) {
+        resumeOrStartRandom();
+      }
+    },
+    getUiSnapshot() {
+      return { muted, isPlaying, arenaPaused, count: tracks.length };
+    },
+    onUiChange(cb) {
+      if (typeof cb !== 'function') return () => {};
+      uiListeners.add(cb);
+      return () => uiListeners.delete(cb);
     },
     openModal,
     closeModal,

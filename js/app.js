@@ -185,7 +185,8 @@ async function init() {
     try { render(state); } catch { /* ignore */ }
   }
 
-  startUiTimer();
+  bindLifecycleCleanup();
+  syncUiTimer(state);
 
   let fbCfg = null;
   try {
@@ -301,12 +302,46 @@ async function initSharedTopics(fbCfg) {
   }
 }
 
-/** Đồng hồ giao diện: cập nhật DOM mỗi 100ms (10fps) thay vì 60-120fps để giảm tải CPU/nhiệt. */
+const ARENA_TIMER_PHASES = new Set(['ready', 'countdown', 'playing', 'paused']);
+let lifecycleBound = false;
+
+/** Đồng hồ giao diện: chỉ chạy 10fps trong các trạng thái Đấu trường và tự dừng khi ở Sàn / Kết thúc / ẩn tab. */
 function startUiTimer() {
-  if (uiTimer) clearInterval(uiTimer);
-  uiTimer = setInterval(frame, 100);
-  window.addEventListener('pagehide', () => {
+  if (uiTimer) return;
+  uiTimer = setInterval(() => {
+    if (document.hidden) return;
+    frame();
+  }, 100);
+}
+
+function stopUiTimer() {
+  if (uiTimer) {
     clearInterval(uiTimer);
+    uiTimer = null;
+  }
+}
+
+function syncUiTimer(s) {
+  const active = Boolean(s && s.duel && ARENA_TIMER_PHASES.has(s.phase));
+  if (active) {
+    if (!document.hidden) frame();
+    startUiTimer();
+  } else {
+    if (s && s.duel && s.phase === 'finished') frame();
+    stopUiTimer();
+  }
+}
+
+function bindLifecycleCleanup() {
+  if (lifecycleBound) return;
+  lifecycleBound = true;
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state && state.duel && ARENA_TIMER_PHASES.has(state.phase)) {
+      frame();
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    stopUiTimer();
     if (fx) fx.destroy();
     if (transport && transport.dispose) transport.dispose();
     if (topicsSync && topicsSync.dispose) topicsSync.dispose();
@@ -922,6 +957,7 @@ function render(s) {
   }
   try { renderFireworks(s); } catch (err) { console.error('Lỗi renderFireworks:', err); }
   try { syncMusic(s); } catch (err) { console.error('Lỗi syncMusic:', err); }
+  try { syncUiTimer(s); } catch (err) { console.error('Lỗi syncUiTimer:', err); }
   try { if (bgm) bgm.setArenaPaused(inDuel); } catch (err) { console.error('Lỗi bgm.setArenaPaused:', err); }
 }
 
@@ -1996,7 +2032,7 @@ function renderFireworks(s) {
     const isMulti = d.mode === 'multi';
     const winnerSide = d.loserSide === 'A' ? 'B' : 'A';
     const key = `${d.winnerId}-${isMulti ? 'multi' : winnerSide}-${d.changed.join(',')}`;
-    if (key === fxKey && fx && fx.running) return;
+    if (key === fxKey) return;
     fxKey = key;
     const w = playerById(s, d.winnerId);
     const multiColors = isMulti && Array.isArray(d.winners) && d.winners.length
@@ -2029,7 +2065,7 @@ function renderFireworks(s) {
 
 // ---------- Vòng lặp đồng hồ (mượt, 10fps) ----------
 function frame() {
-  if (!state || !state.duel || state.phase === 'floor') return;
+  if (document.hidden || !state || !state.duel || state.phase === 'floor') return;
   const d = state.duel;
   const now = transport.serverNow();
   const isMulti = d.mode === 'multi' && Array.isArray(d.participants) && d.participants.length >= 2;
@@ -2205,6 +2241,10 @@ window.initStaggeredEntrance = initStaggeredEntrance;
 
 export function navigateSmoothly(url) {
   if (!url) return;
+  if (typeof window.__theFloorNavigate === 'function') {
+    window.__theFloorNavigate(url);
+    return;
+  }
   if (document.body) {
     document.body.classList.add('page-exiting');
   }
@@ -2299,8 +2339,13 @@ function bindStaticUi() {
       $('btnMute').textContent = Sfx.isMuted() ? '🔇' : '🔊';
     });
   }
-  if ($('btnFull')) {
+  if ($('btnFull') && !$('btnFull').dataset.fsBound) {
+    $('btnFull').dataset.fsBound = '1';
     $('btnFull').addEventListener('click', () => {
+      if (typeof window.__theFloorToggleFullscreen === 'function') {
+        window.__theFloorToggleFullscreen();
+        return;
+      }
       const docEl = document.documentElement;
       if (document.fullscreenElement || document.webkitFullscreenElement) {
         if (typeof document.exitFullscreen === 'function') document.exitFullscreen().catch(() => {});

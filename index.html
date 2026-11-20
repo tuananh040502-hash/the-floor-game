@@ -6,7 +6,7 @@
   <title>The Floor — Vào phòng</title>
   <script>(function(){try{if(localStorage.getItem('thefloor:themeSeasonInit')!=='xmas2026'){localStorage.setItem('thefloor:themeSeasonInit','xmas2026');localStorage.setItem('thefloor:theme','christmas');}var t=localStorage.getItem('thefloor:theme');if(t!=='light'&&t!=='dark'&&t!=='christmas'&&t!=='tet')t='christmas';document.documentElement.dataset.theme=t;}catch(_){document.documentElement.dataset.theme='christmas';}})();</script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=xmas2" />
+  <link rel="stylesheet" href="css/style.css?v=xmas8" />
 </head>
 <body class="min-h-screen page-fill" data-page="index">
   <div id="seasonalBgLayer" data-slot="bg1" aria-hidden="true"></div>
@@ -66,7 +66,7 @@
     </div>
   </main>
 
-  <script type="module" src="js/theme.js"></script>
+  <script type="module" src="js/theme.js?v=lib1"></script>
   <script type="module">
     import { getConfigSource } from './js/firebase-config.js';
     import { openFirebaseSettings } from './js/settings.js';
@@ -129,6 +129,10 @@
 
     function navigateSmoothly(url) {
       if (!url) return;
+      if (typeof window.__theFloorNavigate === 'function') {
+        window.__theFloorNavigate(url);
+        return;
+      }
       document.body.classList.add('page-exiting');
       setTimeout(() => { window.location.href = url; }, 180);
     }

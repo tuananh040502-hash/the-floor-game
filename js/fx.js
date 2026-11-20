@@ -8,6 +8,7 @@
 const MAX_PARTICLES = 80;
 const LAUNCH_EVERY_MS = 900;
 const FRAME_MS = 33;
+const MAX_DURATION_MS = 6000;
 const MAX_DPR = 1.5;
 const DEFAULT_PALETTE = ['#ffd60a', '#0a84ff', '#ff7a59', '#30d158', '#bf5af2', '#64d2ff', '#ff375f', '#ffffff'];
 
@@ -21,6 +22,7 @@ export class Fireworks {
     this.rafId = null;
     this.zone = [0.05, 0.95];
     this.colors = DEFAULT_PALETTE;
+    this.startedAt = 0;
     this.lastLaunch = 0;
     this.lastFrame = 0;
     this.seq = 0;
@@ -45,6 +47,10 @@ export class Fireworks {
     if (document.visibilityState === 'hidden') {
       this.cancelFrame();
     } else if (this.running && this.rafId === null) {
+      if (this.startedAt && performance.now() - this.startedAt >= MAX_DURATION_MS) {
+        this.stop();
+        return;
+      }
       this.lastFrame = 0;
       this.rafId = requestAnimationFrame(this.loop);
     }
@@ -63,6 +69,7 @@ export class Fireworks {
     this.colors = custom.concat(DEFAULT_PALETTE).filter((c, i, a) => a.indexOf(c) === i);
     if (this.running) return;
     this.running = true;
+    this.startedAt = performance.now();
     this.lastLaunch = 0;
     this.lastFrame = 0;
     this.seq = 0;
@@ -72,6 +79,7 @@ export class Fireworks {
 
   stop() {
     this.running = false;
+    this.startedAt = 0;
     this.cancelFrame();
     this.rockets.length = 0;
     this.particles.length = 0;
@@ -128,8 +136,13 @@ export class Fireworks {
   }
 
   loop(ts) {
-    if (!this.running) {
+    if (!this.running || document.visibilityState === 'hidden') {
       this.rafId = null;
+      return;
+    }
+    if (!this.startedAt) this.startedAt = ts;
+    if (ts - this.startedAt >= MAX_DURATION_MS) {
+      this.stop();
       return;
     }
     this.rafId = requestAnimationFrame(this.loop);
