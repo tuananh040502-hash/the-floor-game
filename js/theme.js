@@ -304,7 +304,9 @@ export function previewThemeColorsLive(themeProfile) {
 function notifyBgmThemePlaylist(activeTheme) {
   if (!activeTheme || typeof activeTheme !== 'object') return;
   const themeId = activeTheme.id || '';
-  const bgmList = Array.isArray(activeTheme.bgmList) ? activeTheme.bgmList : [];
+  const bgmList = Array.isArray(activeTheme.bgmList)
+    ? activeTheme.bgmList.map((tr) => (tr && typeof tr === 'object' ? { ...tr } : tr)).filter(Boolean)
+    : [];
   try {
     const topWin = getTopWinSafe();
     if (topWin && topWin.__theFloorBgmController && typeof topWin.__theFloorBgmController.setThemePlaylist === 'function') {

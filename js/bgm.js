@@ -269,7 +269,7 @@ export function initBgm(options = {}) {
     : (options.page === 'topics' ? 'topics' : 'lobby');
   let globalTracks = readCachedTracks();
   let themePlaylistId = '';
-  let themeTracks = [];
+  let activeThemeTracks = [];
   let themePlaylistSig = '';
   try {
     const cachedLib = readThemeLibraryCache();
@@ -278,11 +278,16 @@ export function initBgm(options = {}) {
       : null;
     if (activeTh && Array.isArray(activeTh.bgmList) && activeTh.bgmList.length) {
       themePlaylistId = activeTh.id || '';
-      themeTracks = activeTh.bgmList.map(sanitizeCloudBgm).filter(Boolean).slice(0, 20);
-      themePlaylistSig = `${themePlaylistId}|${themeTracks.map((t) => t.id).join(',')}`;
+      activeThemeTracks = activeTh.bgmList
+        .map(sanitizeCloudBgm)
+        .filter(Boolean)
+        .map((tr) => ({ ...tr }))
+        .slice(0, 20);
+      themePlaylistSig = `${themePlaylistId}|${activeThemeTracks.map((t) => t.id).join(',')}`;
     }
   } catch { /* ignore */ }
-  let tracks = themeTracks.length ? themeTracks.slice() : globalTracks.slice();
+  const getActivePool = () => (activeThemeTracks.length > 0 ? activeThemeTracks : globalTracks);
+  let tracks = getActivePool().slice();
   let previewAdHocTrack = null;
   let currentId = '';
   let lastPlayedId = '';
@@ -1186,8 +1191,8 @@ export function initBgm(options = {}) {
 
     const modeEl = modalEl.querySelector('#bgmSyncModeText');
     if (modeEl) {
-      if (themeTracks.length > 0) {
-        modeEl.textContent = `🎨 Đang phát nhạc riêng của Theme (${themeTracks.length} bài)`;
+      if (activeThemeTracks.length > 0) {
+        modeEl.textContent = `🎨 Đang phát nhạc riêng của Theme (${activeThemeTracks.length} bài)`;
       } else {
         modeEl.textContent = syncStatus.state === 'synced'
           ? '☁️ Đồng bộ shared_bgm'
@@ -1238,10 +1243,11 @@ export function initBgm(options = {}) {
     }
 
     const frag = document.createDocumentFragment();
+    const usingThemePool = activeThemeTracks.length > 0;
     tracks.forEach((tr) => {
       const isCur = tr.id === currentId;
       const playingThis = isCur && isPlaying;
-      const canDel = canAdd && canIdentityModifyBgm(tr, identity);
+      const canDel = !usingThemePool && canAdd && canIdentityModifyBgm(tr, identity);
       const row = document.createElement('div');
       row.className = `bgm-track-row${isCur ? ' is-current' : ''}${playingThis ? ' is-playing' : ''}`;
       row.dataset.bgmId = tr.id;
@@ -1257,7 +1263,7 @@ export function initBgm(options = {}) {
         <div class="bgm-row-actions">
           ${canDel
             ? '<button type="button" data-bgm-act="delete" class="btn btn-pass btn-sm bgm-del-btn" title="Xóa bài hát">✕</button>'
-            : '<span class="bgm-lock-tag" title="Chỉ chủ sở hữu Drive key đã đăng mới có quyền xóa">🔒</span>'}
+            : `<span class="bgm-lock-tag" title="${usingThemePool ? 'Nhạc riêng của Theme — quản lý tại Studio Giao diện trong trang Chủ đề' : 'Chỉ chủ sở hữu Drive key đã đăng mới có quyền xóa'}">${usingThemePool ? '🎨' : '🔒'}</span>`}
         </div>`;
       frag.appendChild(row);
     });
@@ -1357,7 +1363,8 @@ export function initBgm(options = {}) {
   }
 
   function rebuildEffectiveTracks({ forceSwitchIfMismatch = true } = {}) {
-    tracks = themeTracks.length ? themeTracks.slice() : globalTracks.slice();
+    const pool = getActivePool();
+    tracks = pool.slice();
     maybeLazyLoadYouTube();
 
     const stillExists = currentId && (
@@ -1383,19 +1390,25 @@ export function initBgm(options = {}) {
   }
 
   function applyTracks(nextList) {
-    globalTracks = Array.isArray(nextList) ? nextList : [];
+    globalTracks = Array.isArray(nextList)
+      ? nextList.map(sanitizeCloudBgm).filter(Boolean).map((tr) => ({ ...tr }))
+      : [];
     safeSetLocal(BGM_CACHE_KEY, JSON.stringify(globalTracks));
     rebuildEffectiveTracks({ forceSwitchIfMismatch: true });
   }
 
   function setThemePlaylist(themeId, rawList) {
     const cleanId = String(themeId || '').trim();
-    const cleanList = asArr(rawList).map(sanitizeCloudBgm).filter(Boolean).slice(0, 20);
+    const cleanList = asArr(rawList)
+      .map(sanitizeCloudBgm)
+      .filter(Boolean)
+      .map((tr) => ({ ...tr }))
+      .slice(0, 20);
     const nextSig = `${cleanId}|${cleanList.map((t) => t.id).join(',')}`;
     if (nextSig === themePlaylistSig) return;
     themePlaylistSig = nextSig;
     themePlaylistId = cleanId;
-    themeTracks = cleanList;
+    activeThemeTracks = cleanList;
     if (!manualPreviewing) previewAdHocTrack = null;
     rebuildEffectiveTracks({ forceSwitchIfMismatch: true });
   }
@@ -1548,9 +1561,11 @@ export function initBgm(options = {}) {
     getActivePlaylistInfo() {
       return {
         themeId: themePlaylistId,
-        usingThemePlaylist: themeTracks.length > 0,
+        usingThemePlaylist: activeThemeTracks.length > 0,
         scene,
         count: tracks.length,
+        globalCount: globalTracks.length,
+        themeCount: activeThemeTracks.length,
         trackIds: tracks.map((t) => t.id),
       };
     },

@@ -1380,11 +1380,33 @@ function toggleThemeBgmPreview(track) {
   });
 }
 
-function renderThemeBgm(theme, editable) {
+function resetThemeBgmInputs() {
+  ['themeBgmDriveTitle', 'themeBgmYtUrl', 'themeBgmYtTitle'].forEach((id) => {
+    const el = $(id);
+    if (el) el.value = '';
+  });
+}
+
+function selectTheme(themeId) {
+  if (!themeId || !themeLibrary || !themeLibrary.themes || !themeLibrary.themes[themeId]) return;
+  const changed = selectedThemeId !== themeId;
+  selectedThemeId = themeId;
+  if (changed) {
+    stopThemeBgmPreview();
+    setThemeBgmNotice('');
+    resetThemeBgmInputs();
+  }
+  renderThemeStudio();
+}
+
+function renderThemeBgmList(theme, editable) {
   const curTheme = theme || getSelectedTheme();
   if (!curTheme) return;
-  const bgmList = asArr(curTheme.bgmList).map(sanitizeCloudBgm).filter(Boolean).slice(0, 20);
-  curTheme.bgmList = bgmList;
+  const bgmList = asArr(curTheme.bgmList)
+    .map(sanitizeCloudBgm)
+    .filter(Boolean)
+    .map((tr) => ({ ...tr }))
+    .slice(0, 20);
 
   const badge = $('themeBgmCountBadge');
   if (badge) {
@@ -1408,9 +1430,11 @@ function renderThemeBgm(theme, editable) {
 
   const listEl = $('themeBgmList');
   if (!listEl) return;
+  // Luôn xóa trắng toàn bộ DOM danh sách bài hát cũ trước khi vẽ danh sách của Theme đang chọn
   listEl.innerHTML = '';
+  listEl.dataset.renderedThemeId = curTheme.id || '';
   if (!bgmList.length) {
-    listEl.innerHTML = '<div class="t-3 text-xs py-2">Chưa có bài nhạc riêng nào — Theme này sẽ phát tự động từ kho nhạc chung (<code>shared_bgm</code>).</div>';
+    listEl.innerHTML = '<div class="t-3 text-xs py-2">Theme này chưa có nhạc riêng (đang dùng nhạc mặc định chung).</div>';
     return;
   }
 
@@ -1420,6 +1444,7 @@ function renderThemeBgm(theme, editable) {
     const row = document.createElement('div');
     row.className = `ts-bgm-row${isPlaying ? ' is-previewing' : ''}`;
     row.dataset.thbgmId = tr.id;
+    row.dataset.thbgmThemeId = curTheme.id || '';
     row.innerHTML = `
       <button type="button" data-thbgm-act="play" class="bgm-row-play" title="${isPlaying ? 'Dừng nghe thử' : 'Nghe thử bài này'}">${isPlaying ? '⏹' : '▶'}</button>
       <div class="bgm-row-info min-w-0 flex-1">
@@ -1439,6 +1464,7 @@ function renderThemeBgm(theme, editable) {
 async function handleThemeBgmDriveUpload(file) {
   const curTheme = getSelectedTheme();
   if (!curTheme || !file || uploading) return;
+  const targetThemeId = curTheme.id;
   if (!canEditSelectedTheme(curTheme)) {
     if ($('drivePanel')) $('drivePanel').open = true;
     setThemeBgmNotice('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để tải nhạc cho Theme.', true);
@@ -1467,21 +1493,32 @@ async function handleThemeBgmDriveUpload(file) {
   setThemeBgmNotice(`Đang tải “${file.name}” lên Google Drive…`);
   try {
     const track = await uploadDriveAudioFile(identity, file, {
-      prefix: `thbgm_${curTheme.id}`,
+      prefix: `thbgm_${targetThemeId}`,
       customTitle,
     });
-    const draft = collectSelectedThemeDraft();
-    draft.bgmList = [...asArr(draft.bgmList), track].slice(0, 20);
-    if (titleInp) titleInp.value = '';
+    // Luôn đọc lại đúng hồ sơ Theme đích theo targetThemeId để tránh lẫn sang Theme khác nếu người dùng chuyển tab trong lúc tải lên
+    const latestTarget = (themeLibrary.themes && themeLibrary.themes[targetThemeId]) || curTheme;
+    const nextBgmList = [
+      ...asArr(latestTarget.bgmList).map(sanitizeCloudBgm).filter(Boolean).map((tr) => ({ ...tr })),
+      { ...track },
+    ].slice(0, 20);
+    const updatedTarget = sanitizeThemeProfile({
+      ...latestTarget,
+      bgmList: nextBgmList,
+      updatedAt: Date.now(),
+    }, targetThemeId);
+    if (titleInp && selectedThemeId === targetThemeId) titleInp.value = '';
     const nextLib = {
       ...themeLibrary,
-      themes: { ...themeLibrary.themes, [draft.id]: draft },
+      themes: { ...themeLibrary.themes, [targetThemeId]: updatedTarget },
     };
     await persistThemeLibrary(nextLib, {
-      switchActive: themeLibrary.activeThemeId === draft.id,
-      msg: `🎵 Đã thêm “${track.title}” vào nhạc nền của Theme “${draft.name}”.`,
+      switchActive: themeLibrary.activeThemeId === targetThemeId,
+      msg: `🎵 Đã thêm “${track.title}” vào nhạc nền của Theme “${updatedTarget.name}”.`,
     });
-    setThemeBgmNotice(`✅ Đã thêm “${track.title}” & đồng bộ lên Drive + Cloud.`);
+    if (selectedThemeId === targetThemeId) {
+      setThemeBgmNotice(`✅ Đã thêm “${track.title}” & đồng bộ lên Drive + Cloud.`);
+    }
   } catch (err) {
     setThemeBgmNotice(`❌ Lỗi tải nhạc: ${err && err.message ? err.message : err}`, true);
   } finally {
@@ -1496,6 +1533,7 @@ async function handleThemeBgmDriveUpload(file) {
 async function handleThemeBgmAddYoutube() {
   const curTheme = getSelectedTheme();
   if (!curTheme) return;
+  const targetThemeId = curTheme.id;
   if (!canEditSelectedTheme(curTheme)) {
     if ($('drivePanel')) $('drivePanel').open = true;
     setThemeBgmNotice('Vui lòng nhập đúng Apps Script Web App URL và Folder ID để thêm nhạc cho Theme.', true);
@@ -1536,19 +1574,31 @@ async function handleThemeBgmAddYoutube() {
       createdAt: Date.now(),
     });
     if (!track) throw new Error('Dữ liệu bài nhạc YouTube không hợp lệ.');
-    const draft = collectSelectedThemeDraft();
-    draft.bgmList = [...asArr(draft.bgmList), track].slice(0, 20);
-    if (urlInp) urlInp.value = '';
-    if (titleInp) titleInp.value = '';
+    const latestTarget = (themeLibrary.themes && themeLibrary.themes[targetThemeId]) || curTheme;
+    const nextBgmList = [
+      ...asArr(latestTarget.bgmList).map(sanitizeCloudBgm).filter(Boolean).map((tr) => ({ ...tr })),
+      { ...track },
+    ].slice(0, 20);
+    const updatedTarget = sanitizeThemeProfile({
+      ...latestTarget,
+      bgmList: nextBgmList,
+      updatedAt: Date.now(),
+    }, targetThemeId);
+    if (selectedThemeId === targetThemeId) {
+      if (urlInp) urlInp.value = '';
+      if (titleInp) titleInp.value = '';
+    }
     const nextLib = {
       ...themeLibrary,
-      themes: { ...themeLibrary.themes, [draft.id]: draft },
+      themes: { ...themeLibrary.themes, [targetThemeId]: updatedTarget },
     };
     await persistThemeLibrary(nextLib, {
-      switchActive: themeLibrary.activeThemeId === draft.id,
-      msg: `🎵 Đã thêm “${track.title}” vào nhạc nền của Theme “${draft.name}”.`,
+      switchActive: themeLibrary.activeThemeId === targetThemeId,
+      msg: `🎵 Đã thêm “${track.title}” vào nhạc nền của Theme “${updatedTarget.name}”.`,
     });
-    setThemeBgmNotice(`✅ Đã thêm “${track.title}” & đồng bộ lên Drive + Cloud.`);
+    if (selectedThemeId === targetThemeId) {
+      setThemeBgmNotice(`✅ Đã thêm “${track.title}” & đồng bộ lên Drive + Cloud.`);
+    }
   } catch (err) {
     setThemeBgmNotice(`❌ ${err && err.message ? err.message : err}`, true);
   } finally {
@@ -1562,28 +1612,35 @@ async function handleThemeBgmAddYoutube() {
 async function handleThemeBgmDelete(trackId) {
   const curTheme = getSelectedTheme();
   if (!curTheme || !trackId) return;
+  const targetThemeId = curTheme.id;
   if (!canEditSelectedTheme(curTheme)) {
     if ($('drivePanel')) $('drivePanel').open = true;
     toast('Vui lòng nhập đúng Drive Key để xóa nhạc của Theme này.', true);
     return;
   }
-  const list = asArr(curTheme.bgmList);
+  const list = asArr(curTheme.bgmList).map(sanitizeCloudBgm).filter(Boolean).map((tr) => ({ ...tr }));
   const removed = list.find((x) => x && x.id === trackId);
   if (!removed) return;
   if (themePreviewTrackId === trackId) {
     stopThemeBgmPreview();
   }
-  const draft = collectSelectedThemeDraft();
-  draft.bgmList = list.filter((x) => x && x.id !== trackId);
+  const nextBgmList = list.filter((x) => x && x.id !== trackId);
+  const updatedTarget = sanitizeThemeProfile({
+    ...curTheme,
+    bgmList: nextBgmList,
+    updatedAt: Date.now(),
+  }, targetThemeId);
   const nextLib = {
     ...themeLibrary,
-    themes: { ...themeLibrary.themes, [draft.id]: draft },
+    themes: { ...themeLibrary.themes, [targetThemeId]: updatedTarget },
   };
   await persistThemeLibrary(nextLib, {
-    switchActive: themeLibrary.activeThemeId === draft.id,
-    msg: `Đã xóa “${removed.title}” khỏi nhạc nền của “${draft.name}”.`,
+    switchActive: themeLibrary.activeThemeId === targetThemeId,
+    msg: `Đã xóa “${removed.title}” khỏi nhạc nền của “${updatedTarget.name}”.`,
   });
-  setThemeBgmNotice(`Đã xóa “${removed.title}” khỏi Theme.`);
+  if (selectedThemeId === targetThemeId) {
+    setThemeBgmNotice(`Đã xóa “${removed.title}” khỏi Theme.`);
+  }
 
   if (removed.type === 'drive' && removed.fileId && hasValidDriveIdentity()) {
     const fid = extractDriveId(removed.fileId);
@@ -1594,6 +1651,93 @@ async function handleThemeBgmDelete(trackId) {
       }
     }
   }
+}
+
+async function createNewTheme() {
+  if (!hasValidDriveIdentity()) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Vui lòng nhập Drive Key hợp lệ.', true);
+    return;
+  }
+  const name = ($('newThemeName') && $('newThemeName').value.trim()) || '';
+  if (!name) {
+    toast('Hãy nhập tên cho theme mới.', true);
+    if ($('newThemeName')) $('newThemeName').focus();
+    return;
+  }
+  const baseChoice = ($('newThemeBase') && $('newThemeBase').value) || 'blank';
+  const identity = getCurrentDriveIdentity();
+  const newThemeId = `theme_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  let seed = {
+    ...BUILTIN_THEMES.builtin_default,
+    id: newThemeId,
+    name,
+    isBuiltIn: false,
+    bgmList: [],
+  };
+  if (baseChoice === 'christmas') {
+    seed = { ...BUILTIN_THEMES.builtin_christmas, id: newThemeId, name, isBuiltIn: false, bgmList: [] };
+  } else if (baseChoice === 'default') {
+    seed = { ...BUILTIN_THEMES.builtin_default, id: newThemeId, name, isBuiltIn: false, bgmList: [] };
+  }
+  const cleanNew = sanitizeThemeProfile({
+    ...seed,
+    bgmList: [],
+    ownerScriptUrl: identity.scriptUrl,
+    ownerFolderId: identity.folderId,
+    updatedAt: Date.now(),
+  }, newThemeId);
+  if ($('newThemeBox')) $('newThemeBox').classList.add('hidden');
+  stopThemeBgmPreview();
+  setThemeBgmNotice('');
+  resetThemeBgmInputs();
+  selectedThemeId = cleanNew.id;
+  const nextLib = {
+    ...themeLibrary,
+    themes: { ...themeLibrary.themes, [cleanNew.id]: cleanNew },
+  };
+  await persistThemeLibrary(nextLib, {
+    switchActive: false,
+    msg: `🎨 Đã tạo theme mới “${cleanNew.name}” & lưu vào Drive.`,
+  });
+}
+
+async function duplicateTheme() {
+  if (!hasValidDriveIdentity()) {
+    if ($('drivePanel')) $('drivePanel').open = true;
+    toast('Vui lòng nhập Drive Key hợp lệ trước khi nhân bản theme.', true);
+    return;
+  }
+  const src = getSelectedTheme();
+  const identity = getCurrentDriveIdentity();
+  const cloneId = `theme_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const clonedBgmList = asArr(src.bgmList)
+    .map(sanitizeCloudBgm)
+    .filter(Boolean)
+    .map((track) => ({ ...track }))
+    .slice(0, 20);
+  const cloned = sanitizeThemeProfile({
+    ...src,
+    id: cloneId,
+    name: `${src.name} (Bản sao)`.slice(0, 60),
+    isBuiltIn: false,
+    bgmList: clonedBgmList,
+    ownerScriptUrl: identity.scriptUrl,
+    ownerFolderId: identity.folderId,
+    updatedAt: Date.now(),
+  }, cloneId);
+  stopThemeBgmPreview();
+  setThemeBgmNotice('');
+  resetThemeBgmInputs();
+  selectedThemeId = cloned.id;
+  const nextLib = {
+    ...themeLibrary,
+    themes: { ...themeLibrary.themes, [cloned.id]: cloned },
+  };
+  await persistThemeLibrary(nextLib, {
+    switchActive: false,
+    msg: `🎨 Đã nhân bản thành “${cloned.name}” & lưu vào Drive.`,
+  });
 }
 
 function renderThemeStudio() {
@@ -1701,7 +1845,7 @@ function renderThemeStudio() {
     b.disabled = !editable;
   });
 
-  renderThemeBgm(theme, editable);
+  renderThemeBgmList(theme, editable);
 }
 
 function collectSelectedThemeDraft() {
@@ -1750,7 +1894,7 @@ function collectSelectedThemeDraft() {
     accentColor: (current.accentStyle && current.accentStyle.c1) || current.accentColor,
     effect: rawEff,
     effectEmojis: rawEmojis || '❄️ 🎄 ⭐',
-    bgmList: asArr(current.bgmList).map(sanitizeCloudBgm).filter(Boolean).slice(0, 20),
+    bgmList: asArr(current.bgmList).map(sanitizeCloudBgm).filter(Boolean).map((tr) => ({ ...tr })).slice(0, 20),
     ownerScriptUrl: current.ownerScriptUrl || identity.scriptUrl,
     ownerFolderId: current.ownerFolderId || identity.folderId,
     updatedAt: Date.now(),
@@ -2505,12 +2649,7 @@ function bind() {
       if (!btn) return;
       const pickId = btn.dataset.themePickId;
       if (!pickId || !themeLibrary.themes[pickId]) return;
-      if (selectedThemeId !== pickId) {
-        stopThemeBgmPreview();
-        setThemeBgmNotice('');
-      }
-      selectedThemeId = pickId;
-      renderThemeStudio();
+      selectTheme(pickId);
     });
   }
 
@@ -2534,79 +2673,14 @@ function bind() {
     });
   }
   if ($('btnConfirmNewTheme')) {
-    $('btnConfirmNewTheme').addEventListener('click', async () => {
-      if (!hasValidDriveIdentity()) {
-        if ($('drivePanel')) $('drivePanel').open = true;
-        toast('Vui lòng nhập Drive Key hợp lệ.', true);
-        return;
-      }
-      const name = ($('newThemeName') && $('newThemeName').value.trim()) || '';
-      if (!name) {
-        toast('Hãy nhập tên cho theme mới.', true);
-        if ($('newThemeName')) $('newThemeName').focus();
-        return;
-      }
-      const baseChoice = ($('newThemeBase') && $('newThemeBase').value) || 'blank';
-      const identity = getCurrentDriveIdentity();
-      const newThemeId = `theme_${Date.now().toString(36)}`;
-      let seed = {
-        ...BUILTIN_THEMES.builtin_default,
-        id: newThemeId,
-        name,
-        isBuiltIn: false,
-      };
-      if (baseChoice === 'christmas') {
-        seed = { ...BUILTIN_THEMES.builtin_christmas, id: newThemeId, name, isBuiltIn: false };
-      } else if (baseChoice === 'default') {
-        seed = { ...BUILTIN_THEMES.builtin_default, id: newThemeId, name, isBuiltIn: false };
-      }
-      const cleanNew = sanitizeThemeProfile({
-        ...seed,
-        ownerScriptUrl: identity.scriptUrl,
-        ownerFolderId: identity.folderId,
-        updatedAt: Date.now(),
-      }, newThemeId);
-      selectedThemeId = cleanNew.id;
-      if ($('newThemeBox')) $('newThemeBox').classList.add('hidden');
-      const nextLib = {
-        ...themeLibrary,
-        themes: { ...themeLibrary.themes, [cleanNew.id]: cleanNew },
-      };
-      await persistThemeLibrary(nextLib, {
-        switchActive: false,
-        msg: `🎨 Đã tạo theme mới “${cleanNew.name}” & lưu vào Drive.`,
-      });
+    $('btnConfirmNewTheme').addEventListener('click', () => {
+      createNewTheme();
     });
   }
 
   if ($('btnCloneTheme')) {
-    $('btnCloneTheme').addEventListener('click', async () => {
-      if (!hasValidDriveIdentity()) {
-        if ($('drivePanel')) $('drivePanel').open = true;
-        toast('Vui lòng nhập Drive Key hợp lệ trước khi nhân bản theme.', true);
-        return;
-      }
-      const src = getSelectedTheme();
-      const identity = getCurrentDriveIdentity();
-      const cloneId = `theme_${Date.now().toString(36)}`;
-      const cloned = sanitizeThemeProfile({
-        ...src,
-        id: cloneId,
-        name: `${src.name} (Bản sao)`.slice(0, 60),
-        isBuiltIn: false,
-        ownerScriptUrl: identity.scriptUrl,
-        ownerFolderId: identity.folderId,
-        updatedAt: Date.now(),
-      }, cloneId);
-      selectedThemeId = cloned.id;
-      const nextLib = {
-        ...themeLibrary,
-        themes: { ...themeLibrary.themes, [cloned.id]: cloned },
-      };
-      await persistThemeLibrary(nextLib, {
-        switchActive: false,
-        msg: `🎨 Đã nhân bản thành “${cloned.name}” & lưu vào Drive.`,
-      });
+    $('btnCloneTheme').addEventListener('click', () => {
+      duplicateTheme();
     });
   }
 
@@ -2641,10 +2715,13 @@ function bind() {
       if (!curTheme.isBuiltIn || !canEditSelectedTheme(curTheme)) return;
       if (!confirm(`Khôi phục “${curTheme.name}” về thông số mặc định ban đầu?`)) return;
       stopThemeBgmPreview();
+      setThemeBgmNotice('');
+      resetThemeBgmInputs();
       const factory = BUILTIN_THEMES[curTheme.id];
       if (!factory) return;
       const resetProfile = sanitizeThemeProfile({
         ...factory,
+        bgmList: [],
         updatedAt: Date.now(),
       }, curTheme.id);
       const nextLib = {
@@ -2675,6 +2752,8 @@ function bind() {
         return;
       }
       stopThemeBgmPreview();
+      setThemeBgmNotice('');
+      resetThemeBgmInputs();
       const filesToDelete = collectUnusedDriveFileIds(themeFiles, curTheme.id);
       if (filesToDelete.length) {
         toast(`Đang dọn ${filesToDelete.length} file của theme trên Google Drive…`);
@@ -2979,8 +3058,10 @@ function bind() {
       const row = btn.closest('[data-thbgm-id]');
       if (!row) return;
       const id = row.dataset.thbgmId;
+      const rowThemeId = row.dataset.thbgmThemeId || '';
       const curTheme = getSelectedTheme();
       if (!curTheme) return;
+      if (rowThemeId && rowThemeId !== curTheme.id) return;
       const track = asArr(curTheme.bgmList).find((x) => x && x.id === id);
       if (!track) return;
       if (btn.dataset.thbgmAct === 'play') {

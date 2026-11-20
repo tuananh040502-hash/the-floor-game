@@ -239,7 +239,7 @@ export function sanitizeThemeProfile(raw, fallbackId = '') {
     const cleanTr = sanitizeCloudBgm(tr);
     if (cleanTr && !bgmSeen.has(cleanTr.id)) {
       bgmSeen.add(cleanTr.id);
-      bgmList.push(cleanTr);
+      bgmList.push({ ...cleanTr });
     }
   }
 
@@ -375,12 +375,11 @@ export function mergeThemeLibraries(localRaw, remoteRaw, deletedIds = null) {
     if (!BUILTIN_THEMES[id] && delSet.has(id)) return;
     const lt = localLib.themes[id];
     const rt = remoteLib.themes[id];
-    if (lt && rt) {
-      merged.themes[id] = (rt.updatedAt || 0) >= (lt.updatedAt || 0) ? rt : lt;
-    } else if (rt) {
-      merged.themes[id] = rt;
-    } else if (lt) {
-      merged.themes[id] = lt;
+    const picked = (lt && rt)
+      ? ((rt.updatedAt || 0) >= (lt.updatedAt || 0) ? rt : lt)
+      : (rt || lt || null);
+    if (picked) {
+      merged.themes[id] = sanitizeThemeProfile(picked, id);
     }
   });
 
